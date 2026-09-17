@@ -727,7 +727,18 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 <script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
 <script>
 if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{})});
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').then(reg=>{
+      // Vérifie activement une nouvelle version à chaque ouverture et lors du retour au
+      // premier plan (utile pour une appli installée, rarement fermée complètement).
+      reg.update().catch(()=>{});
+      document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')reg.update().catch(()=>{})});
+    }).catch(()=>{});
+    // Dès qu'une nouvelle version prend la main, on recharge une seule fois pour l'afficher
+    // immédiatement plutôt que de rester sur l'ancienne page déjà chargée en mémoire.
+    let reloaded=false;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloaded)return;reloaded=true;window.location.reload()});
+  });
 }
 </script>
 </body></html>

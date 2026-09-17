@@ -1,13 +1,15 @@
 /* Service worker — Fiches terrain OEG
  * Rend l'application utilisable hors connexion après la première ouverture.
- * Stratégie : "cache d'abord" pour les fichiers de l'application (fiables hors-ligne),
- * "réseau d'abord avec repli sur le cache" pour les ressources externes (fond de carte,
- * Google Drive...) qui ne sont utiles que lorsqu'il y a une connexion de toute façon.
+ * Stratégie pour les fichiers de l'application : "réseau d'abord, repli sur le cache".
+ * Autrement dit, dès qu'il y a une connexion, la version la plus récente est TOUJOURS
+ * utilisée et remplace le cache — impossible de rester bloqué sur une ancienne version
+ * tant que l'appareil a du réseau au moment de l'ouverture. Le cache ne sert que de
+ * secours quand il n'y a vraiment aucune connexion.
  *
  * IMPORTANT : à chaque modification des fichiers de l'application, changez CACHE_VERSION
  * ci-dessous pour que les tablettes déjà installées récupèrent la nouvelle version.
  */
-const CACHE_VERSION = 'oeg-v5';
+const CACHE_VERSION = 'oeg-v6';
 const APP_SHELL = [
   './',
   './index.html',
@@ -64,15 +66,18 @@ self.addEventListener('fetch', event => {
   const url = new URL(req.url);
 
   if (isSameOrigin(url)) {
-    // Fichiers de l'application : cache d'abord, avec rafraîchissement discret en tâche de fond.
+    // Fichiers de l'application : réseau d'abord (toujours la version la plus fraîche
+    // quand il y a du réseau), repli sur le cache uniquement hors-ligne ou en cas d'échec.
     event.respondWith((async () => {
       const cache = await caches.open(CACHE_VERSION);
-      const cached = await cache.match(req);
-      const network = fetch(req).then(resp => {
+      try {
+        const resp = await fetch(req, { cache: 'no-store' });
         if (resp && resp.ok) cache.put(req, resp.clone());
         return resp;
-      }).catch(() => null);
-      return cached || (await network) || new Response('Hors-ligne : ressource non disponible.', { status: 503 });
+      } catch (e) {
+        const cached = await cache.match(req);
+        return cached || new Response('Hors-ligne : ressource non disponible.', { status: 503 });
+      }
     })());
   } else {
     // Ressources externes (fond de carte, polices, API Google...) : réseau d'abord,
