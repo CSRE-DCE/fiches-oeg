@@ -990,7 +990,8 @@ function collectRecord(){
     xTheorique:s?.x??'',yTheorique:s?.y??'',xTerrain:val('xT'),yTerrain:val('yT'),ecartM:$('distance').textContent,
     conditions:collectConditions(),insitu:collectInsitu(),sample:collectSample(),specific:collectSpecific(),
     photos:(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p),projection:val('projection'),schemaLegend:{ecoulement:!!$('legendeEcoulement')?.checked,prelevement:!!$('legendePrelevement')?.checked,berges:!!$('legendeBerges')?.checked,acces:!!$('legendeAcces')?.checked,autre:val('legendeAutre')},dessin:$('draw').toDataURL('image/png'),signature:$('signature').toDataURL('image/png'),signName:val('signName'),
-    qc:radioValue('qc'),qcType:val('qcType'),obs:val('obs'),comment:val('comment'),savedAt:new Date().toISOString()
+    qc:radioValue('qc'),qcType:val('qcType'),obs:val('obs'),comment:val('comment'),savedAt:new Date().toISOString(),
+    appBuild:window.APP_BUILD||''
   };
   /* --- Champs qualité / traçabilité étendus (ancien correctif) --- */
   r.methodRef=val('methodRef');r.methodVersion=val('methodVersion');
@@ -1273,44 +1274,11 @@ function mergeCustomInto(target,incoming){
     if(target[k]===undefined)target[k]=incoming[k];
   });
 }
-// Accepte à la fois une sauvegarde consolidée ({records:[...],custom:{...}}, export manuel ou
-// sauvegarde automatique périodique) ET une sélection de plusieurs fichiers individuels (une
-// fiche = un fichier, tels qu'écrits dans le dossier local ou récupérés depuis Drive) — utile
-// pour récupérer des fiches d'une ancienne version de l'appli après une mise à jour. Les fiches
-// dont l'identifiant existe déjà sont mises à jour ; les autres sont ajoutées.
-$('importJSON').onchange=e=>{
-  const files=[...e.target.files];
-  if(!files.length)return;
-  let imported=0,updated=0,fail=0,pending=files.length;
-  const finish=()=>{
-    saveLS(LS,records);saveLS(LSC,custom);
-    renderOperators();renderEquipment();renderOrgOptions();renderPre();updateCount();renderList();
-    if($('suivi')?.classList.contains('active'))renderSuivi();
-    e.target.value='';
-    toast(`Import terminé : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(fail?`, ${fail} fichier(s) invalide(s)`:'')+' ✓');
-  };
-  files.forEach(f=>{
-    const fr=new FileReader();
-    fr.onload=()=>{
-      try{
-        const d=JSON.parse(fr.result);
-        if(Array.isArray(d.records)){
-          d.records.forEach(r=>{
-            const idx=records.findIndex(x=>x.id===r.id);
-            if(idx>-1){records[idx]=r;updated++}else{records.push(r);imported++}
-          });
-          mergeCustomInto(custom,d.custom);
-        }else if(d&&d.id&&d.network){
-          const idx=records.findIndex(x=>x.id===d.id);
-          if(idx>-1){records[idx]=d;updated++}else{records.push(d);imported++}
-        }else{fail++}
-      }catch(err){fail++}
-      if(--pending===0)finish();
-    };
-    fr.onerror=()=>{fail++;if(--pending===0)finish()};
-    fr.readAsText(f);
-  });
-};
+// Le gestionnaire du bouton "Importer JSON" est défini dans quality.js (chargé après ce
+// fichier), qui gère aussi la traçabilité qualité (audit, lifecycle) — voir plus bas dans
+// l'ordre de chargement des scripts. mergeCustomInto() ci-dessus est réutilisée par ce
+// gestionnaire pour fusionner intelligemment le référentiel (équipements/opérateurs/stations)
+// de plusieurs fichiers importés sans rien écraser par erreur.
 $('reset').onclick=()=>{if(confirm('Effacer toutes les fiches et données personnalisées ?')){localStorage.removeItem(LS);localStorage.removeItem(LSC);localStorage.removeItem('oeg_field_v3');localStorage.removeItem('oeg_custom_v3');records=[];custom={preleveurs:[],stations:[],equipements:[]};updateCount();renderList();renderAdmin()}};
 function renderAdmin(){
   renderOperators();renderEquipment();refreshAutoBackupStatus();

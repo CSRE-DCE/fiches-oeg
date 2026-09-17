@@ -191,7 +191,55 @@ $('exportJSON').onclick=async()=>{await audit('EXPORT_JSON','',{records:records.
 $('exportCSV').onclick=async()=>{await audit('EXPORT_CSV','',{records:records.length});const cols=['id','network','activity','bioOperation','session','station','date','heureDebut','heureFin','organisme','preleveurs','xTheorique','yTheorique','xTerrain','yTerrain','ecartM','methodRef','methodVersion','obs','comment','status'];const rows=[cols.join(';')];records.forEach(r=>rows.push(cols.map(c=>csv(c==='status'?(r.lifecycle?.status||''):(c==='preleveurs'?r.preleveurs:r[c]))).join(';')));download('fiches_OEG_'+Date.now()+'.csv','\uFEFF'+rows.join('\n'),'text/csv;charset=utf-8')};
 
 /* Import : conserver un historique et initialiser les nouvelles structures. */
-$('importJSON').onchange=e=>{const f=e.target.files[0];if(!f)return;const fr=new FileReader();fr.onload=async()=>{try{const d=JSON.parse(fr.result);if(d.records)records=records.concat(d.records.map(r=>{if(!r.lifecycle)r.lifecycle={status:'À contrôler',version:1,createdAt:r.savedAt||new Date().toISOString(),updatedAt:r.savedAt||new Date().toISOString()};return r}));if(d.custom)custom={...custom,...d.custom,preleveurs:d.custom.preleveurs||custom.preleveurs,stations:d.custom.stations||custom.stations,equipements:d.custom.equipements||custom.equipements,auditTrail:[...(custom.auditTrail||[]),...(d.custom.auditTrail||[])],nonConformites:d.custom.nonConformites||custom.nonConformites,qualityConfig:d.custom.qualityConfig||custom.qualityConfig};saveLS(LS,records);saveLS(LSC,custom);await audit('IMPORT_JSON','',{recordsImportes:d.records?.length||0});renderOperators();renderEquipment();renderOrgOptions();renderPre();updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi();toast('Sauvegarde importée ✓')}catch(err){toast('JSON invalide : '+err.message)}};fr.readAsText(f)};
+// Gestionnaire unique du bouton "Importer JSON" (seul point d'entrée — ne pas en ajouter un
+// second ailleurs, la dernière affectation à .onchange écraserait silencieusement les autres).
+// Accepte soit une sauvegarde consolidée ({records:[...],custom:{...}}, export manuel ou
+// sauvegarde automatique périodique), soit plusieurs fichiers individuels sélectionnés d'un
+// coup (une fiche = un fichier, comme écrits dans le dossier local ou récupérés depuis Drive) —
+// utile pour récupérer des fiches d'une ancienne version de l'appli après une mise à jour.
+// Les fiches dont l'identifiant existe déjà sont mises à jour, les autres sont ajoutées ; le
+// référentiel (équipements/opérateurs/stations) est fusionné via mergeCustomInto() plutôt
+// qu'écrasé, pour ne jamais perdre de données déjà présentes sur cet appareil.
+function ensureLifecycle(r){
+  if(!r.lifecycle)r.lifecycle={status:'À contrôler',version:1,createdAt:r.savedAt||new Date().toISOString(),updatedAt:r.savedAt||new Date().toISOString()};
+  return r;
+}
+$('importJSON').onchange=e=>{
+  const files=[...e.target.files];
+  if(!files.length)return;
+  let imported=0,updated=0,fail=0,pending=files.length;
+  const finish=async()=>{
+    saveLS(LS,records);saveLS(LSC,custom);
+    await audit('IMPORT_JSON','',{nouvelles:imported,misesAJour:updated,echecs:fail});
+    renderOperators();renderEquipment();renderOrgOptions();renderPre();updateCount();renderList();renderQuality();
+    if($('suivi')?.classList.contains('active'))renderSuivi();
+    e.target.value='';
+    toast(`Import terminé : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(fail?`, ${fail} fichier(s) invalide(s)`:'')+' ✓');
+  };
+  files.forEach(f=>{
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const d=JSON.parse(fr.result);
+        if(Array.isArray(d.records)){
+          d.records.forEach(r=>{
+            ensureLifecycle(r);
+            const idx=records.findIndex(x=>x.id===r.id);
+            if(idx>-1){records[idx]=r;updated++}else{records.push(r);imported++}
+          });
+          if(d.custom)mergeCustomInto(custom,d.custom);
+        }else if(d&&d.id&&d.network){
+          ensureLifecycle(d);
+          const idx=records.findIndex(x=>x.id===d.id);
+          if(idx>-1){records[idx]=d;updated++}else{records.push(d);imported++}
+        }else{fail++}
+      }catch(err){fail++}
+      if(--pending===0)finish();
+    };
+    fr.onerror=()=>{fail++;if(--pending===0)finish()};
+    fr.readAsText(f);
+  });
+};
 
 /* --- Liste des fiches : statut + métrologie + NC ouvertes --- */
 function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>JSON.stringify(x).toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.heureDebut||'')}–${qEscape(f.heureFin||'')}</div></div><span class="badge">${qEscape(st)}</span></div><div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div><div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button></div>`;const b=d.querySelectorAll('button');b[0].onclick=()=>loadRecord(f.id);b[1].onclick=()=>{loadRecord(f.id);state.editing=null;$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
