@@ -7,7 +7,7 @@
  * IMPORTANT : à chaque modification des fichiers de l'application, changez CACHE_VERSION
  * ci-dessous pour que les tablettes déjà installées récupèrent la nouvelle version.
  */
-const CACHE_VERSION = 'oeg-v3';
+const CACHE_VERSION = 'oeg-v5';
 const APP_SHELL = [
   './',
   './index.html',
@@ -27,7 +27,8 @@ const APP_SHELL = [
 // Chargée si disponible au moment de l'installation ; son absence ne doit jamais
 // empêcher l'application de fonctionner hors-ligne.
 const OPTIONAL_SHELL = [
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];
 
 self.addEventListener('install', event => {
