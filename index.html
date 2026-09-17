@@ -672,8 +672,7 @@
   <div class="actions">
     <button class="btn primary" id="exportJSON">Exporter JSON</button>
     <button class="btn ghost" id="exportCSV">Exporter CSV</button>
-    <label class="btn ghost">Importer JSON<input id="importJSON" type="file" accept="application/json" style="display:none">
-    </label>
+    <label class="btn ghost">Importer JSON<input id="importJSON" type="file" accept="application/json" multiple style="display:none"></label>
     <button class="btn danger" id="reset">Effacer toutes les données locales</button>
     </div>
     <p class="note">Les fiches sont stockées localement sur l'appareil. En plus de l'export manuel, une sauvegarde automatique se télécharge toutes les 10 minutes dès qu'une fiche est enregistrée — pensez à vider régulièrement votre dossier Téléchargements.</p></div><div class="card" id="tabletSyncCard"><h2>Sauvegarde tablette & synchronisation</h2>
@@ -777,7 +776,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
 <script>
-window.APP_BUILD='2026-09-16 · build 15';
+window.APP_BUILD='2026-09-16 · build 16';
 document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('appBuildInfo');if(el)el.textContent='Version de l\'application installée sur cet appareil : '+window.APP_BUILD;});
 </script>
 <script>
