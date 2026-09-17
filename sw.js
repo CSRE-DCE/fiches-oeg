@@ -9,7 +9,7 @@
  * IMPORTANT : à chaque modification des fichiers de l'application, changez CACHE_VERSION
  * ci-dessous pour que les tablettes déjà installées récupèrent la nouvelle version.
  */
-const CACHE_VERSION = 'oeg-v16';
+const CACHE_VERSION = 'oeg-v17';
 const APP_SHELL = [
   './',
   './index.html',
