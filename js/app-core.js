@@ -973,10 +973,6 @@ $('clearDraw').onclick=()=>{$('draw').getContext('2d').clearRect(0,0,$('draw').c
 $('clearSig').onclick=()=>{$('signature').getContext('2d').clearRect(0,0,$('signature').clientWidth,$('signature').clientHeight);state.signature=null};
 $('printBtn').onclick=()=>window.print();
 
-$('photos').onchange=async e=>{
-  for(const f of [...e.target.files].slice(0,5-state.photos.length))state.photos.push(await compress(f));
-  renderPhotos();e.target.value=''
-};
 function compress(file){
   return new Promise(res=>{const fr=new FileReader(),im=new Image();fr.onload=()=>{im.onload=()=>{const max=1280,s=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.72))};im.src=fr.result};fr.readAsDataURL(file)})
 }
@@ -1016,7 +1012,7 @@ function clearForm(){
   document.querySelectorAll('input,textarea').forEach(e=>{if(e.type!=='file')e.value=''});
   document.querySelectorAll('select').forEach(e=>e.value='');document.querySelectorAll('input[type=radio]').forEach(e=>e.checked=false);
   document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);
-  $('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();renderPhotos();$('save').textContent='💾 Enregistrer la fiche';
+  $('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();renderPhotos();if(window.drawPhotoGroups)drawPhotoGroups();if(window.clearDraft)window.clearDraft();$('save').textContent='💾 Enregistrer la fiche';
 }
 $('clearForm').onclick=clearForm;
 
@@ -1110,7 +1106,7 @@ function loadRecord(id){
   }
   // Restore dynamically generated specific fields
   Object.entries(f.specific||{}).forEach(([k,v])=>{const e=$(k);if(e){if(e.type==='checkbox')e.checked=!!v;else e.value=v||''}});
-  renderPhotos();updateDistance();$('save').textContent='💾 Mettre à jour la fiche';window.scrollTo(0,0);
+  renderPhotos();if(window.drawPhotoGroups)drawPhotoGroups();updateDistance();$('save').textContent='💾 Mettre à jour la fiche';window.scrollTo(0,0);
   })(id);
   /* Restaure les champs qualité / traçabilité étendus (ancien correctif) */
   const f=records.find(x=>x.id===id);if(!f)return;

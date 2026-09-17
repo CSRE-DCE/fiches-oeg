@@ -44,7 +44,20 @@ function receivers(id){
   input._receiverRows=rows;input._renderReceiverRows=draw;
 }
 window.receivers=receivers;
-function photoGroups(){const f=q('photos'),root=q('mediaGrid');if(!f||!root||f.dataset.grouped)return;f.dataset.grouped='1';const sel=document.createElement('select');sel.id='photoGroup';sel.innerHTML='<option>Amont</option><option>Aval</option><option>Rive gauche</option><option>Rive droite</option>';f.parentElement.appendChild(sel);const holder=document.createElement('div');holder.className='photoGroups';holder.innerHTML=['Amont','Aval','Rive gauche','Rive droite'].map(g=>'<div class="photoGroup"><h4>'+g+'</h4><div class="mediaGrid" data-group="'+g+'"></div></div>').join('');root.parentElement.insertBefore(holder,root);root.classList.add('hide');f.onchange=async e=>{for(const file of [...e.target.files].slice(0,5-state.photos.length))state.photos.push({data:await compress(file),group:sel.value});e.target.value='';drawPhotoGroups()};window.drawPhotoGroups=()=>{holder.querySelectorAll('[data-group]').forEach(h=>h.innerHTML='');(state.photos||[]).forEach((p,i)=>{const data=typeof p==='string'?p:p.data,g=typeof p==='string'?'Amont':(p.group||'Amont'),h=holder.querySelector('[data-group="'+g+'"]');if(h)h.insertAdjacentHTML('beforeend','<div class="thumb"><img src="'+data+'"><button data-i="'+i+'">×</button></div>')});holder.querySelectorAll('button').forEach(b=>b.onclick=()=>{state.photos.splice(+b.dataset.i,1);drawPhotoGroups()})};drawPhotoGroups()}
+function photoGroups(){
+  const camera=q('photosCamera'),gallery=q('photosGallery'),root=q('mediaGrid');
+  if(!camera||!gallery||!root||camera.dataset.grouped)return;
+  camera.dataset.grouped='1';
+  const sel=document.createElement('select');sel.id='photoGroup';sel.innerHTML='<option>Amont</option><option>Aval</option><option>Rive gauche</option><option>Rive droite</option>';
+  camera.closest('.field').appendChild(sel);
+  const holder=document.createElement('div');holder.className='photoGroups';holder.innerHTML=['Amont','Aval','Rive gauche','Rive droite'].map(g=>'<div class="photoGroup"><h4>'+g+'</h4><div class="mediaGrid" data-group="'+g+'"></div></div>').join('');
+  root.parentElement.insertBefore(holder,root);root.classList.add('hide');
+  const addFiles=async fileList=>{for(const file of [...fileList].slice(0,5-state.photos.length))state.photos.push({data:await compress(file),group:sel.value});drawPhotoGroups()};
+  camera.onchange=e=>{addFiles(e.target.files);e.target.value=''};
+  gallery.onchange=e=>{addFiles(e.target.files);e.target.value=''};
+  window.drawPhotoGroups=()=>{holder.querySelectorAll('[data-group]').forEach(h=>h.innerHTML='');(state.photos||[]).forEach((p,i)=>{const data=typeof p==='string'?p:p.data,g=typeof p==='string'?'Amont':(p.group||'Amont'),h=holder.querySelector('[data-group="'+g+'"]');if(h)h.insertAdjacentHTML('beforeend','<div class="thumb"><img src="'+data+'"><button data-i="'+i+'">×</button></div>')});holder.querySelectorAll('button').forEach(b=>b.onclick=()=>{state.photos.splice(+b.dataset.i,1);drawPhotoGroups()})};
+  drawPhotoGroups();
+}
 function stations(){let a=[];Object.values(DATA||{}).forEach(v=>Array.isArray(v)&&v.forEach(x=>a.push(x)));return a.concat(custom.stations||[]).filter(x=>x.nom)}
 function meta(x){const a=(custom.stationAccess||{})[x?.code||x?.nom]||{};return {m:x.marche||x.market||a.marche||'',b:x.bassin||x.bassinVersant||x.bv||a.bassin||'',x:+x.x,y:+x.y}}
 window.guyaneMap=null;window.guyaneLayer=null;
