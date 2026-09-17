@@ -26,6 +26,22 @@ function saveLS(key,valeur){
 function escapeHTML(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}
 function toast(t){let x=document.createElement('div');x.textContent=t;x.style.cssText='position:fixed;left:50%;bottom:92px;transform:translateX(-50%);background:#08477e;color:#fff;padding:10px 16px;border-radius:24px;z-index:9999;font-weight:800;font-size:13px';document.body.appendChild(x);setTimeout(()=>x.remove(),2200)}
 
+// À l'impression, les textarea (observations, notes...) sont remplacées par un simple bloc de
+// texte affichant l'intégralité de leur contenu : un <textarea> imprimé est tronqué à sa hauteur
+// visible, ce qui pourrait faire disparaître silencieusement une partie d'un commentaire.
+window.addEventListener('beforeprint',()=>{
+  document.querySelectorAll('#new textarea').forEach(t=>{
+    const rep=document.createElement('div');
+    rep.className='printTextareaValue';
+    rep.textContent=t.value||'—';
+    t.insertAdjacentElement('afterend',rep);
+    t._printHidden=true;
+  });
+});
+window.addEventListener('afterprint',()=>{
+  document.querySelectorAll('#new .printTextareaValue').forEach(rep=>rep.remove());
+});
+
 let records=load(LS,load('oeg_field_v3',[]));
 let custom=load(LSC,load('oeg_custom_v3',{preleveurs:[],stations:[],equipements:[]}));
 custom.preleveurs=(custom.preleveurs||[]).map(o=>typeof o==='string'?{nom:o,prenom:'',organisme:o==='PF'||o==='AA'||o==='SM'||o==='ML'||o==='MG'||o==='MB'?'Office de l\'Eau de Guyane':'',legacy:true}:o);
@@ -542,16 +558,16 @@ function buildInsitu(){
   (function buildInsituCore(){
   const h=$('insitu');h.innerHTML='';
   const ps=[
-    ['ph','pH','u.pH','sonde'],
-    ['temp','Température eau','°C','sonde'],
-    ['cond','Conductivité à 25°C','µS/cm','sonde'],
-    ['o2mg','Oxygène dissous','mg/L O2','sonde'],
-    ['o2pc','Saturation O2','%','sonde'],
-    ['turb','Turbidité','NTU','sonde'],
-    ['air','Température air','°C','sonde']
+    ['ph','pH','u.pH','sonde','1302'],
+    ['temp','Température eau','°C','sonde','1301'],
+    ['cond','Conductivité à 25°C','µS/cm','sonde','1303'],
+    ['o2mg','Oxygène dissous','mg/L O2','sonde','1311'],
+    ['o2pc','Saturation O2','%','sonde','1312'],
+    ['turb','Turbidité','NTU','sonde','1295'],
+    ['air','Température air','°C','sonde','1409']
   ];
-  ps.splice(3,0,['sal','Salinité','','sonde']);
-  ps.push(['redox','Potentiel redox','mV/ENH','sonde']);
+  ps.splice(3,0,['sal','Salinité','','sonde',null]);
+  ps.push(['redox','Potentiel redox','mV/ENH','sonde',null]);
   if(state.network==='ESO'){
     h.innerHTML=`<div class="note">Mode de mesure commun à toutes les sondes.</div>
       <div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('eso_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}</div></div>
@@ -559,7 +575,7 @@ function buildInsitu(){
     const tb=$('esoSensorTable');
     ps.filter(x=>x[0]!=='air').forEach(p=>{
       const tr=document.createElement('tr');
-      tr.innerHTML=`<td><b>${escapeHTML(p[1])}</b><br><span class="hint">${escapeHTML(p[2])}</span></td>
+      tr.innerHTML=`<td><b>${escapeHTML(p[1])}</b><br><span class="paramUnit">${escapeHTML(p[2])}</span>${p[4]?`<br><span class="sandreCode">SANDRE ${p[4]}</span>`:''}</td>
         <td><input id="iv_${p[0]}" type="number" step="any"><span id="ivs_${p[0]}"></span></td>
         <td>${eqSelect('ig_'+p[0],'sonde')}</td>
         <td><input class="readonly" id="ign_${p[0]}" readonly></td>
@@ -574,7 +590,7 @@ function buildInsitu(){
     return;
   }
   let t=`<div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('global_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}</div></div><table class="table"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody>`;
-  ps.filter(p=>p[0]!=='redox').forEach(p=>t+=`<tr><td><b>${escapeHTML(p[1])}</b><br><span class="hint">${escapeHTML(p[2])}</span></td><td><input id="iv_${p[0]}" type="number" step="any"><span id="ivs_${p[0]}"></span></td><td>${eqSelect('ig_'+p[0],'sonde')}</td><td><input class="readonly" id="ign_${p[0]}" readonly></td><td><input class="readonly" id="igs_${p[0]}" readonly></td><td><input id="ic_${p[0]}" type="date"></td><td><select id="iq_${p[0]}"><option></option><option>Oui</option><option>Non</option></select></td></tr>`);
+  ps.filter(p=>p[0]!=='redox').forEach(p=>t+=`<tr><td><b>${escapeHTML(p[1])}</b><br><span class="paramUnit">${escapeHTML(p[2])}</span>${p[4]?`<br><span class="sandreCode">SANDRE ${p[4]}</span>`:''}</td><td><input id="iv_${p[0]}" type="number" step="any"><span id="ivs_${p[0]}"></span></td><td>${eqSelect('ig_'+p[0],'sonde')}</td><td><input class="readonly" id="ign_${p[0]}" readonly></td><td><input class="readonly" id="igs_${p[0]}" readonly></td><td><input id="ic_${p[0]}" type="date"></td><td><select id="iq_${p[0]}"><option></option><option>Oui</option><option>Non</option></select></td></tr>`);
   t+='</tbody></table>';h.innerHTML+=t;
   ps.filter(p=>p[0]!=='redox').forEach(p=>{
     const el=$('ig_'+p[0]);if(el)el.onchange=()=>{const e=equipmentByGmao(el.value);$('ign_'+p[0]).value=e?.nom||'';$('igs_'+p[0]).value=e?.serie||''};

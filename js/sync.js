@@ -168,8 +168,12 @@
     }
     const ref = referentielPayload();
     const qual = qualitePayload();
-    items.push({id: REF_KEY, filename: '_referentiel_operateurs_equipements_stations.json', content: ref, hash: await hashOf(ref)});
-    items.push({id: QUALITE_KEY, filename: '_qualite_audit_non-conformites.json', content: qual, hash: await hashOf(qual)});
+    // Le hash exclut "exportedAt" (horodatage toujours différent) pour ne pas déclencher
+    // une réécriture à chaque passage alors que le contenu réel n'a pas changé.
+    const { exportedAt: _refTs, ...refForHash } = ref;
+    const { exportedAt: _qualTs, ...qualForHash } = qual;
+    items.push({id: REF_KEY, filename: '_referentiel_operateurs_equipements_stations.json', content: ref, hash: await hashOf(refForHash)});
+    items.push({id: QUALITE_KEY, filename: '_qualite_audit_non-conformites.json', content: qual, hash: await hashOf(qualForHash)});
     const csvText = indexCsvPayload();
     items.push({id: INDEX_KEY, filename: '_index_fiches.csv', content: null, text: csvText, hash: await sha256(csvText)});
     return items;
@@ -454,6 +458,58 @@
     renderDriveStatus();
   }
 
+  // Récupère TOUTES les fiches du dossier Drive partagé (utile quand plusieurs tablettes,
+  // connectées au même compte Google, contribuent chacune une partie des visites sur une
+  // station : sans cet appel, l'historique et l'histogramme du CRT ne voient que les fiches
+  // déjà présentes sur CET appareil). Les fiches récupérées sont fusionnées dans "records"
+  // (ajoutées si nouvelles, remplacées si déjà connues) puis sauvegardées localement — elles
+  // seront donc aussi recopiées dans le dossier local de cet appareil au prochain passage.
+  async function pullFromDrive(){
+    if(!driveCfg.connected){if(typeof toast==='function')toast("Connectez d'abord Google Drive.");return {ok:false,reason:'not-connected'}}
+    if(!navigator.onLine){if(typeof toast==='function')toast('Pas de connexion : impossible de récupérer l\u2019historique.');return {ok:false,reason:'offline'}}
+    const authOk=await ensureValidToken(false);
+    if(!authOk){renderDriveStatus('Reconnexion nécessaire');return {ok:false,reason:'auth'}}
+    let folderId;
+    try{folderId=await ensureDriveFolder()}catch(e){renderDriveStatus('Impossible d\u2019accéder au dossier Drive');return {ok:false,reason:'folder'}}
+    renderDriveStatus('Récupération de l\u2019historique en cours…');
+    let files=[],pageToken;
+    try{
+      do{
+        const q=encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+        let url=`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name)&pageSize=1000`;
+        if(pageToken)url+='&pageToken='+encodeURIComponent(pageToken);
+        const resp=await driveFetch(url,{headers:{'Authorization':'Bearer '+driveAccessToken}});
+        const json=await resp.json();
+        files=files.concat(json.files||[]);
+        pageToken=json.nextPageToken;
+      }while(pageToken);
+    }catch(e){renderDriveStatus('Échec de la récupération de la liste des fiches');return {ok:false,reason:'list'}}
+    let imported=0,updated=0,failed=0;
+    for(const f of files){
+      if(f.name.startsWith('_'))continue; // fichiers de référence (équipements, qualité), pas des fiches
+      try{
+        const resp=await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`,{headers:{'Authorization':'Bearer '+driveAccessToken}});
+        const rec=await resp.json();
+        if(!rec||!rec.id){failed++;continue}
+        const idx=records.findIndex(r=>r.id===rec.id);
+        if(idx>-1)records[idx]=rec;else records.push(rec);
+        idx>-1?updated++:imported++;
+        driveFileIds[rec.id]=f.id;
+        driveHashes[rec.id]=await hashOf(rec);
+        localNames[rec.id]=f.name;
+      }catch(e){failed++}
+    }
+    if(imported||updated){
+      saveDriveFileIds();saveDriveHashes();saveLocalNames();
+      saveLS(LS,records);
+      if(typeof updateCount==='function')updateCount();
+      if(typeof renderList==='function')renderList();
+    }
+    renderDriveStatus();
+    if(typeof toast==='function')toast(`Historique récupéré : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(failed?`, ${failed} échec(s)`:'')+' ✓');
+    return {ok:true,imported,updated,failed};
+  }
+
   // ---------- orchestration ----------
   function notifyChange(){
     if(debounceTimer) clearTimeout(debounceTimer);
@@ -545,6 +601,7 @@
     const connectBtn = $('connectDriveBtn');
     const disconnectBtn = $('disconnectDriveBtn');
     const syncBtn = $('syncNowBtn');
+    const pullBtn = $('pullDriveBtn');
     if(chooseBtn) chooseBtn.onclick = async ()=>{
       if(localFolderHandle){ await reauthorizeLocalFolder(); }
       else { await chooseLocalFolder(); }
@@ -553,6 +610,7 @@
     if(connectBtn) connectBtn.onclick = connectDrive;
     if(disconnectBtn) disconnectBtn.onclick = disconnectDrive;
     if(syncBtn) syncBtn.onclick = manualSyncNow;
+    if(pullBtn) pullBtn.onclick = pullFromDrive;
   }
 
   async function init(){
@@ -573,6 +631,7 @@
     forgetLocalFolder,
     connectDrive,
     disconnectDrive,
-    manualSyncNow
+    manualSyncNow,
+    pullFromDrive
   };
 })();
