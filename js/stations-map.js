@@ -52,8 +52,8 @@
   function mapStationsFixed(){
     // Le sélecteur "Réseau / marché" fonctionne comme les puces réseau de l'onglet
     // "Éditer une nouvelle fiche terrain" : le choisir donne directement les stations associées.
-    const all=navStations(),mf=q('stationMarketFilter')?.value||'',bf=q('stationBassinFilter')?.value||'';
-    const rows=all.filter(x=>{const m=meta(x);return(!mf||x.network===mf)&&(!bf||m.b===bf)});
+    const all=navStations(),mf=q('stationMarketFilter')?.value||'',bf=q('stationBassinFilter')?.value||'',sf=(q('stationSearchFilter')?.value||'').trim().toLowerCase();
+    const rows=all.filter(x=>{const m=meta(x);return(!mf||x.network===mf)&&(!bf||m.b===bf)&&(!sf||String(x.nom||'').toLowerCase().includes(sf))});
     const mh=q('stationMarketFilter');
     if(mh){
       const cur=mh.value;
@@ -77,6 +77,10 @@
   }
   window.mapStations=mapStationsFixed;
   ['stationMarketFilter','stationBassinFilter'].forEach(id=>q(id)?.addEventListener('change',mapStationsFixed));
+  (function(){
+    let t=null;
+    q('stationSearchFilter')?.addEventListener('input',()=>{if(t)clearTimeout(t);t=setTimeout(mapStationsFixed,200)});
+  })();
 
   q('crtRecord')?.addEventListener('change',()=>setTimeout(()=>window.setupCRT&&window.setupCRT(),0));
   // Ensure the existing CRT preview/generation UI is functional and explicit.

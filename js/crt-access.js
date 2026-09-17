@@ -118,7 +118,14 @@
       function getR(){return records.find(r=>String(r.id)===String(val('crtRecord')))}
       function fmt(v){if(v==null||v==='')return '—';if(Array.isArray(v))return v.map(fmt).join(' ; ');if(typeof v==='object')return Object.entries(v).filter(([k,x])=>x!==''&&x!=null&&k!=='signature').map(([k,x])=>'<div><b>'+esc(FIELD_LABELS[k]||k)+'</b> : '+fmt(x)+'</div>').join('')||'—';return esc(String(v))}
       function num(v){const n=Number(String(v??'').replace(',','.'));return Number.isFinite(n)?n:null}
-      function photoHtml(r){const groups=['Amont','Aval','Rive gauche','Rive droite'];let h='';groups.forEach(g=>{const arr=(r.photos||[]).filter(p=>(typeof p==='string'?'Amont':(p.group||'Amont'))===g);if(arr.length)h+='<div class="crtPhotoGroup"><h4>'+esc(g)+'</h4><div class="crtPhotoGrid">'+arr.map(p=>'<figure><img src="'+esc(typeof p==='string'?p:p.data)+'" alt="Photo '+esc(g)+'"><figcaption>'+esc(g)+'</figcaption></figure>').join('')+'</div></div>'});return h||'<div class="crtNoData">Aucune photographie enregistrée.</div>'}
+      function photoHtml(r){
+        const photos=r.photos||[];
+        if(!photos.length)return '<div class="crtNoData">Aucune photographie enregistrée.</div>';
+        return '<div class="crtPhotoGrid">'+photos.map(p=>{
+          const data=typeof p==='string'?p:p.data, g=typeof p==='string'?'Amont':(p.group||'Amont');
+          return '<figure><img src="'+esc(data)+'" alt="Photo '+esc(g)+'"><figcaption>'+esc(g)+'</figcaption></figure>';
+        }).join('')+'</div>';
+      }
       function matrix(r){const s=r.sample||{},v=[];if(s.matriceEau==='Oui'||s.eau==='Oui'||s.matrice==='Eau')v.push('Eau');if(s.matriceSediment==='Oui'||s.sediments==='Oui'||s.sediment==='Oui')v.push('Sédiments');return v.join(' · ')||((/sédiment/i.test(r.activity||''))?'Sédiments':'Eau')}
       function header(code,r,label){return '<div class="crtPageHead"><div class="crtPageHeadLeft"><img src="data:image/png;base64,'+LOGO+'" class="crtPageLogo" alt="OEG"><span>'+esc(label||'RAPPORT DE TERRAIN')+'</span></div><div class="crtPageHeadRight"><b>'+esc(code)+' — '+esc(r.station)+'</b><br><span class="crtSmall">'+esc(r.network||'—')+' · '+esc(r.date||'—')+' · '+esc(r.session||'—')+'</span></div></div>'}
       function graphSvg(series,unit){

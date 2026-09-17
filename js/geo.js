@@ -11,6 +11,13 @@ const A = 6378137;           // demi-grand axe (m)
 const E = 0.0818191908426;   // excentricité
 const K0 = 0.9996;           // facteur d'échelle UTM
 
+/**
+ * Convertit des coordonnées UTM (easting, northing) en latitude/longitude (degrés décimaux).
+ * @param {number} easting
+ * @param {number} northing
+ * @param {number} [zone=22] fuseau UTM (21 ou 22 en Guyane)
+ * @returns {[number, number]} [latitude, longitude] en degrés
+ */
 export function utmToLatLon(easting, northing, zone = 22) {
   const e1 = (1 - Math.sqrt(1 - E * E)) / (1 + Math.sqrt(1 - E * E));
   const x = easting - 500000;
@@ -41,6 +48,13 @@ export function utmToLatLon(easting, northing, zone = 22) {
   return [lat * 180 / Math.PI, lon * 180 / Math.PI];
 }
 
+/**
+ * Convertit une latitude/longitude (degrés décimaux) en coordonnées UTM (easting, northing).
+ * @param {number} lat
+ * @param {number} lon
+ * @param {number} [zone=22] fuseau UTM (21 ou 22 en Guyane)
+ * @returns {[number, number]} [easting, northing] en mètres
+ */
 export function latLonToUtm(lat, lon, zone = 22) {
   const rad = Math.PI / 180;
   const phi = lat * rad;
@@ -72,10 +86,20 @@ export function latLonToUtm(lat, lon, zone = 22) {
   return [easting, northing];
 }
 
+/**
+ * Écart (en mètres) entre le point théorique et le point terrain, en coordonnées UTM planes.
+ * @param {number} xTheorique
+ * @param {number} yTheorique
+ * @param {number} xTerrain
+ * @param {number} yTerrain
+ * @returns {number} distance en mètres
+ */
 export function ecartGPS(xTheorique, yTheorique, xTerrain, yTerrain) {
   return Math.hypot(xTerrain - xTheorique, yTerrain - yTheorique);
 }
 
+// Rendre les fonctions disponibles aux scripts classiques de l'application (portée globale
+// partagée), qui appellent utmToLatLon()/latLonToUtm()/ecartGPS() comme identifiants globaux.
 if (typeof window !== 'undefined') {
   window.utmToLatLon = utmToLatLon;
   window.latLonToUtm = latLonToUtm;
