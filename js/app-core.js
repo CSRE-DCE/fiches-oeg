@@ -753,8 +753,6 @@ function sedimentPanel(prefix,title='Échantillonnage de sédiments'){
         <div class="sedimentRow"><div class="sedimentLabel">Si oui, matériaux utilisés pour le tamisage</div><div class="sedimentValue">${yesNo(p+'SedMateriaux')}<input id="${p}SedMat" type="text" placeholder="Préciser les matériaux / équipement" style="margin-top:6px"></div></div>
         <div class="sedimentRow"><div class="sedimentLabel">Granulométrie du tamis</div><div class="sedimentValue"><div class="radioGrid"><label class="radio"><input type="radio" name="${p}SedGran" value="< 2 mm"> &lt; 2 mm</label><label class="radio"><input type="radio" name="${p}SedGran" value="< 0,63 mm"> &lt; 0,63 mm</label><label class="radio"><input type="radio" name="${p}SedGran" value="Autre"> Autre</label></div><input id="${p}SedGranAutre" type="text" placeholder="Préciser autre granulométrie" style="margin-top:6px"></div></div>
       </div>
-      <div class="sedimentRow"><div class="sedimentLabel">Organisme récepteur</div><div class="sedimentValue"><input id="${p}SedRecepteur"></div></div>
-      <div class="sedimentRow"><div class="sedimentLabel">Date / heure remise</div><div class="sedimentValue"><input id="${p}SedRemise" type="datetime-local"></div></div>
     </div>
   </div>`;
 }

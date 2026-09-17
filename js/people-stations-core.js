@@ -14,7 +14,15 @@ q('addOperator')?.addEventListener('click',()=>setTimeout(()=>{const o=(custom.p
 function receiverOrgOptions(){
   const base=["Office de l'Eau de Guyane","HYDRECO","EUROFINS"];
   const customOrgs=(custom.preleveurs||[]).map(operatorOrg).filter(Boolean);
-  return [...new Set([...base,...customOrgs])].sort((a,b)=>a.localeCompare(b,'fr'));
+  const manualOrgs=custom.receiverOrgs||[];
+  return [...new Set([...base,...customOrgs,...manualOrgs])].sort((a,b)=>a.localeCompare(b,'fr'));
+}
+function rememberReceiverOrg(name){
+  const v=(name||'').trim();
+  if(!v||receiverOrgOptions().includes(v))return;
+  custom.receiverOrgs=custom.receiverOrgs||[];
+  custom.receiverOrgs.push(v);
+  saveLS(LSC,custom);
 }
 function receivers(id){
   const input=q(id);if(!input||input.dataset.multi)return;
@@ -23,11 +31,12 @@ function receivers(id){
   const field=input.closest('.field'), dateField=dateInput?.closest('.field');
   if(field)field.classList.add('hide');if(dateField)dateField.classList.add('hide');
   const w=document.createElement('div');w.className='transportReceivers';w.id='rxManager_'+id;
-  w.innerHTML='<h4>Organismes récepteurs</h4><div class="hint">Chaque organisme récepteur est sélectionné dans une liste déroulante et possède sa propre date et heure de remise. Plusieurs organismes peuvent être ajoutés.</div><div id="rxRows_'+id+'"></div><button type="button" class="btn ghost small" id="rxAdd_'+id+'">＋ Ajouter un organisme récepteur</button>';
+  w.innerHTML='<h4>Organismes récepteurs</h4><div class="hint">Choisissez un organisme dans la liste ou tapez directement le nom d’un nouvel organisme — il sera proposé automatiquement dans toutes les fiches suivantes. Plusieurs organismes peuvent être ajoutés, chacun avec sa propre date et heure de remise.</div><div id="rxRows_'+id+'"></div><button type="button" class="btn ghost small" id="rxAdd_'+id+'">＋ Ajouter un organisme récepteur</button><datalist id="rxOrgList_'+id+'"></datalist>';
   (field?.parentElement||input.parentElement).appendChild(w);
-  const options=()=>'<option value="">— sélectionner un organisme —</option>'+receiverOrgOptions().map(o=>'<option value="'+E(o)+'">'+E(o)+'</option>').join('');
+  const refreshDatalist=()=>{const dl=q('rxOrgList_'+id);if(dl)dl.innerHTML=receiverOrgOptions().map(o=>'<option value="'+E(o)+'">').join('')};
+  refreshDatalist();
   const rows=()=>[...w.querySelectorAll('.receiverRow')].map(r=>({organisme:r.querySelector('.rxOrg')?.value.trim()||'',dateHeure:r.querySelector('.rxDate')?.value||''})).filter(x=>x.organisme||x.dateHeure);
-  const draw=arr=>{const host=q('rxRows_'+id);host.innerHTML='';(arr&&arr.length?arr:[{organisme:'',dateHeure:''}]).forEach((x,i)=>{const r=document.createElement('div');r.className='receiverRow';r.innerHTML='<div class="field"><label>Organisme récepteur '+(i+1)+'</label><select class="rxOrg">'+options()+'</select></div><div class="field"><label>Date et heure de remise</label><input class="rxDate" type="datetime-local" value="'+escapeHTML(x.dateHeure||'')+'"></div><button type="button" class="btn danger small rxRemove">Supprimer</button>';host.appendChild(r);const sel=r.querySelector('.rxOrg');if(x.organisme)sel.value=x.organisme;r.querySelector('.rxRemove').onclick=()=>{if(host.children.length===1){sel.value='';r.querySelector('.rxDate').value=''}else{r.remove();[...host.children].forEach((row,j)=>row.querySelector('label').textContent='Organisme récepteur '+(j+1))}}})};
+  const draw=arr=>{const host=q('rxRows_'+id);host.innerHTML='';(arr&&arr.length?arr:[{organisme:'',dateHeure:''}]).forEach((x,i)=>{const r=document.createElement('div');r.className='receiverRow';r.innerHTML='<div class="field"><label>Organisme récepteur '+(i+1)+'</label><input class="rxOrg" list="rxOrgList_'+id+'" placeholder="Sélectionner ou saisir un organisme" value="'+E(x.organisme||'')+'"></div><div class="field"><label>Date et heure de remise</label><input class="rxDate" type="datetime-local" value="'+escapeHTML(x.dateHeure||'')+'"></div><button type="button" class="btn danger small rxRemove">Supprimer</button>';host.appendChild(r);const orgInput=r.querySelector('.rxOrg');orgInput.addEventListener('change',()=>{rememberReceiverOrg(orgInput.value);refreshDatalist()});r.querySelector('.rxRemove').onclick=()=>{if(host.children.length===1){orgInput.value='';r.querySelector('.rxDate').value=''}else{r.remove();[...host.children].forEach((row,j)=>row.querySelector('label').textContent='Organisme récepteur '+(j+1))}}})};
   let initial=[];try{initial=input.dataset.receivers?JSON.parse(input.dataset.receivers):[]}catch(e){}
   if(!initial.length&&(input.value||dateInput?.value))initial=[{organisme:input.value||'',dateHeure:dateInput?.value||''}];
   draw(initial);
