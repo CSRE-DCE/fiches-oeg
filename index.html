@@ -1,4 +1,49 @@
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><meta name="theme-color" content="#003d7a"><title>Fiches terrain OEG — EL / RCO / BIO / ESO / Chimie</title>
+<script>
+/* Filet de sécurité contre les échecs silencieux : affiche toute erreur JavaScript non
+   interceptée sous forme de bandeau rouge en bas d'écran, au lieu de laisser l'appli
+   se comporter bizarrement sans aucune explication visible. Volontairement autonome
+   (aucune dépendance à styles.css ni aux autres scripts) pour fonctionner même si le
+   problème survient très tôt dans le chargement de la page. */
+(function(){
+  var box=null, seen=[];
+  function ensureBox(){
+    if(box)return box;
+    box=document.createElement('div');
+    box.id='oegErrorBox';
+    box.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;max-height:45vh;overflow:auto;font:12px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;';
+    (document.body||document.documentElement).appendChild(box);
+    return box;
+  }
+  function showError(msg){
+    if(seen.indexOf(msg)!==-1)return;
+    seen.push(msg);
+    var b=ensureBox();
+    var line=document.createElement('div');
+    line.style.cssText='background:#a3261f;color:#fff;padding:9px 12px;border-top:1px solid rgba(255,255,255,.3);display:flex;gap:10px;align-items:flex-start;';
+    var text=document.createElement('div');
+    text.style.cssText='flex:1;white-space:pre-wrap;word-break:break-word;';
+    text.textContent='⚠ Erreur : '+msg+' — faites une capture d\u2019écran de ce message et transmettez-la si le problème persiste.';
+    var close=document.createElement('button');
+    close.type='button';close.textContent='×';
+    close.style.cssText='background:transparent;border:0;color:#fff;font-size:20px;line-height:1;cursor:pointer;flex:none;padding:0 2px;';
+    close.onclick=function(){line.remove()};
+    line.appendChild(text);line.appendChild(close);
+    b.appendChild(line);
+  }
+  window.addEventListener('error',function(e){
+    var msg=(e&&e.message)?e.message:'erreur inconnue';
+    if(e&&e.filename)msg+=' ('+String(e.filename).split('/').pop()+':'+e.lineno+')';
+    showError(msg);
+  });
+  window.addEventListener('unhandledrejection',function(e){
+    var reason=e&&e.reason;
+    var msg=(reason&&reason.message)?reason.message:String(reason);
+    showError(msg);
+  });
+  if(document.body)ensureBox();else document.addEventListener('DOMContentLoaded',ensureBox);
+})();
+</script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><link rel="stylesheet" href="styles.css">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="data:image/png;base64,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">
@@ -133,65 +178,65 @@
 </div>
 
 <div class="card hide" id="siteCard"><h2>7 · Conditions du site</h2>
-<div class="field"><label>Météo pendant le prélèvement — Sandre 1425</label>
+<div class="field"><label>Météo pendant le prélèvement<span class="sandreCode">SANDRE 1425</span></label>
 <select id="meteo">
 </select>
 </div>
 <div id="surfaceSandre">
   <div class="grid2">
-    <div class="field"><label>Influence de seuil(s) — 1948</label>
+    <div class="field"><label>Influence de seuil(s)<span class="sandreCode">SANDRE 1948</span></label>
     <select id="seuil">
     </select>
     </div>
-    <div class="field"><label>Type de prélèvement — 1947</label>
+    <div class="field"><label>Type de prélèvement<span class="sandreCode">SANDRE 1947</span></label>
     <select id="typePrelSandre">
     </select>
     </div>
-    <div class="field"><label>Situation hydrologique apparente — 1726</label>
+    <div class="field"><label>Situation hydrologique apparente<span class="sandreCode">SANDRE 1726</span></label>
     <select id="hydro">
     </select>
     </div>
-    <div class="field"><label>Aspect des abords — 1410</label>
+    <div class="field"><label>Aspect des abords<span class="sandreCode">SANDRE 1410</span></label>
     <select id="aspect">
     </select>
     </div>
-    <div class="field"><label>Irisations — 1411</label>
+    <div class="field"><label>Irisations<span class="sandreCode">SANDRE 1411</span></label>
     <select id="irisations">
     </select>
     </div>
-    <div class="field"><label>Mousse de détergent — 1412</label>
+    <div class="field"><label>Mousse de détergent<span class="sandreCode">SANDRE 1412</span></label>
     <select id="mousse">
     </select>
     </div>
-    <div class="field"><label>Produits ligneux/herbacés — 1413</label>
+    <div class="field"><label>Produits ligneux/herbacés<span class="sandreCode">SANDRE 1413</span></label>
     <select id="feuilles">
     </select>
     </div>
-    <div class="field"><label>Boues organiques flottantes — 1423</label>
+    <div class="field"><label>Boues organiques flottantes<span class="sandreCode">SANDRE 1423</span></label>
     <select id="boues">
     </select>
     </div>
-    <div class="field"><label>Autres corps/produits — 1424</label>
+    <div class="field"><label>Autres corps/produits<span class="sandreCode">SANDRE 1424</span></label>
     <select id="autresCorps">
     </select>
     </div>
-    <div class="field"><label>Teinte de l'eau — 1739</label>
+    <div class="field"><label>Teinte de l'eau<span class="sandreCode">SANDRE 1739</span></label>
     <select id="teinte">
     </select>
     </div>
-    <div class="field"><label>Coloration apparente — 1428</label>
+    <div class="field"><label>Coloration apparente<span class="sandreCode">SANDRE 1428</span></label>
     <select id="coloration">
     </select>
     </div>
-    <div class="field"><label>Limpidité — 1422</label>
+    <div class="field"><label>Limpidité<span class="sandreCode">SANDRE 1422</span></label>
     <select id="limpidite">
     </select>
     </div>
-    <div class="field"><label>Odeur — 1416</label>
+    <div class="field"><label>Odeur<span class="sandreCode">SANDRE 1416</span></label>
     <select id="odeur">
     </select>
     </div>
-    <div class="field"><label>Ombrage — 1415</label>
+    <div class="field"><label>Ombrage<span class="sandreCode">SANDRE 1415</span></label>
     <select id="ombre">
     </select>
     </div>
@@ -200,19 +245,19 @@
       <div class="field"><label>Distance berge (m)</label>
       <input id="berge" type="number" step="any">
       </div>
-      <div class="field"><label>Tendance débit — 1724</label>
+      <div class="field"><label>Tendance débit<span class="sandreCode">SANDRE 1724</span></label>
       <select id="debitTendance">
       </select>
       </div>
-      <div class="field"><label>Recouvrement macrophytes (%) — 1415</label>
+      <div class="field"><label>Recouvrement macrophytes (%)<span class="sandreCode">SANDRE 1079</span></label>
       <input id="macro" type="number" min="0" max="100" step="any">
       </div>
       </div>
       <div class="grid2">
-        <div class="field"><label>Largeur (m) — 7174</label>
+        <div class="field"><label>Largeur (m)<span class="sandreCode">SANDRE 7174</span></label>
         <input id="largeur" type="number" step="any">
         </div>
-        <div class="field"><label>Profondeur moyenne (m) — 1418</label>
+        <div class="field"><label>Profondeur moyenne (m)<span class="sandreCode">SANDRE 1418</span></label>
         <input id="profMoy" type="number" step="any">
         </div>
         </div>
@@ -315,6 +360,9 @@
 </section>
 <section id="stations" class="view">
   <div class="card"><h2>Référentiel stations + carte + itinéraire</h2>
+  <div class="field"><label>Rechercher une station</label>
+  <input id="stationSearchFilter" placeholder="Tapez le nom (ou une partie du nom) de la station…">
+  </div>
   <div class="grid2">
     <div class="field"><label>Réseau / marché</label>
     <select id="stationMarketFilter">
@@ -629,6 +677,7 @@
     <button class="btn danger" id="reset">Effacer toutes les données locales</button>
     </div>
     <p class="note">Les fiches sont stockées localement sur l'appareil. En plus de l'export manuel, une sauvegarde automatique se télécharge toutes les 10 minutes dès qu'une fiche est enregistrée — pensez à vider régulièrement votre dossier Téléchargements.</p></div><div class="card" id="tabletSyncCard"><h2>Sauvegarde tablette & synchronisation</h2>
+  <p class="note" id="appBuildInfo" style="font-weight:800;color:var(--brand2)"></p>
   <div class="banner info">À faire une seule fois par tablette : choisissez le fichier de sauvegarde local, puis (si besoin) connectez Google Drive. Ensuite chaque fiche enregistrée met à jour automatiquement ce fichier, sur la tablette et sur Drive dès qu'il y a une connexion.</div>
   <h3>1. Dossier de sauvegarde sur la tablette</h3>
   <p class="note" id="localFileStatus">Aucun dossier local configuré.</p>
@@ -648,7 +697,9 @@
     <button class="btn primary small" id="connectDriveBtn">🔗 Connecter Google Drive</button>
     <button class="btn ghost small" id="disconnectDriveBtn" style="display:none">Déconnecter</button>
     <button class="btn ghost small" id="syncNowBtn">↻ Synchroniser maintenant</button>
+    <button class="btn ghost small" id="pullDriveBtn">⬇️ Récupérer l'historique complet depuis Drive</button>
   </div>
+  <p class="note">"Récupérer l'historique" va chercher, sur Google Drive, les fiches enregistrées par les autres tablettes connectées au même compte Google, et les ajoute à celles déjà présentes ici — utile avant de générer un CRT pour que le suivi historique d'une station soit complet.</p>
   </div><div class="card" 
 id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 <div class="banner info">Les opérateurs et équipements ajoutés ici deviennent disponibles immédiatement dans les fiches. Le code GMAO d’une sonde renseigne automatiquement son nom et son numéro de série. Les préleveurs sont sélectionnables par cases à cocher multiples.</div>
@@ -725,6 +776,10 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 <body>
 
 <script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
+<script>
+window.APP_BUILD='2026-09-16 · build 15';
+document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('appBuildInfo');if(el)el.textContent='Version de l\'application installée sur cet appareil : '+window.APP_BUILD;});
+</script>
 <script>
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{
