@@ -1262,7 +1262,59 @@ function refreshAutoBackupStatus(){
   el.textContent='Dernière sauvegarde automatique : '+new Date(last).toLocaleString('fr-FR')+(mins<1?' (à l’instant)':' (il y a '+mins+' min)');
 }
 window.refreshAutoBackupStatus=refreshAutoBackupStatus;
-$('importJSON').onchange=e=>{const f=e.target.files[0];if(!f)return;const fr=new FileReader();fr.onload=()=>{try{const d=JSON.parse(fr.result);if(d.records)records=records.concat(d.records);if(d.custom)custom=d.custom;saveLS(LS,records);saveLS(LSC,custom);renderOperators();renderEquipment();renderOrgOptions();renderPre();updateCount();renderList();if($('suivi')?.classList.contains('active'))renderSuivi();toast('Sauvegarde importée ✓')}catch(err){toast('JSON invalide')}};fr.readAsText(f)};
+function mergeCustomInto(target,incoming){
+  if(!incoming)return;
+  ['equipements','preleveurs','stations'].forEach(k=>{
+    if(!Array.isArray(incoming[k]))return;
+    target[k]=target[k]||[];
+    const seen=new Set(target[k].map(x=>JSON.stringify(x)));
+    incoming[k].forEach(x=>{const s=JSON.stringify(x);if(!seen.has(s)){target[k].push(x);seen.add(s)}});
+  });
+  if(incoming.stationAccess)target.stationAccess=Object.assign({},target.stationAccess||{},incoming.stationAccess);
+  if(Array.isArray(incoming.receiverOrgs))target.receiverOrgs=[...new Set([...(target.receiverOrgs||[]),...incoming.receiverOrgs])];
+  Object.keys(incoming).forEach(k=>{
+    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs'].includes(k))return;
+    if(target[k]===undefined)target[k]=incoming[k];
+  });
+}
+// Accepte à la fois une sauvegarde consolidée ({records:[...],custom:{...}}, export manuel ou
+// sauvegarde automatique périodique) ET une sélection de plusieurs fichiers individuels (une
+// fiche = un fichier, tels qu'écrits dans le dossier local ou récupérés depuis Drive) — utile
+// pour récupérer des fiches d'une ancienne version de l'appli après une mise à jour. Les fiches
+// dont l'identifiant existe déjà sont mises à jour ; les autres sont ajoutées.
+$('importJSON').onchange=e=>{
+  const files=[...e.target.files];
+  if(!files.length)return;
+  let imported=0,updated=0,fail=0,pending=files.length;
+  const finish=()=>{
+    saveLS(LS,records);saveLS(LSC,custom);
+    renderOperators();renderEquipment();renderOrgOptions();renderPre();updateCount();renderList();
+    if($('suivi')?.classList.contains('active'))renderSuivi();
+    e.target.value='';
+    toast(`Import terminé : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(fail?`, ${fail} fichier(s) invalide(s)`:'')+' ✓');
+  };
+  files.forEach(f=>{
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const d=JSON.parse(fr.result);
+        if(Array.isArray(d.records)){
+          d.records.forEach(r=>{
+            const idx=records.findIndex(x=>x.id===r.id);
+            if(idx>-1){records[idx]=r;updated++}else{records.push(r);imported++}
+          });
+          mergeCustomInto(custom,d.custom);
+        }else if(d&&d.id&&d.network){
+          const idx=records.findIndex(x=>x.id===d.id);
+          if(idx>-1){records[idx]=d;updated++}else{records.push(d);imported++}
+        }else{fail++}
+      }catch(err){fail++}
+      if(--pending===0)finish();
+    };
+    fr.onerror=()=>{fail++;if(--pending===0)finish()};
+    fr.readAsText(f);
+  });
+};
 $('reset').onclick=()=>{if(confirm('Effacer toutes les fiches et données personnalisées ?')){localStorage.removeItem(LS);localStorage.removeItem(LSC);localStorage.removeItem('oeg_field_v3');localStorage.removeItem('oeg_custom_v3');records=[];custom={preleveurs:[],stations:[],equipements:[]};updateCount();renderList();renderAdmin()}};
 function renderAdmin(){
   renderOperators();renderEquipment();refreshAutoBackupStatus();
