@@ -128,13 +128,14 @@
           <div class="field"><label>Y théorique — RGFG95 / UTM22N</label>
           <input class="readonly" type="number" step="any" id="yTheo" readonly>
           </div>
-          <div class="field"><label>X terrain — RGFG95 / UTM22N</label>
+          <div class="field"><label>X terrain — selon projection sélectionnée ci-dessus</label>
           <input type="number" step="any" id="xT">
           </div>
-          <div class="field"><label>Y terrain — RGFG95 / UTM22N</label>
+          <div class="field"><label>Y terrain — selon projection sélectionnée ci-dessus</label>
           <input type="number" step="any" id="yT">
           </div>
           </div>
+          <div class="hint" id="xyTConverted"></div>
           <div id="distanceBox" class="gpsbox">
             <div>Écart point GPS théorique ↔ point terrain</div>
             <div class="metric" id="distance">—</div>
@@ -156,6 +157,16 @@
 <div id="mediaGrid" class="mediaGrid">
 </div>
 <div class="elHide"><h3>Schéma / dessin du lieu d'échantillonnage</h3>
+<div class="drawToolbar">
+  <div class="colorSwatches" id="drawColors">
+    <button type="button" class="swatch sel" data-color="#17212b" style="background:#17212b" aria-label="Noir"></button>
+    <button type="button" class="swatch" data-color="#c0392b" style="background:#c0392b" aria-label="Rouge"></button>
+    <button type="button" class="swatch" data-color="#1d6fb8" style="background:#1d6fb8" aria-label="Bleu"></button>
+    <button type="button" class="swatch" data-color="#2e8b3d" style="background:#2e8b3d" aria-label="Vert"></button>
+    <button type="button" class="swatch" data-color="#e08e0b" style="background:#e08e0b" aria-label="Orange"></button>
+  </div>
+  <button type="button" class="btn ghost small" id="drawEraser">🧹 Gomme</button>
+</div>
 <canvas id="draw" class="draw">
 </canvas>
 <div class="field schemaLegendBox" style="margin-top:8px"><label>Légende du schéma — intégrée depuis la fiche de référence</label>
@@ -166,7 +177,7 @@
   </div>
   </div>
   <div class="actions">
-    <button class="btn ghost small" id="clearDraw">Effacer le dessin</button>
+    <button class="btn ghost small" id="clearDraw">Effacer tout le dessin</button>
   </div></div>
     </div>
 
@@ -700,7 +711,9 @@
     <button class="btn ghost small" id="disconnectDriveBtn" style="display:none">Déconnecter</button>
     <button class="btn ghost small" id="syncNowBtn">↻ Synchroniser maintenant</button>
     <button class="btn ghost small" id="pullDriveBtn">⬇️ Récupérer l'historique complet depuis Drive</button>
+    <button class="btn ghost small" id="lightenStorageBtn">🗜️ Alléger le stockage (fiches déjà sauvegardées)</button>
   </div>
+  <p class="note">"Alléger le stockage" retire les photos, dessins et signatures du stockage du navigateur pour les fiches déjà confirmées sauvegardées dans le dossier local et/ou sur Drive — utile si un message "stockage saturé" apparaît. Rien n'est perdu : le contenu original reste dans les fichiers déjà écrits, récupérable via "Importer JSON" ou "Récupérer l'historique depuis Drive".</p>
   <p class="note">"Récupérer l'historique" va chercher, sur Google Drive, les fiches enregistrées par les autres tablettes connectées au même compte Google, et les ajoute à celles déjà présentes ici — utile avant de générer un CRT pour que le suivi historique d'une station soit complet.</p>
   </div><div class="card" 
 id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
@@ -779,7 +792,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
 <script>
-window.APP_BUILD='2026-09-16 · build 19';
+window.APP_BUILD='2026-09-16 · build 21';
 document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('appBuildInfo');if(el)el.textContent='Version de l\'application installée sur cet appareil : '+window.APP_BUILD;});
 </script>
 <script>
