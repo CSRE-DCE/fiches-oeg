@@ -944,32 +944,82 @@ function collectConditions(){
   }
   return collectSimple(['meteo','seuil','typePrelSandre','hydro','aspect','irisations','mousse','feuilles','boues','autresCorps','teinte','coloration','limpidite','odeur','ombre','berge','debitTendance','macro','largeur','profMoy','siteObs']);
 }
+// Convertit un point terrain (saisi dans la projection choisie par l'agent) vers UTM 22N —
+// la projection de référence utilisée pour les coordonnées théoriques des stations — afin que
+// l'écart GPS théorique/terrain reste correct même si le relevé terrain a été fait en UTM 21N
+// (cas fréquent dans l'ouest de la Guyane, à cheval sur les deux fuseaux).
+function terrainToZone22(xRaw,yRaw,projLabel){
+  const x=Number(xRaw),y=Number(yRaw);
+  if(!Number.isFinite(x)||!Number.isFinite(y))return null;
+  if(/21/.test(String(projLabel||''))){
+    const [lat,lon]=utmToLatLon(x,y,21);
+    return latLonToUtm(lat,lon,22);
+  }
+  return [x,y];
+}
 function updateDistance(){
   const s=getStation();
-  const x=parseFloat(val('xT')),y=parseFloat(val('yT'));
-  if(s&&Number.isFinite(x)&&Number.isFinite(y)&&Number.isFinite(Number(s.x))&&Number.isFinite(Number(s.y))){
-    const d=ecartGPS(Number(s.x),Number(s.y),x,y);
+  const proj=val('projection'),conv=terrainToZone22(val('xT'),val('yT'),proj);
+  const convEl=$('xyTConverted');
+  if(s&&conv&&Number.isFinite(Number(s.x))&&Number.isFinite(Number(s.y))){
+    const d=ecartGPS(Number(s.x),Number(s.y),conv[0],conv[1]);
     $('distance').textContent=d.toFixed(1)+' m';
-  }else $('distance').textContent='—';
+    if(convEl){
+      if(/21/.test(proj))convEl.textContent='Converti en RGFG95 / UTM22N pour le calcul : X='+conv[0].toFixed(2)+' · Y='+conv[1].toFixed(2);
+      else convEl.textContent='';
+    }
+  }else{
+    $('distance').textContent='—';
+    if(convEl)convEl.textContent='';
+  }
 }
 $('xT').oninput=updateDistance;$('yT').oninput=updateDistance;
+$('projection')?.addEventListener('change',updateDistance);
 
 function setupCanvas(c){
   const dpr=devicePixelRatio||1,r=c.getBoundingClientRect();c.width=r.width*dpr;c.height=r.height*dpr;
-  const ctx=c.getContext('2d');ctx.scale(dpr,dpr);ctx.lineWidth=2;ctx.lineCap='round';
+  const ctx=c.getContext('2d');ctx.scale(dpr,dpr);ctx.lineWidth=2;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#17212b';
   let active=false;c.onpointerdown=e=>{active=true;c.setPointerCapture(e.pointerId);const q=c.getBoundingClientRect();ctx.beginPath();ctx.moveTo(e.clientX-q.left,e.clientY-q.top)};
   c.onpointermove=e=>{if(!active)return;const q=c.getBoundingClientRect();ctx.lineTo(e.clientX-q.left,e.clientY-q.top);ctx.stroke()};
   c.onpointerup=()=>active=false;c.onpointercancel=()=>active=false;return ctx
+}
+// Palette de couleurs et gomme pour le canvas "Schéma / dessin" : la gomme efface localement
+// (transparence, via globalCompositeOperation="destination-out") plutôt que tout le dessin —
+// seul l'endroit où l'on repasse est effacé, le reste du schéma reste intact.
+function setupDrawTools(canvas){
+  if(!canvas||canvas.dataset.toolsReady)return;canvas.dataset.toolsReady='1';
+  const ctx=canvas.getContext('2d');
+  let eraser=false,color='#17212b';
+  const swatches=document.querySelectorAll('#drawColors .swatch');
+  swatches.forEach(b=>b.onclick=()=>{
+    color=b.dataset.color;eraser=false;
+    swatches.forEach(x=>x.classList.remove('sel'));b.classList.add('sel');
+    const eraserBtn=$('drawEraser');if(eraserBtn)eraserBtn.classList.remove('sel');
+    ctx.globalCompositeOperation='source-over';ctx.strokeStyle=color;ctx.lineWidth=2;
+  });
+  const eraserBtn=$('drawEraser');
+  if(eraserBtn)eraserBtn.onclick=()=>{
+    eraser=!eraser;
+    eraserBtn.classList.toggle('sel',eraser);
+    if(eraser){ctx.globalCompositeOperation='destination-out';ctx.lineWidth=16}
+    else{ctx.globalCompositeOperation='source-over';ctx.strokeStyle=color;ctx.lineWidth=2}
+  };
 }
 function restoreCanvas(c,data){const im=new Image();im.onload=()=>c.getContext('2d').drawImage(im,0,0,c.clientWidth,c.clientHeight);im.src=data}
 function initCanvases(){
   const dEl=$('draw'),sEl=$('signature');
   if(dEl&&dEl.width>0&&!state.draw)state.draw=dEl.toDataURL('image/png');
   if(sEl&&sEl.width>0&&!state.signature)state.signature=sEl.toDataURL('image/png');
-  setupCanvas(dEl);setupCanvas(sEl);
+  setupCanvas(dEl);setupCanvas(sEl);setupDrawTools(dEl);
   if(state.draw)restoreCanvas(dEl,state.draw);if(state.signature)restoreCanvas(sEl,state.signature);
 }
-$('clearDraw').onclick=()=>{$('draw').getContext('2d').clearRect(0,0,$('draw').clientWidth,$('draw').clientHeight);state.draw=null};
+$('clearDraw').onclick=()=>{
+  const c=$('draw'),ctx=c.getContext('2d');
+  ctx.clearRect(0,0,c.clientWidth,c.clientHeight);state.draw=null;
+  ctx.globalCompositeOperation='source-over';ctx.strokeStyle='#17212b';ctx.lineWidth=2;
+  document.querySelectorAll('#drawColors .swatch').forEach((b,i)=>b.classList.toggle('sel',i===0));
+  $('drawEraser')?.classList.remove('sel');
+};
 $('clearSig').onclick=()=>{$('signature').getContext('2d').clearRect(0,0,$('signature').clientWidth,$('signature').clientHeight);state.signature=null};
 $('printBtn').onclick=()=>window.print();
 
@@ -1108,6 +1158,7 @@ function loadRecord(id){
   // Restore dynamically generated specific fields
   Object.entries(f.specific||{}).forEach(([k,v])=>{const e=$(k);if(e){if(e.type==='checkbox')e.checked=!!v;else e.value=v||''}});
   renderPhotos();if(window.drawPhotoGroups)drawPhotoGroups();updateDistance();$('save').textContent='💾 Mettre à jour la fiche';window.scrollTo(0,0);
+  if(f._archived)toast('⚠️ Fiche allégée : '+(f._archivedPhotoCount||0)+' photo(s)/dessin retirés du stockage local (déjà sauvegardés ailleurs). Réimportez le fichier original pour les revoir/modifier.');
   })(id);
   /* Restaure les champs qualité / traçabilité étendus (ancien correctif) */
   const f=records.find(x=>x.id===id);if(!f)return;
@@ -1280,6 +1331,36 @@ function mergeCustomInto(target,incoming){
 // gestionnaire pour fusionner intelligemment le référentiel (équipements/opérateurs/stations)
 // de plusieurs fichiers importés sans rien écraser par erreur.
 $('reset').onclick=()=>{if(confirm('Effacer toutes les fiches et données personnalisées ?')){localStorage.removeItem(LS);localStorage.removeItem(LSC);localStorage.removeItem('oeg_field_v3');localStorage.removeItem('oeg_custom_v3');records=[];custom={preleveurs:[],stations:[],equipements:[]};updateCount();renderList();renderAdmin()}};
+
+// Retire les photos/dessin/signature (le contenu le plus volumineux) des fiches déjà
+// confirmées sauvegardées dans le dossier local et/ou sur Google Drive, pour libérer de la
+// place dans le stockage du navigateur (qui a un plafond très bas, souvent quelques Mo). Le
+// contenu original reste intact dans les fichiers déjà écrits — en cas de besoin, on le
+// retrouve via "Importer JSON" (dossier local) ou "Récupérer l'historique depuis Drive".
+async function lightenStorage(){
+  if(!window.OEGSync){toast('Synchronisation non disponible.');return}
+  const btn=$('lightenStorageBtn');if(btn)btn.disabled=true;
+  let count=0,freed=0;
+  for(const r of records){
+    if(r._archived)continue;
+    if(state.editing===r.id)continue; // ne jamais toucher la fiche en cours d'édition
+    const heavy=(r.photos&&r.photos.length)||(r.dessin&&r.dessin.length>200)||(r.signature&&r.signature.length>200);
+    if(!heavy)continue;
+    const backed=await window.OEGSync.isBackedUp(r.id);
+    if(!backed)continue;
+    const before=JSON.stringify(r).length;
+    r._archivedPhotoCount=(r.photos||[]).length;
+    r.photos=[];r.dessin='';r.signature='';
+    r._archived=true;r._archivedAt=new Date().toISOString();
+    freed+=before-JSON.stringify(r).length;
+    count++;
+    await window.OEGSync.adoptCurrentHash(r.id);
+  }
+  if(btn)btn.disabled=false;
+  if(count){saveLS(LS,records);updateCount();renderList()}
+  toast(count?`Stockage allégé : ${count} fiche(s), ~${Math.round(freed/1024)} Ko libérés ✓`:'Aucune fiche à alléger pour le moment (déjà légères, ou pas encore confirmées sauvegardées ailleurs).');
+}
+$('lightenStorageBtn')?.addEventListener('click',lightenStorage);
 function renderAdmin(){
   renderOperators();renderEquipment();refreshAutoBackupStatus();
   const allStations=stations(); const mk=[...new Set(allStations.map(x=>x.marche||x.market||'').filter(Boolean))]; const bv=[...new Set(allStations.map(x=>x.bassin||x.bassinVersant||'').filter(Boolean))]; const sm=$('customMarche'),sb=$('customBassin'); if(sm){const c=sm.value;sm.innerHTML='<option value="">— sélectionner un marché —</option>'+mk.map(v=>'<option>'+E(v)+'</option>').join('');if(mk.includes(c))sm.value=c} if(sb){const c=sb.value;sb.innerHTML='<option value="">— sélectionner un bassin versant —</option>'+bv.map(v=>'<option>'+E(v)+'</option>').join('');if(bv.includes(c))sb.value=c}
