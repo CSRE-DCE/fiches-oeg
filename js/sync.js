@@ -625,6 +625,31 @@
     init();
   }
 
+  async function isBackedUp(recordId){
+    const rec=records.find(r=>r.id===recordId);
+    if(!rec)return false;
+    try{
+      const hash=await hashOf(rec);
+      const localOk=!!(localFolderHandle && localHashes[recordId]===hash);
+      const driveOk=!!(driveCfg.connected && driveHashes[recordId]===hash);
+      return localOk||driveOk;
+    }catch(e){return false}
+  }
+
+  // Après un allégement local (photos/dessin retirés de "records" pour libérer de la place —
+  // voir lightenStorage() dans app-core.js), le contenu du navigateur ne correspond plus au
+  // fichier déjà écrit sur le dossier local / Drive (c'est voulu : le fichier garde tout).
+  // Sans cet appel, la prochaine synchronisation verrait un "changement" et écraserait le bon
+  // fichier avec la version allégée. On aligne donc les empreintes suivies sur l'état actuel
+  // (allégé) SANS rien réécrire, pour que la synchronisation laisse les fichiers tranquilles.
+  async function adoptCurrentHash(recordId){
+    const rec=records.find(r=>r.id===recordId);
+    if(!rec)return;
+    const hash=await hashOf(rec);
+    if(localFolderHandle){localHashes[recordId]=hash;saveLocalHashes()}
+    if(driveCfg.connected){driveHashes[recordId]=hash;saveDriveHashes()}
+  }
+
   window.OEGSync = {
     notifyChange,
     chooseLocalFolder,
@@ -632,6 +657,8 @@
     connectDrive,
     disconnectDrive,
     manualSyncNow,
-    pullFromDrive
+    pullFromDrive,
+    isBackedUp,
+    adoptCurrentHash
   };
 })();

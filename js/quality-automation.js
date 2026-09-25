@@ -108,11 +108,12 @@
     });return out;
   }
   function gpsChecks(r){
-    const s=stationCoords(r); const xt=qcNum(r?.xTerrain),yt=qcNum(r?.yTerrain),xs=qcNum(s?.x),ys=qcNum(s?.y);
+    const s=stationCoords(r); const xs=qcNum(s?.x),ys=qcNum(s?.y);
     if(xs==null||ys==null)return [{label:'Coordonnées GPS théoriques disponibles',ok:true,level:'info'}];
-    const out=[];out.push({label:'Coordonnées GPS terrain numériques',ok:xt!==null&&yt!==null,level:'critical'});
-    if(xt!==null&&yt!==null){
-      const d=Math.hypot(xt-xs,yt-ys),max=Number(custom.qualityConfig.gpsMaxDeviationM)||1000;
+    const conv=(typeof terrainToZone22==='function')?terrainToZone22(r?.xTerrain,r?.yTerrain,r?.projection):(qcNum(r?.xTerrain)!=null&&qcNum(r?.yTerrain)!=null?[qcNum(r?.xTerrain),qcNum(r?.yTerrain)]:null);
+    const out=[];out.push({label:'Coordonnées GPS terrain numériques',ok:!!conv,level:'critical'});
+    if(conv){
+      const d=Math.hypot(conv[0]-xs,conv[1]-ys),max=Number(custom.qualityConfig.gpsMaxDeviationM)||1000;
       out.push({label:'Écart GPS calculé',ok:true,level:'info',detail:`${d.toFixed(1)} m`});
       out.push({label:`Écart GPS ≤ ${max} m (règle OEG paramétrable)`,ok:d<=max,level:'warning',detail:`${d.toFixed(1)} m`});
     } else out.push({label:'Écart GPS calculable',ok:false,level:'critical'});
