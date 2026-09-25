@@ -792,7 +792,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
 <script>
-window.APP_BUILD='2026-09-16 · build 21';
+window.APP_BUILD='2026-09-16 · build 24';
 document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('appBuildInfo');if(el)el.textContent='Version de l\'application installée sur cet appareil : '+window.APP_BUILD;});
 </script>
 <script>
@@ -810,5 +810,34 @@ if('serviceWorker' in navigator){
     navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloaded)return;reloaded=true;window.location.reload()});
   });
 }
+// Détecte une mise à jour INCOMPLÈTE (certains fichiers .js renvoyés sur GitHub, d'autres
+// oubliés/anciens) : contrôle la présence de quelques fonctions récentes représentatives de
+// chaque fichier, et affiche un message explicite si l'un d'eux manque — plutôt que de laisser
+// l'utilisateur face à une erreur technique du type "X is not a function".
+window.addEventListener('load',()=>{
+  setTimeout(()=>{
+    const checks=[
+      ['js/sync.js', ()=>typeof window.OEGSync?.isBackedUp==='function'],
+      ['js/sync.js', ()=>typeof window.OEGSync?.pullFromDrive==='function'],
+      ['js/people-stations-core.js', ()=>typeof window.drawPhotoGroups==='function'],
+      ['js/app-core.js', ()=>typeof window.escapeHTML==='function'],
+      ['js/crt-access.js', ()=>typeof window.setupCRT==='function'],
+    ];
+    const missing=[...new Set(checks.filter(c=>{try{return !c[1]()}catch(e){return true}}).map(c=>c[0]))];
+    if(missing.length){
+      const el=document.createElement('div');
+      el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99998;background:#a3261f;color:#fff;padding:9px 12px;font:12px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;gap:10px;align-items:flex-start';
+      const text=document.createElement('div');
+      text.style.cssText='flex:1;white-space:pre-wrap';
+      text.textContent='⚠ Mise à jour incomplète détectée : '+missing.join(', ')+' semble ancien ou manquant. Renvoyez TOUS les fichiers du paquet fourni sur GitHub (pas une sélection), puis videz le cache de la tablette (Paramètres du site → Effacer les données).';
+      const close=document.createElement('button');
+      close.type='button';close.textContent='×';
+      close.style.cssText='background:transparent;border:0;color:#fff;font-size:20px;line-height:1;cursor:pointer;flex:none;padding:0 2px';
+      close.onclick=()=>el.remove();
+      el.appendChild(text);el.appendChild(close);
+      document.body.appendChild(el);
+    }
+  },600);
+});
 </script>
 </body></html>
