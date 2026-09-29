@@ -42,6 +42,30 @@ window.addEventListener('afterprint',()=>{
   document.querySelectorAll('#new .printTextareaValue').forEach(rep=>rep.remove());
 });
 
+// Met en évidence (bordure/fond vert clair) les champs remplis dans la fiche en cours, pour
+// repérer d'un coup d'œil ce qui reste à saisir. Fonctionne pour tous les types de champs
+// (texte, nombre, date, select, textarea, case à cocher, bouton radio).
+function isFieldFilled(field){
+  const inputs=[...field.querySelectorAll('input,select,textarea')];
+  if(!inputs.length)return false;
+  return inputs.some(x=>{
+    if(x.type==='file')return false;
+    if(x.type==='radio'||x.type==='checkbox')return x.checked;
+    return (x.value||'').trim()!=='';
+  });
+}
+function markFilledFields(root){
+  (root||document).querySelectorAll('.field').forEach(f=>{f.classList.toggle('filled',isFieldFilled(f))});
+}
+document.addEventListener('input',e=>{const f=e.target.closest?.('#new .field');if(f)f.classList.toggle('filled',isFieldFilled(f))});
+document.addEventListener('change',e=>{const f=e.target.closest?.('#new .field');if(f)f.classList.toggle('filled',isFieldFilled(f))});
+// Filet de sécurité : couvre les valeurs posées par du code (chargement d'une fiche, calculs
+// automatiques...) qui ne déclenchent pas d'événement "input"/"change".
+if(typeof setInterval==='function')setInterval(()=>{const n=$('new');if(n&&n.classList.contains('active'))markFilledFields(n)},1500);
+if(typeof MutationObserver==='function'){
+  new MutationObserver(()=>{const n=$('new');if(n)markFilledFields(n)}).observe($('new')||document.body,{childList:true,subtree:true});
+}
+
 let records=load(LS,load('oeg_field_v3',[]));
 let custom=load(LSC,load('oeg_custom_v3',{preleveurs:[],stations:[],equipements:[]}));
 custom.preleveurs=(custom.preleveurs||[]).map(o=>typeof o==='string'?{nom:o,prenom:'',organisme:o==='PF'||o==='AA'||o==='SM'||o==='ML'||o==='MG'||o==='MB'?'Office de l\'Eau de Guyane':'',legacy:true}:o);
@@ -952,6 +976,7 @@ function terrainToZone22(xRaw,yRaw,projLabel){
   const x=Number(xRaw),y=Number(yRaw);
   if(!Number.isFinite(x)||!Number.isFinite(y))return null;
   if(/21/.test(String(projLabel||''))){
+    if(typeof utmToLatLon!=='function'||typeof latLonToUtm!=='function')return null; // module géo pas encore chargé : pas de conversion silencieuse hasardeuse
     const [lat,lon]=utmToLatLon(x,y,21);
     return latLonToUtm(lat,lon,22);
   }
@@ -961,7 +986,7 @@ function updateDistance(){
   const s=getStation();
   const proj=val('projection'),conv=terrainToZone22(val('xT'),val('yT'),proj);
   const convEl=$('xyTConverted');
-  if(s&&conv&&Number.isFinite(Number(s.x))&&Number.isFinite(Number(s.y))){
+  if(s&&conv&&Number.isFinite(Number(s.x))&&Number.isFinite(Number(s.y))&&typeof ecartGPS==='function'){
     const d=ecartGPS(Number(s.x),Number(s.y),conv[0],conv[1]);
     $('distance').textContent=d.toFixed(1)+' m';
     if(convEl){

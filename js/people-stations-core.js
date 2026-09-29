@@ -62,7 +62,7 @@ function stations(){let a=[];Object.values(DATA||{}).forEach(v=>Array.isArray(v)
 function meta(x){const a=(custom.stationAccess||{})[x?.code||x?.nom]||{};return {m:x.marche||x.market||a.marche||'',b:x.bassin||x.bassinVersant||x.bv||a.bassin||'',x:+x.x,y:+x.y}}
 window.guyaneMap=null;window.guyaneLayer=null;
 /* utmToLatLon() est fournie par js/geo.js (module ES partagé, voir window.utmToLatLon). */
-function stationLatLon(x){if(Number.isFinite(+x.lat)&&Number.isFinite(+x.lon))return [+x.lat,+x.lon];const ex=Number(x.x),ny=Number(x.y);if(!Number.isFinite(ex)||!Number.isFinite(ny))return null;const proj=String(x.projection||x.refSpatial||x.reference||'RGFG 95 / UTM 22N');return utmToLatLon(ex,ny,/21/.test(proj)?21:22)}
+function stationLatLon(x){if(Number.isFinite(+x.lat)&&Number.isFinite(+x.lon))return [+x.lat,+x.lon];const ex=Number(x.x),ny=Number(x.y);if(!Number.isFinite(ex)||!Number.isFinite(ny))return null;if(typeof utmToLatLon!=='function')return null;const proj=String(x.projection||x.refSpatial||x.reference||'RGFG 95 / UTM 22N');return utmToLatLon(ex,ny,/21/.test(proj)?21:22)}
 function stationTransport(x){return x.transport||x.moyensTransport||x.transportNecessaire||'À préciser'}window.stations=stations;window.meta=meta;window.stationLatLon=stationLatLon;window.stationTransport=stationTransport;
 
 
@@ -76,7 +76,7 @@ function geoErrorMessage(err){
 window.geoErrorMessage=geoErrorMessage;
 q('routeUsePosition')?.addEventListener('click',()=>{if(!navigator.geolocation)return toast('Géolocalisation non disponible sur cet appareil/navigateur');navigator.geolocation.getCurrentPosition(p=>{q('routeDeparture').value=p.coords.latitude.toFixed(6)+', '+p.coords.longitude.toFixed(6);toast('Position de départ renseignée ✓')},err=>toast(geoErrorMessage(err)),{enableHighAccuracy:true,timeout:10000,maximumAge:0})});
 
-q('geolocateBtn')?.addEventListener('click',()=>{if(!navigator.geolocation)return toast('Géolocalisation non disponible sur cet appareil/navigateur');navigator.geolocation.getCurrentPosition(p=>{const zone=/21/.test(val('projection'))?21:22;const [x,y]=latLonToUtm(p.coords.latitude,p.coords.longitude,zone);q('xT').value=x.toFixed(2);q('yT').value=y.toFixed(2);updateDistance();toast('Position GPS renseignée ✓')},err=>toast(geoErrorMessage(err)),{enableHighAccuracy:true,timeout:10000,maximumAge:0})});
+q('geolocateBtn')?.addEventListener('click',()=>{if(!navigator.geolocation)return toast('Géolocalisation non disponible sur cet appareil/navigateur');if(typeof latLonToUtm!=='function')return toast('Module de conversion GPS non chargé — rechargez la page.');navigator.geolocation.getCurrentPosition(p=>{const zone=/21/.test(val('projection'))?21:22;const [x,y]=latLonToUtm(p.coords.latitude,p.coords.longitude,zone);q('xT').value=x.toFixed(2);q('yT').value=y.toFixed(2);updateDistance();toast('Position GPS renseignée ✓')},err=>toast(geoErrorMessage(err)),{enableHighAccuracy:true,timeout:10000,maximumAge:0})});
 
 q('qualityRecord')?.addEventListener('change',()=>{if(q('qualityEditBtn'))return;const b=document.createElement('button');b.id='qualityEditBtn';b.className='btn ghost small';b.textContent='✏ Modifier la fiche';q('qualityChecks').parentElement.insertBefore(b,q('qualityChecks'));b.onclick=()=>{if(val('qualityRecord')){loadRecord(val('qualityRecord'));document.querySelector('[data-tab="new"]').click()}}});
 const pb=q('printBtn');if(pb)pb.onclick=()=>window.print();
