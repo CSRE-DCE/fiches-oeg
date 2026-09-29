@@ -334,27 +334,72 @@
           '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:'+viewportW+'px;height:'+viewportH+'px">'+tiles+markers+
           '</div></div>';
       }
-      function render(){
-        const r=getR(),box=$('crtPreviewBox');if(!r){box.innerHTML='<div class="hint">Sélectionnez une fiche puis cliquez sur « Aperçu du CRT ».</div>';return}
-        const station=stations().find(s=>s.nom===r.station)||r.stationInfo||{},access=ensureStationAccess(station),modes=stationTransportDetailed(station),m=meta(station),ll=stationLatLon(station),proj=r.projection||station.projection||'RGFG 95 / UTM 22N',code=r.codeSandre||r.code||station.code||'Non défini',desc=station.description||station.descriptionStation||station.pressionDescription||station.pression||'',ins=r.insitu||{},operators=val('crtPreleveur')||((r.preleveurs||[]).join(' · ')||'—'),season=(r.session||'').toLowerCase().includes('pluie')?'SAISON DES PLUIES':'SAISON SÈCHE';
+      function buildFicheHtml(r){
+        const station=stations().find(s=>s.nom===r.station)||r.stationInfo||{},access=ensureStationAccess(station),modes=stationTransportDetailed(station),m=meta(station),ll=stationLatLon(station),proj=r.projection||station.projection||'RGFG 95 / UTM 22N',code=r.codeSandre||r.code||station.code||'Non défini',desc=station.description||station.descriptionStation||station.pressionDescription||station.pression||'',ins=r.insitu||{},operators=(r===getR()?val('crtPreleveur'):'')||((r.preleveurs||[]).join(' · ')||'—'),season=(r.session||'').toLowerCase().includes('pluie')?'SAISON DES PLUIES':'SAISON SÈCHE';
         const llTerrain=(r.xTerrain!==undefined&&r.xTerrain!==''&&r.yTerrain!==undefined&&r.yTerrain!=='')?stationLatLon({x:r.xTerrain,y:r.yTerrain,projection:proj}):null;
         const mapPoints=[{ll,label:'Théorique',color:'#003D7A'},{ll:llTerrain,label:'Terrain',color:'#00AC97'}].filter(p=>p.ll);
         const mapLinkParts=[];
         if(ll)mapLinkParts.push('Théorique : '+esc(ll[0].toFixed(6))+' ; '+esc(ll[1].toFixed(6)));
         if(llTerrain)mapLinkParts.push('Terrain : '+esc(llTerrain[0].toFixed(6))+' ; '+esc(llTerrain[1].toFixed(6))+(r.ecartM?' (écart '+esc(r.ecartM)+')':''));
         const mapLink=mapLinkParts.join(' · ');
-        const title=val('crtObjet')||'Mise en œuvre de la DCE en Guyane — Rapport de terrain';
+        const title=(r===getR()?val('crtObjet'):'')||'Mise en œuvre de la DCE en Guyane — Rapport de terrain';
         const graphBlock=r.network==='EL'?'<div class="crtGraphLegend"><b>Profil vertical in situ.</b> Chaque courbe relie les valeurs mesurées aux niveaux réellement saisis sur la fiche terrain. La turbidité affichée correspond uniquement à la moyenne des trois répétitions.</div><div class="crtGraphGrid">'+elCards(ins)+'</div>'+elDataTable(ins):'<div class="crtGraphLegend"><b>Mesures in situ.</b> Présentation harmonisée des valeurs enregistrées sur la fiche terrain, avec conservation des unités et des informations appareil.</div>'+genericMetrics(ins)+genericDataTable(ins);
         const elMaritime=r.network==='EL'?'<br><br><b>Conditions maritimes</b><br>État de la mer : '+esc(r.conditions?.elMer||'—')+'<br>Marée : '+esc(r.conditions?.elMaree||'—')+(r.conditions?.elCoefMaree?' (coefficient '+esc(r.conditions.elCoefMaree)+')':''):'';
         const sample=r.sample||{};
         const chloroBlock=(r.network==='EL'&&station.type==='MEC')?'<h2>Chlorophylle</h2><table class="crtTable"><tr><th>Prélèvement chlorophylle</th><td>'+esc(sample.elChloro||'—')+'</td><th>Filtre utilisé</th><td>'+esc(sample.elFiltreChloro||'—')+'</td></tr><tr><th>Volume filtré</th><td colspan="3">'+(sample.elVfChloro?esc(sample.elVfChloro)+' mL':'—')+'</td></tr></table>':'';
-        box.innerHTML='<div class="crtReport">'+
-          '<section class="crtPage crtCover" data-report="'+esc(code)+' — '+esc(r.station)+'"><img src="data:image/png;base64,'+LOGO+'" alt="Office de l\'Eau de Guyane" class="crtCoverLogo"><div class="crtKicker">OFFICE DE L’EAU DE GUYANE</div><h1>COMPTE RENDU TECHNIQUE</h1><h2>'+esc(title)+'</h2><div class="crtSession">'+esc(r.session||'Session non renseignée')+'</div><div class="crtCoverStation"><b>'+esc(code)+' — '+esc(r.station)+'</b><br><span>'+esc(m.b||'Bassin versant non renseigné')+'</span></div><div class="crtCoverMeta"><div><b>Organisme</b>'+esc(r.organisme||'—')+'</div><div><b>Préleveur(s)</b>'+esc(operators)+'</div><div><b>Date</b>'+esc(r.date||'—')+'</div><div><b>Référence CRT</b>'+esc(val('crtRef')||'—')+'</div></div><div class="crtSynthesis">'+synthesis(r,ins,sample)+'</div></section>'+
+        return '<section class="crtPage crtCover" data-report="'+esc(code)+' — '+esc(r.station)+'"><img src="data:image/png;base64,'+LOGO+'" alt="Office de l\'Eau de Guyane" class="crtCoverLogo"><div class="crtKicker">OFFICE DE L’EAU DE GUYANE</div><h1>COMPTE RENDU TECHNIQUE</h1><h2>'+esc(title)+'</h2><div class="crtSession">'+esc(r.session||'Session non renseignée')+'</div><div class="crtCoverStation"><b>'+esc(code)+' — '+esc(r.station)+'</b><br><span>'+esc(m.b||'Bassin versant non renseigné')+'</span></div><div class="crtCoverMeta"><div><b>Organisme</b>'+esc(r.organisme||'—')+'</div><div><b>Préleveur(s)</b>'+esc(operators)+'</div><div><b>Date</b>'+esc(r.date||'—')+'</div><div><b>Référence CRT</b>'+esc((r===getR()?val('crtRef'):'')||'—')+'</div></div><div class="crtSynthesis">'+synthesis(r,ins,sample)+'</div></section>'+
           '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'SOMMAIRE')+'<h2>📖 Sommaire du rapport</h2>'+sommaire(r)+'</section>'+
           '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'STATION · LOCALISATION')+'<h2>🆔 Identification de la station</h2><table class="crtTable"><tr><th>Code SANDRE</th><td>'+esc(code)+'</td><th>Réseau</th><td>'+esc(r.network||'—')+'</td></tr><tr><th>Bassin versant</th><td>'+esc(m.b||'—')+'</td><th>Marché</th><td>'+esc(m.m||'—')+'</td></tr><tr><th>Date</th><td>'+esc(r.date||'—')+'</td><th>Horaires</th><td>'+esc((r.heureDebut||'—')+' – '+(r.heureFin||'—'))+'</td></tr></table><h2>🚗 Description / accès</h2><p class="crtSmall">'+esc(desc||'Description à compléter dans les données station.')+'</p><div class="accessGrid"><div><b>Accessibilité</b><br>'+starRating(access.difficulte||station.difficulte)+'</div><div><b>Moyens</b><br>'+(modes.length?modes.map(x=>transportIcon(x)+' '+esc(x)).join(' · '):'—')+'</div><div><b>Départ / base</b><br>'+esc(access.pointDepart||'—')+'</div><div><b>Consignes</b><br>'+esc(access.etapes||'—')+'</div></div><h2>🗺️ Localisation</h2><div class="crtMapPlaceholder">'+locationMap(mapPoints)+'</div><p class="crtSmall">'+(mapLink||'Coordonnées non disponibles')+(mapPoints.length?' · © contributeurs OpenStreetMap':'')+'</p>'+(mapPoints.length>1?'<p class="crtSmall"><span style="color:#003D7A;font-weight:800">● Théorique</span> = position de référence de la station · <span style="color:#00AC97;font-weight:800">● Terrain</span> = position GPS relevée sur place'+(r.ecartM?' (écart mesuré : '+esc(r.ecartM)+')':'')+'</p>':'')+'<h2>📷 Photographies</h2>'+photoHtml(r)+(r.network==='EL'?'':'<h2>✏️ Schéma de station</h2><div class="crtSchema">'+(r.dessin?'<img src="'+esc(r.dessin)+'" alt="Schéma du lieu d’échantillonnage">':'<span class="crtSmall">Aucun schéma enregistré.</span>')+'</div>')+'</section>'+
           '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'MESURES · ÉCHANTILLONNAGE')+'<h2>🌦️ Conditions de terrain</h2><div class="crtTwoCol"><div>'+fmtConditions(r.conditions,r.network)+'</div><div><b>Saison</b><br>'+esc(season)+'<br><br><b>Matrice(s)</b><br>'+esc(matrix(r))+elMaritime+'</div></div><h2>📊 Visualisation des données in situ</h2>'+graphBlock+historyBlock(r,ins)+'<h2>🧴 Échantillonnage et conservation</h2><table class="crtTable"><tr><th>Type de prélèvement</th><td>'+fmt(sample.stype||r.stype||'—')+'</td><th>Conservation</th><td>'+fmt(sample.elConservationSample||sample.conservation||r.conservation||'—')+'</td></tr><tr><th>Transport froid</th><td>'+fmt(sample.transportFroid||'—')+'</td><th>Suivi</th><td>'+fmt(sample.transportSuivi||'—')+'</td></tr><tr><th>Récepteur</th><td colspan="3">'+fmt(sample.recepteur||sample.recepteurs||r.recepteur||'—')+'</td></tr></table>'+chloroBlock+'</section>'+
-          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'OBSERVATIONS · VALIDATION')+'<h2>📝 Observations</h2><div class="crtComment">'+esc(r.comment||r.obs||'RAS')+'</div><h2>➕ Données complémentaires</h2><div>'+fmt(r.specific||{})+'</div>'+(r.network==='Chimie'?sedimentSection(sample,'chimie'):r.network==='RCO'?sedimentSection(sample,'rco'):'')+'<h2>✅ Conclusion / synthèse</h2><div class="crtComment">'+esc(val('crtConclusion')||r.comment||r.obs||'—')+'</div><h2>🖊️ Validation</h2><table class="crtTable"><tr><th>Rédacteur</th><td>'+esc(val('crtAuthor')||'—')+'</td><th>Statut</th><td>'+esc(r.lifecycle?.status||'—')+'</td></tr><tr><th>Organisme</th><td>'+esc(r.organisme||'—')+'</td><th>Référence</th><td>'+esc(val('crtRef')||'—')+'</td></tr><tr><th>Identifiant fiche</th><td colspan="3" class="crtTraceId">'+esc(r.id||'—')+'</td></tr><tr><th>Version applicative</th><td colspan="3">'+esc(r.appBuild||'non enregistrée (fiche antérieure à ce suivi)')+'</td></tr></table><p class="crtSmall">Cet identifiant permet de retrouver la fiche source dans l’application (onglet « Liste des fiches »).</p><div class="crtLegendBlock"><b>Référentiel graphique</b><br><span class="crtSmall">Les valeurs, niveaux, unités et codes appareils affichés dans ce CRT proviennent de la fiche terrain enregistrée. Aucune donnée n’est recalculée hormis la moyenne des trois mesures de turbidité lorsque celle-ci est disponible.</span></div></section></div>';
+          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'OBSERVATIONS · VALIDATION')+'<h2>📝 Observations</h2><div class="crtComment">'+esc(r.comment||r.obs||'RAS')+'</div><h2>➕ Données complémentaires</h2><div>'+fmt(r.specific||{})+'</div>'+(r.network==='Chimie'?sedimentSection(sample,'chimie'):r.network==='RCO'?sedimentSection(sample,'rco'):'')+'<h2>✅ Conclusion / synthèse</h2><div class="crtComment">'+esc((r===getR()?val('crtConclusion'):'')||r.comment||r.obs||'—')+'</div><h2>🖊️ Validation</h2><table class="crtTable"><tr><th>Rédacteur</th><td>'+esc((r===getR()?val('crtAuthor'):'')||'—')+'</td><th>Statut</th><td>'+esc(r.lifecycle?.status||'—')+'</td></tr><tr><th>Organisme</th><td>'+esc(r.organisme||'—')+'</td><th>Référence</th><td>'+esc((r===getR()?val('crtRef'):'')||'—')+'</td></tr><tr><th>Identifiant fiche</th><td colspan="3" class="crtTraceId">'+esc(r.id||'—')+'</td></tr><tr><th>Version applicative</th><td colspan="3">'+esc(r.appBuild||'non enregistrée (fiche antérieure à ce suivi)')+'</td></tr></table><p class="crtSmall">Cet identifiant permet de retrouver la fiche source dans l’application (onglet « Liste des fiches »).</p><div class="crtLegendBlock"><b>Référentiel graphique</b><br><span class="crtSmall">Les valeurs, niveaux, unités et codes appareils affichés dans ce CRT proviennent de la fiche terrain enregistrée. Aucune donnée n’est recalculée hormis la moyenne des trois mesures de turbidité lorsque celle-ci est disponible.</span></div></section>';
       }
+      function render(){
+        const r=getR(),box=$('crtPreviewBox');if(!r){box.innerHTML='<div class="hint">Sélectionnez une fiche puis cliquez sur « Aperçu du CRT ».</div>';return}
+        box.innerHTML='<div class="crtReport">'+buildFicheHtml(r)+'</div>';
+      }
+      // ---- CRT consolidé : compile en un seul fichier tous les CRT d'un même réseau/session ----
+      function batchMatches(){
+        const net=val('crtBatchNetwork'),ses=val('crtBatchSession');
+        if(!net||!ses)return [];
+        return records.filter(x=>x.network===net&&x.session===ses).slice().sort((a,b)=>String(a.station||'').localeCompare(String(b.station||''),'fr')||String(a.date||'').localeCompare(String(b.date||'')));
+      }
+      function refreshBatchNetworks(){
+        const sel=$('crtBatchNetwork');if(!sel)return;const cur=sel.value;
+        const nets=[...new Set(records.map(x=>x.network).filter(Boolean))].sort();
+        sel.innerHTML='<option value="">— sélectionner un réseau —</option>'+nets.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join('');
+        if(nets.includes(cur))sel.value=cur;
+      }
+      function refreshBatchSessions(){
+        const sel=$('crtBatchSession');if(!sel)return;const cur=sel.value,net=val('crtBatchNetwork');
+        const sessions=[...new Set(records.filter(x=>x.network===net).map(x=>x.session).filter(Boolean))].sort();
+        sel.innerHTML='<option value="">— sélectionner une session —</option>'+sessions.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+        if(sessions.includes(cur))sel.value=cur;
+        updateBatchCount();
+      }
+      function updateBatchCount(){
+        const c=$('crtBatchCount');if(!c)return;
+        const net=val('crtBatchNetwork'),ses=val('crtBatchSession');
+        if(!net||!ses){c.textContent='';return}
+        const n=batchMatches().length;
+        c.textContent=n?n+' fiche(s) trouvée(s) pour '+net+' · '+ses+'.':'Aucune fiche trouvée pour '+net+' · '+ses+'.';
+      }
+      refreshBatchNetworks();refreshBatchSessions();
+      $('crtBatchNetwork').onchange=()=>{refreshBatchSessions()};
+      $('crtBatchSession').onchange=updateBatchCount;
+      $('crtBatchGenerate').onclick=()=>{
+        try{
+          const matches=batchMatches();
+          if(!matches.length)return toast('Aucune fiche à compiler pour ce réseau/cette session.');
+          const box=$('crtPreviewBox');
+          box.innerHTML='<div class="crtReport">'+matches.map(buildFicheHtml).join('')+'</div>';
+          setTimeout(()=>{
+            const oldTitle=document.title;
+            document.title='CRT_consolide_'+val('crtBatchNetwork')+'_'+val('crtBatchSession');
+            window.print();
+            setTimeout(()=>document.title=oldTitle,1500);
+          },80);
+        }catch(e){console.error(e);toast('Erreur CRT consolidé : '+e.message)}
+      };
       $('crtPreview').onclick=render;
       $('crtGenerate').onclick=()=>{try{if(!getR())return toast('Sélectionnez une fiche');render();setTimeout(()=>{const r=getR(),box=$('crtPreviewBox');if(!box?.querySelector('.crtReport'))return toast('Aperçu CRT impossible : vérifiez la fiche sélectionnée.');const oldTitle=document.title;document.title='CRT_'+(r.station||'station')+'_'+(val('crtRef')||'rapport');window.print();setTimeout(()=>document.title=oldTitle,1500)},80)}catch(e){console.error(e);toast('Erreur CRT : '+e.message)}};
       setTimeout(refreshCrtPre,0);
