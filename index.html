@@ -451,6 +451,22 @@
 </div>
 </div>
 
+<div class="card" id="crtBatchCard"><h2>📎 CRT consolidé (plusieurs fiches en un seul fichier)</h2>
+<p class="note">Rassemble tous les CRT des fiches d'un même réseau et d'une même session en un seul document imprimable — chaque fiche garde sa page de garde et ses sections complètes, à la suite les unes des autres, avec une numérotation de page continue.</p>
+<div class="grid2">
+  <div class="field"><label>Réseau</label>
+  <select id="crtBatchNetwork"><option value="">— sélectionner un réseau —</option></select>
+  </div>
+  <div class="field"><label>Session</label>
+  <select id="crtBatchSession"><option value="">— sélectionner une session —</option></select>
+  </div>
+</div>
+<p class="note" id="crtBatchCount"></p>
+<div class="actions">
+  <button class="btn primary" id="crtBatchGenerate">📎 Compiler et imprimer le CRT consolidé</button>
+</div>
+</div>
+
 <div class="card" id="crtPreviewCard"><h2 id="crtApercuTitle">Aperçu</h2>
 <div id="crtPreviewBox" class="printDoc crtPreviewBox">
   <div class="hint">Sélectionnez une fiche puis cliquez sur « Aperçu du CRT ».</div>
@@ -792,7 +808,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
 <script>
-window.APP_BUILD='2026-09-16 · build 25';
+window.APP_BUILD='2026-09-16 · build 26';
 document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('appBuildInfo');if(el)el.textContent='Version de l\'application installée sur cet appareil : '+window.APP_BUILD;});
 </script>
 <script>
