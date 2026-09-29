@@ -410,7 +410,7 @@
                 </div>
                 <div class="hint">Sélectionnez un réseau / marché : comme dans l’onglet « Éditer une nouvelle fiche terrain », la sélection donne directement les stations associées sur la carte et dans la liste. L’itinéraire routier/pédestre est calculé depuis votre position ; les étapes bateau, pirogue, piste ou accès particulier suivent les moyens de transport et consignes enregistrés pour la station.</div><div id="stationInfo" class="banner info">Sélectionnez un point sur la carte pour voir le chemin, les moyens de transport et ouvrir la fiche.</div></div></section>
 <section id="crt" class="view">
-<div class="card"><h2>Éditer le CRT — Compte rendu technique</h2>
+<div class="card" id="crtEditCard"><h2>Éditer le CRT — Compte rendu technique</h2>
 <div class="banner info">Le CRT reprend les informations saisies dans les fiches terrain et les organise dans un rapport imprimable. La structure reprend les rubriques de la fiche terrain de référence : mission/station, échantillonnage, conservation, sédiments, site, mesures in situ, transport, observations et signatures. Le rapport est structuré à partir des modèles CRT HYDRECO et OEG fournis : page de garde, identification de la station, description et accès, carte/schéma, échantillonnage, GPS, évolution des paramètres in situ, acheminement, commentaire, photographies et annexes.</div>
 <p class="note">Le CRT est construit à partir de la fiche terrain sélectionnée et reprend la logique d’un compte rendu technique : identification, mission, localisation/accès, échantillonnage, résultats, qualité, photos, conclusion et validation.</p>
 <div class="grid2">
@@ -451,7 +451,7 @@
 </div>
 </div>
 
-<div class="card"><h2>Aperçu</h2>
+<div class="card" id="crtPreviewCard"><h2 id="crtApercuTitle">Aperçu</h2>
 <div id="crtPreviewBox" class="printDoc crtPreviewBox">
   <div class="hint">Sélectionnez une fiche puis cliquez sur « Aperçu du CRT ».</div>
   </div>
@@ -792,7 +792,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
 <script>
-window.APP_BUILD='2026-09-16 · build 24';
+window.APP_BUILD='2026-09-16 · build 25';
 document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('appBuildInfo');if(el)el.textContent='Version de l\'application installée sur cet appareil : '+window.APP_BUILD;});
 </script>
 <script>
@@ -817,6 +817,7 @@ if('serviceWorker' in navigator){
 window.addEventListener('load',()=>{
   setTimeout(()=>{
     const checks=[
+      ['js/geo.js', ()=>typeof window.utmToLatLon==='function' && typeof window.latLonToUtm==='function'],
       ['js/sync.js', ()=>typeof window.OEGSync?.isBackedUp==='function'],
       ['js/sync.js', ()=>typeof window.OEGSync?.pullFromDrive==='function'],
       ['js/people-stations-core.js', ()=>typeof window.drawPhotoGroups==='function'],
