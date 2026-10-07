@@ -43,12 +43,13 @@ function printFormatValue(el){
   return v;
 }
 function preparePrint(){
-  const root=document.getElementById('new');if(!root)return;
+  /* Certaines cartes de la fiche (prélèvement, site, mesures in situ, observations, signature) sont des enfants directs de <body>, hors de #new : on parcourt donc tout le document, hors onglets non actifs, en-tête et barre d'actions. */
+  const root=document.body;if(!root)return;
   root.querySelectorAll('.printVal').forEach(n=>n.remove());
   root.querySelectorAll('.printHidden').forEach(n=>n.classList.remove('printHidden'));
   ['input','select','textarea'].forEach(tag=>root.querySelectorAll(tag).forEach(el=>{
     if(['radio','checkbox','file','hidden','button','submit'].includes(printType(el)))return;
-    if(el.closest('.hide'))return;
+    if(el.closest('.hide,.top,.btnbar,.tabs,#oegErrorBox,.view:not(#new)'))return;
          if(el.style&&el.style.display==='none')return;
     const span=document.createElement('span');
     span.className='printVal';
@@ -72,16 +73,19 @@ function isFieldFilled(field){
     return (x.value||'').trim()!=='';
   });
 }
-function markFilledFields(root){
-  (root||document).querySelectorAll('.field').forEach(f=>{f.classList.toggle('filled',isFieldFilled(f))});
+/* Les cartes de la fiche (prélèvement, site, mesures in situ, observations, signature) sont des enfants directs de <body>, hors de #new : on considère donc "dans la fiche" tout champ hors des autres onglets. */
+function inFiche(f){return !f.closest('.view:not(#new),.top,.btnbar,.tabs,#oegErrorBox')}
+function markFilledFields(){
+  document.querySelectorAll('.field').forEach(f=>{if(inFiche(f))f.classList.toggle('filled',isFieldFilled(f))});
 }
-document.addEventListener('input',e=>{const f=e.target.closest?.('#new .field');if(f)f.classList.toggle('filled',isFieldFilled(f))});
-document.addEventListener('change',e=>{const f=e.target.closest?.('#new .field');if(f)f.classList.toggle('filled',isFieldFilled(f))});
+const _fillEvt=e=>{const f=e.target.closest?.('.field');if(f&&inFiche(f))f.classList.toggle('filled',isFieldFilled(f))};
+document.addEventListener('input',_fillEvt);
+document.addEventListener('change',_fillEvt);
 // Filet de sécurité : couvre les valeurs posées par du code (chargement d'une fiche, calculs
 // automatiques...) qui ne déclenchent pas d'événement "input"/"change".
-if(typeof setInterval==='function')setInterval(()=>{const n=$('new');if(n&&n.classList.contains('active'))markFilledFields(n)},1500);
+if(typeof setInterval==='function')setInterval(()=>{const n=$('new');if(n&&n.classList.contains('active'))markFilledFields()},1500);
 if(typeof MutationObserver==='function'){
-  new MutationObserver(()=>{const n=$('new');if(n)markFilledFields(n)}).observe($('new')||document.body,{childList:true,subtree:true});
+  new MutationObserver(()=>markFilledFields()).observe(document.body,{childList:true,subtree:true});
 }
 
 let records=load(LS,load('oeg_field_v3',[]));
