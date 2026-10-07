@@ -7,10 +7,11 @@
     const key=x?.code||x?.nom; if(!key)return {modes:[],etapes:'',pointDepart:'',difficulte:''};
     return custom.stationAccess[key]||{modes:(x?.transportModes&&x.transportModes.length?x.transportModes:(x?.transport?[x.transport]:[])),etapes:x?.itineraire||x?.acces||'',pointDepart:x?.pointDepart||'',marche:x?.marche||x?.market||'',bassin:x?.bassin||x?.bassinVersant||x?.bv||'',difficulte:x?.difficulte||''};
   }
-  /* Etoiles pour le niveau d'accessibilite (1 = tres difficile, 5 = tres facile). */
+  /* Accessibilite : 1 étoile = très facile … 5 étoiles = très difficile. Valeur stockée inchangée (1 = très difficile, 5 = très facile) pour conserver les saisies existantes. */
   function starRating(n){
-    const v=Number(n);
-    if(!Number.isFinite(v)||v<1||v>5)return '—';
+    const raw=Number(n);
+    if(!Number.isFinite(raw)||raw<1||raw>5)return '—';
+    const v=6-raw;
     return '★'.repeat(v)+'☆'.repeat(5-v)+' ('+v+'/5)';
   }
   function stationTransportDetailed(x){const a=ensureStationAccess(x);return (a.modes&&a.modes.length?a.modes:[stationTransport(x)]).filter(Boolean)}
@@ -70,7 +71,7 @@
   function renderAccessEditor(){
     const data=$('data'); if(!data||$('stationAccessEditor'))return;
     const card=document.createElement('div');card.className='card';card.id='stationAccessEditor';
-    card.innerHTML='<h2>Accès et moyens de transport par station</h2><div class="grid2"><div class="field"><label>Station</label><select id="accessStation"><option value="">— sélectionner —</option></select></div><div class="field"><label>Marché de la station</label><input id="accessMarket" placeholder="Marché / lot / contrat"></div><div class="field"><label>Point de départ / base</label><input id="accessDepart" placeholder="Cayenne, Régina, Maripasoula…"></div></div><div class="grid2"><div class="field"><label>Moyens de transport nécessaires</label><div id="accessModes" class="checkGrid"></div></div><div class="field"><label>Niveau d’accessibilité</label><select id="accessDifficulte"><option value="">— non renseigné —</option><option value="1">★☆☆☆☆ Très difficile</option><option value="2">★★☆☆☆ Difficile</option><option value="3">★★★☆☆ Moyen</option><option value="4">★★★★☆ Facile</option><option value="5">★★★★★ Très facile</option></select></div></div><div class="field"><label>Étapes / consignes d’accès</label><textarea id="accessSteps" placeholder="Ex. véhicule → piste → pirogue → marche 20 min"></textarea></div><button class="btn primary small" id="saveAccess">Enregistrer l’accès station</button>';
+    card.innerHTML='<h2>Accès et moyens de transport par station</h2><div class="grid2"><div class="field"><label>Station</label><select id="accessStation"><option value="">— sélectionner —</option></select></div><div class="field"><label>Marché de la station</label><input id="accessMarket" placeholder="Marché / lot / contrat"></div><div class="field"><label>Point de départ / base</label><input id="accessDepart" placeholder="Cayenne, Régina, Maripasoula…"></div></div><div class="grid2"><div class="field"><label>Moyens de transport nécessaires</label><div id="accessModes" class="checkGrid"></div></div><div class="field"><label>Niveau d’accessibilité</label><select id="accessDifficulte"><option value="">— non renseigné —</option><option value="5">★☆☆☆☆ Très facile</option><option value="4">★★☆☆☆ Facile</option><option value="3">★★★☆☆ Moyen</option><option value="2">★★★★☆ Difficile</option><option value="1">★★★★★ Très difficile</option></select></div></div><div class="field"><label>Étapes / consignes d’accès</label><textarea id="accessSteps" placeholder="Ex. véhicule → piste → pirogue → marche 20 min"></textarea></div><button class="btn primary small" id="saveAccess">Enregistrer l’accès station</button>';
     data.appendChild(card);
     const all=stations();$('accessStation').innerHTML+=[...new Map(all.map(x=>[stationKey(x),x])).values()].sort((a,b)=>String(a.nom).localeCompare(String(b.nom))).map(x=>'<option value="'+E(stationKey(x))+'">'+E(x.nom)+'</option>').join('');
     $('accessModes').innerHTML=transportModes.map((m,i)=>'<label class="check"><input type="checkbox" value="'+E(m)+'" id="am_'+i+'"><span>'+transportIcon(m)+' '+E(m)+'</span></label>').join('');

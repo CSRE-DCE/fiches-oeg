@@ -49,6 +49,7 @@ function preparePrint(){
   ['input','select','textarea'].forEach(tag=>root.querySelectorAll(tag).forEach(el=>{
     if(['radio','checkbox','file','hidden','button','submit'].includes(printType(el)))return;
     if(el.closest('.hide'))return;
+         if(el.style&&el.style.display==='none')return;
     const span=document.createElement('span');
     span.className='printVal';
     span.textContent=printFormatValue(el);
@@ -657,9 +658,9 @@ function buildInsitu(){
     base.style.display='none';
     const status=$('ivs_turb'); if(status)status.style.display='none';
     const wrap=document.createElement('div');wrap.className='turbReplicates';wrap.style.cssText='display:grid;grid-template-columns:repeat(3,minmax(70px,1fr));gap:6px;margin-top:4px';
-    ['1','2','3'].forEach(n=>{const lab=document.createElement('label');lab.className='hint';lab.innerHTML='Mesure '+n+'<input id="iv_turb_'+n+'" type="number" step="any" inputmode="decimal" placeholder="NTU" aria-label="Turbidité mesure '+n+'" required>';wrap.appendChild(lab)});
+    ['1','2','3'].forEach(n=>{const lab=document.createElement('label');lab.className='turbMeas';lab.innerHTML='Mesure '+n+'<input id="iv_turb_'+n+'" type="number" step="any" inputmode="decimal" placeholder="NTU" aria-label="Turbidité mesure '+n+'" required>';wrap.appendChild(lab)});
     cell.insertBefore(wrap,base);
-    const avg=document.createElement('div');avg.id='iv_turb_moyenne';avg.className='hint';avg.style.marginTop='4px';avg.textContent='Moyenne des 3 mesures : —';
+    const avg=document.createElement('div');avg.id='iv_turb_moyenne';avg.className='turbAvg';avg.style.marginTop='4px';avg.textContent='Moyenne des 3 mesures : —';
     cell.insertBefore(avg,base);
     function refreshTurbAverage(){
       const vals=[1,2,3].map(n=>Number(val('iv_turb_'+n))).filter(Number.isFinite);
