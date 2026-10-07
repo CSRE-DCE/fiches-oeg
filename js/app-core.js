@@ -83,7 +83,7 @@ document.addEventListener('input',_fillEvt);
 document.addEventListener('change',_fillEvt);
 // Filet de sécurité : couvre les valeurs posées par du code (chargement d'une fiche, calculs
 // automatiques...) qui ne déclenchent pas d'événement "input"/"change".
-if(typeof setInterval==='function')setInterval(()=>{const n=$('new');if(n&&n.classList.contains('active'))markFilledFields()},1500);
+if(typeof setInterval==='function')setInterval(()=>{const n=$('new');if(n&&n.classList.contains('active')){markFilledFields();fitCanvases()}},1500);
 if(typeof MutationObserver==='function'){
   new MutationObserver(()=>markFilledFields()).observe(document.body,{childList:true,subtree:true});
 }
@@ -1023,51 +1023,76 @@ function updateDistance(){
 $('xT').oninput=updateDistance;$('yT').oninput=updateDistance;
 $('projection')?.addEventListener('change',updateDistance);
 
+/* Canevas (schéma / signature) : le contenu est conservé dans state.draw / state.signature, remis à jour
+   après chaque trait. Le canevas n'est dimensionné que lorsqu'il est réellement visible : si la fiche est
+   ouverte depuis un autre onglet (modification), il est masqué et mesure 0×0 — il est alors redimensionné
+   au premier affichage / au premier trait, et le dessin existant est redessiné (jamais effacé). */
+function canvasKey(c){return c.id==='signature'?'signature':'draw'}
+function applyPen(c){
+  const ctx=c.getContext('2d'),pen=c._pen||{color:'#17212b',eraser:false};
+  ctx.lineCap='round';ctx.lineJoin='round';
+  if(pen.eraser){ctx.globalCompositeOperation='destination-out';ctx.lineWidth=16}
+  else{ctx.globalCompositeOperation='source-over';ctx.strokeStyle=pen.color;ctx.lineWidth=2}
+}
+function fitCanvas(c){
+  const r=c.getBoundingClientRect();if(!r.width||!r.height)return false;
+  const dpr=devicePixelRatio||1,w=Math.round(r.width*dpr),h=Math.round(r.height*dpr);
+  if(c.width===w&&c.height===h)return true;
+  const key=canvasKey(c);
+  const prev=(c.width>0&&c.height>0&&c._hasContent)?c.toDataURL('image/png'):(state[key]||null);
+  c.width=w;c.height=h;
+  const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);applyPen(c);
+  if(prev)restoreCanvas(c,prev);
+  return true;
+}
+function fitCanvases(){['draw','signature'].forEach(id=>{const c=$(id);if(c)fitCanvas(c)})}
 function setupCanvas(c){
-  const dpr=devicePixelRatio||1,r=c.getBoundingClientRect();c.width=r.width*dpr;c.height=r.height*dpr;
-  const ctx=c.getContext('2d');ctx.scale(dpr,dpr);ctx.lineWidth=2;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#17212b';
-  let active=false;c.onpointerdown=e=>{active=true;c.setPointerCapture(e.pointerId);const q=c.getBoundingClientRect();ctx.beginPath();ctx.moveTo(e.clientX-q.left,e.clientY-q.top)};
-  c.onpointermove=e=>{if(!active)return;const q=c.getBoundingClientRect();ctx.lineTo(e.clientX-q.left,e.clientY-q.top);ctx.stroke()};
-  c.onpointerup=()=>active=false;c.onpointercancel=()=>active=false;return ctx
+  const key=canvasKey(c);
+  fitCanvas(c);applyPen(c);
+  let active=false;
+  const pos=e=>{const q=c.getBoundingClientRect();return [e.clientX-q.left,e.clientY-q.top]};
+  c.onpointerdown=e=>{fitCanvas(c);applyPen(c);active=true;c.setPointerCapture(e.pointerId);const ctx=c.getContext('2d'),[x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+0.01,y+0.01);ctx.stroke()};
+  c.onpointermove=e=>{if(!active)return;const ctx=c.getContext('2d'),[x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke()};
+  const end=()=>{if(!active)return;active=false;c._hasContent=true;try{state[key]=c.toDataURL('image/png')}catch(_){}};
+  c.onpointerup=end;c.onpointercancel=end;return c.getContext('2d')
 }
 // Palette de couleurs et gomme pour le canvas "Schéma / dessin" : la gomme efface localement
 // (transparence, via globalCompositeOperation="destination-out") plutôt que tout le dessin —
 // seul l'endroit où l'on repasse est effacé, le reste du schéma reste intact.
 function setupDrawTools(canvas){
   if(!canvas||canvas.dataset.toolsReady)return;canvas.dataset.toolsReady='1';
-  const ctx=canvas.getContext('2d');
-  let eraser=false,color='#17212b';
+  canvas._pen=canvas._pen||{color:'#17212b',eraser:false};
   const swatches=document.querySelectorAll('#drawColors .swatch');
   swatches.forEach(b=>b.onclick=()=>{
-    color=b.dataset.color;eraser=false;
+    canvas._pen={color:b.dataset.color,eraser:false};
     swatches.forEach(x=>x.classList.remove('sel'));b.classList.add('sel');
     const eraserBtn=$('drawEraser');if(eraserBtn)eraserBtn.classList.remove('sel');
-    ctx.globalCompositeOperation='source-over';ctx.strokeStyle=color;ctx.lineWidth=2;
+    applyPen(canvas);
   });
   const eraserBtn=$('drawEraser');
   if(eraserBtn)eraserBtn.onclick=()=>{
-    eraser=!eraser;
-    eraserBtn.classList.toggle('sel',eraser);
-    if(eraser){ctx.globalCompositeOperation='destination-out';ctx.lineWidth=16}
-    else{ctx.globalCompositeOperation='source-over';ctx.strokeStyle=color;ctx.lineWidth=2}
+    canvas._pen={color:canvas._pen.color,eraser:!canvas._pen.eraser};
+    eraserBtn.classList.toggle('sel',canvas._pen.eraser);
+    applyPen(canvas);
   };
 }
-function restoreCanvas(c,data){const im=new Image();im.onload=()=>c.getContext('2d').drawImage(im,0,0,c.clientWidth,c.clientHeight);im.src=data}
+function restoreCanvas(c,data){if(!data)return;const im=new Image();im.onload=()=>{const x=c.getContext('2d'),op=x.globalCompositeOperation;x.globalCompositeOperation='source-over';x.drawImage(im,0,0,c.width/(devicePixelRatio||1),c.height/(devicePixelRatio||1));x.globalCompositeOperation=op;c._hasContent=true};im.src=data}
+function canvasData(id){const c=$(id),key=canvasKey(c);if(c.width>0&&c.height>0&&(c._hasContent||!state[key]))return c.toDataURL('image/png');return state[key]||''}
 function initCanvases(){
   const dEl=$('draw'),sEl=$('signature');
-  if(dEl&&dEl.width>0&&!state.draw)state.draw=dEl.toDataURL('image/png');
-  if(sEl&&sEl.width>0&&!state.signature)state.signature=sEl.toDataURL('image/png');
+  /* ne jamais écraser un dessin mémorisé : le canevas peut être vide/masqué à ce moment */
   setupCanvas(dEl);setupCanvas(sEl);setupDrawTools(dEl);
-  if(state.draw)restoreCanvas(dEl,state.draw);if(state.signature)restoreCanvas(sEl,state.signature);
+  if(dEl.width>0&&state.draw)restoreCanvas(dEl,state.draw);
+  if(sEl.width>0&&state.signature)restoreCanvas(sEl,state.signature);
 }
 $('clearDraw').onclick=()=>{
   const c=$('draw'),ctx=c.getContext('2d');
-  ctx.clearRect(0,0,c.clientWidth,c.clientHeight);state.draw=null;
-  ctx.globalCompositeOperation='source-over';ctx.strokeStyle='#17212b';ctx.lineWidth=2;
+  ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,c.width,c.height);ctx.restore();state.draw=null;c._hasContent=false;
+  c._pen={color:'#17212b',eraser:false};applyPen(c);
   document.querySelectorAll('#drawColors .swatch').forEach((b,i)=>b.classList.toggle('sel',i===0));
   $('drawEraser')?.classList.remove('sel');
 };
-$('clearSig').onclick=()=>{$('signature').getContext('2d').clearRect(0,0,$('signature').clientWidth,$('signature').clientHeight);state.signature=null};
+$('clearSig').onclick=()=>{const c=$('signature'),x=c.getContext('2d');x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();state.signature=null;c._hasContent=false};
 $('printBtn').onclick=()=>{preparePrint();window.print()};
 
 function compress(file){
@@ -1086,7 +1111,7 @@ function collectRecord(){
     date:val('date'),heureDebut:val('start'),heureFin:val('end'),organisme:val('org'),preleveurs:state.preleveurs,
     xTheorique:s?.x??'',yTheorique:s?.y??'',xTerrain:val('xT'),yTerrain:val('yT'),ecartM:$('distance').textContent,
     conditions:collectConditions(),insitu:collectInsitu(),sample:collectSample(),specific:collectSpecific(),
-    photos:(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p),projection:val('projection'),schemaLegend:{ecoulement:!!$('legendeEcoulement')?.checked,prelevement:!!$('legendePrelevement')?.checked,berges:!!$('legendeBerges')?.checked,acces:!!$('legendeAcces')?.checked,autre:val('legendeAutre')},dessin:$('draw').toDataURL('image/png'),signature:$('signature').toDataURL('image/png'),signName:val('signName'),
+    photos:(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p),projection:val('projection'),schemaLegend:{ecoulement:!!$('legendeEcoulement')?.checked,prelevement:!!$('legendePrelevement')?.checked,berges:!!$('legendeBerges')?.checked,acces:!!$('legendeAcces')?.checked,autre:val('legendeAutre')},dessin:canvasData('draw'),signature:canvasData('signature'),signName:val('signName'),
     qc:radioValue('qc'),qcType:val('qcType'),obs:val('obs'),comment:val('comment'),savedAt:new Date().toISOString(),
     appBuild:window.APP_BUILD||''
   };
@@ -1205,7 +1230,7 @@ function loadRecord(id){
   // Restore dynamically generated specific fields
   Object.entries(f.specific||{}).forEach(([k,v])=>{const e=$(k);if(e){if(e.type==='checkbox')e.checked=!!v;else e.value=v||''}});
   renderPhotos();if(window.drawPhotoGroups)drawPhotoGroups();updateDistance();$('save').textContent='💾 Mettre à jour la fiche';window.scrollTo(0,0);
-  if(f._archived)toast('⚠️ Fiche allégée : '+(f._archivedPhotoCount||0)+' photo(s)/dessin retirés du stockage local (déjà sauvegardés ailleurs). Réimportez le fichier original pour les revoir/modifier.');
+  if(f._archived)toast('⚠️ Fiche allégée : '+(f._archivedPhotoCount||0)+' photo(s) retirée(s) du stockage local (déjà sauvegardés ailleurs). Réimportez le fichier original pour les revoir/modifier.');
   })(id);
   /* Restaure les champs qualité / traçabilité étendus (ancien correctif) */
   const f=records.find(x=>x.id===id);if(!f)return;
@@ -1379,7 +1404,7 @@ function mergeCustomInto(target,incoming){
 // de plusieurs fichiers importés sans rien écraser par erreur.
 $('reset').onclick=()=>{if(confirm('Effacer toutes les fiches et données personnalisées ?')){localStorage.removeItem(LS);localStorage.removeItem(LSC);localStorage.removeItem('oeg_field_v3');localStorage.removeItem('oeg_custom_v3');records=[];custom={preleveurs:[],stations:[],equipements:[]};updateCount();renderList();renderAdmin()}};
 
-// Retire les photos/dessin/signature (le contenu le plus volumineux) des fiches déjà
+// Retire les photos (le contenu le plus volumineux ; le schéma et la signature sont toujours conservés) des fiches déjà
 // confirmées sauvegardées dans le dossier local et/ou sur Google Drive, pour libérer de la
 // place dans le stockage du navigateur (qui a un plafond très bas, souvent quelques Mo). Le
 // contenu original reste intact dans les fichiers déjà écrits — en cas de besoin, on le
@@ -1391,13 +1416,13 @@ async function lightenStorage(){
   for(const r of records){
     if(r._archived)continue;
     if(state.editing===r.id)continue; // ne jamais toucher la fiche en cours d'édition
-    const heavy=(r.photos&&r.photos.length)||(r.dessin&&r.dessin.length>200)||(r.signature&&r.signature.length>200);
+    const heavy=(r.photos&&r.photos.length);
     if(!heavy)continue;
     const backed=await window.OEGSync.isBackedUp(r.id);
     if(!backed)continue;
     const before=JSON.stringify(r).length;
     r._archivedPhotoCount=(r.photos||[]).length;
-    r.photos=[];r.dessin='';r.signature='';
+    r.photos=[]; /* le schéma et la signature sont conservés */
     r._archived=true;r._archivedAt=new Date().toISOString();
     freed+=before-JSON.stringify(r).length;
     count++;
@@ -1423,7 +1448,7 @@ $('addStation').onclick=()=>{
 ['new','dashboard','list','suivi','quality','data'].forEach(v=>document.querySelector(`.tab[data-tab="${v}"]`).onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelector(`.tab[data-tab="${v}"]`).classList.add('active');
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));$(v).classList.add('active');
-  $('bar').style.display=v==='new'?'flex':'none';if(v==='dashboard')renderDashboard();if(v==='list')renderList();if(v==='suivi')renderSuivi();if(v==='quality')renderQuality();if(v==='data')renderAdmin()
+  $('bar').style.display=v==='new'?'flex':'none';if(v==='new')setTimeout(fitCanvases,0);if(v==='dashboard')renderDashboard();if(v==='list')renderList();if(v==='suivi')renderSuivi();if(v==='quality')renderQuality();if(v==='data')renderAdmin()
 });
 
 renderNetworks();renderOrgOptions("Office de l'Eau de Guyane");setupSandre();if(typeof window.renderOperators==='function')window.renderOperators();else setTimeout(()=>window.renderOperators&&window.renderOperators(),0);if(typeof window.renderEquipment==='function')window.renderEquipment();else setTimeout(()=>window.renderEquipment&&window.renderEquipment(),0);if(typeof window.renderPre==='function')window.renderPre();else setTimeout(()=>window.renderPre&&window.renderPre(),0);updateCount();if(typeof window.renderList==='function')window.renderList();else setTimeout(()=>window.renderList&&window.renderList(),0);$('date').valueAsDate=new Date();setupMarketImport();
