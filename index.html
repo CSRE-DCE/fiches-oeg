@@ -808,10 +808,12 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
 <script>
-window.APP_BUILD='2026-09-16 · build 26';
+window.APP_BUILD='2026-10-06 · build 27';
 document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('appBuildInfo');if(el)el.textContent='Version de l\'application installée sur cet appareil : '+window.APP_BUILD;});
 </script>
 <script>
+// Demande au navigateur de ne jamais purger les données de l'appli (fiches, référentiel) en cas de manque de place.
+if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(()=>{})}
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{
     navigator.serviceWorker.register('sw.js').then(reg=>{
