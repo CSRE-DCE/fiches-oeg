@@ -26,21 +26,38 @@ function saveLS(key,valeur){
 function escapeHTML(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}
 function toast(t){let x=document.createElement('div');x.textContent=t;x.style.cssText='position:fixed;left:50%;bottom:92px;transform:translateX(-50%);background:#08477e;color:#fff;padding:10px 16px;border-radius:24px;z-index:9999;font-weight:800;font-size:13px';document.body.appendChild(x);setTimeout(()=>x.remove(),2200)}
 
-// À l'impression, les textarea (observations, notes...) sont remplacées par un simple bloc de
-// texte affichant l'intégralité de leur contenu : un <textarea> imprimé est tronqué à sa hauteur
-// visible, ce qui pourrait faire disparaître silencieusement une partie d'un commentaire.
-window.addEventListener('beforeprint',()=>{
-  document.querySelectorAll('#new textarea').forEach(t=>{
-    const rep=document.createElement('div');
-    rep.className='printTextareaValue';
-    rep.textContent=t.value||'—';
-    t.insertAdjacentElement('afterend',rep);
-    t._printHidden=true;
-  });
-});
-window.addEventListener('afterprint',()=>{
-  document.querySelectorAll('#new .printTextareaValue').forEach(rep=>rep.remove());
-});
+// ---- Impression fidèle de la fiche terrain ----
+// Un champ <input>/<select>/<textarea> imprimé est rogné à sa largeur/hauteur visible : une valeur
+// longue (nom d'appareil, commentaire, date) ou un champ étroit de tableau peut donc "disparaître"
+// à l'impression. Avant d'imprimer, on ajoute à côté de chaque champ un texte brut (.printVal)
+// contenant sa valeur complète, et on masque le champ lui-même (CSS @media print : .printHidden).
+// Ces textes sont invisibles à l'écran ; ils sont reconstruits à chaque impression (aucun risque
+// de valeur périmée), et laissés en place ensuite car l'événement "afterprint" n'est pas fiable
+// sur toutes les tablettes (retirer le contenu trop tôt viderait l'aperçu d'impression).
+function printType(el){return String(el.type||(el.getAttribute&&el.getAttribute('type'))||'').toLowerCase()}
+function printFormatValue(el){
+  if(el.tagName==='SELECT'){const o=el.options[el.selectedIndex];return o&&el.value!==''?o.text:''}
+  const v=el.value||'';
+  if(printType(el)==='date'&&/^\d{4}-\d{2}-\d{2}$/.test(v)){const [y,m,d]=v.split('-');return d+'/'+m+'/'+y}
+  if(printType(el)==='datetime-local'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)){const [dt,tm]=v.split('T');const [y,m,d]=dt.split('-');return d+'/'+m+'/'+y+' '+tm.slice(0,5)}
+  return v;
+}
+function preparePrint(){
+  const root=document.getElementById('new');if(!root)return;
+  root.querySelectorAll('.printVal').forEach(n=>n.remove());
+  root.querySelectorAll('.printHidden').forEach(n=>n.classList.remove('printHidden'));
+  ['input','select','textarea'].forEach(tag=>root.querySelectorAll(tag).forEach(el=>{
+    if(['radio','checkbox','file','hidden','button','submit'].includes(printType(el)))return;
+    if(el.closest('.hide'))return;
+    const span=document.createElement('span');
+    span.className='printVal';
+    span.textContent=printFormatValue(el);
+    if(el.parentNode)el.parentNode.insertBefore(span,el.nextSibling||null);
+    el.classList.add('printHidden');
+  }));
+}
+window.preparePrint=preparePrint;
+window.addEventListener('beforeprint',preparePrint);
 
 // Met en évidence (bordure/fond vert clair) les champs remplis dans la fiche en cours, pour
 // repérer d'un coup d'œil ce qui reste à saisir. Fonctionne pour tous les types de champs
@@ -1046,7 +1063,7 @@ $('clearDraw').onclick=()=>{
   $('drawEraser')?.classList.remove('sel');
 };
 $('clearSig').onclick=()=>{$('signature').getContext('2d').clearRect(0,0,$('signature').clientWidth,$('signature').clientHeight);state.signature=null};
-$('printBtn').onclick=()=>window.print();
+$('printBtn').onclick=()=>{preparePrint();window.print()};
 
 function compress(file){
   return new Promise(res=>{const fr=new FileReader(),im=new Image();fr.onload=()=>{im.onload=()=>{const max=1280,s=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.72))};im.src=fr.result};fr.readAsDataURL(file)})
