@@ -266,3 +266,40 @@ export function restoreToken() {
   const t = store.get('localSecret', 'serverToken:' + session.user?.id);
   if (t && (!t.expiresAt || new Date(t.expiresAt) > new Date())) { session.token = t.token; session.tokenExpiresAt = t.expiresAt; }
 }
+
+/**
+ * Rattache un appareil configuré en mode autonome à un serveur (session ouverte requise) : la clé de
+ * l'appareil est déposée sur le serveur, le compte serveur est ajouté au trousseau local et toutes
+ * les données locales seront envoyées à la prochaine synchronisation.
+ */
+export async function attachToServer(serverUrl, username, password) {
+  if (!session.dekRaw) throw new Error('Session fermée');
+  serverUrl = assertSecureUrl(serverUrl);
+  const res = await fetch(serverUrl + '/api/v1/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: normUsername(username), password, device: { id: session.device.id, name: session.device.name, userAgent: navigator.userAgent }, deviceKey: bytesToBase64(session.dekRaw) })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Connexion refusée (${res.status})`);
+  await meta.set('mode', 'server'); await meta.set('serverUrl', serverUrl);
+  session.mode = 'server'; session.serverUrl = serverUrl;
+  if (body.device?.number) await updateDevice({ number: body.device.number, serverRegisteredAt: nowISO() });
+  const k = await getKeyring();
+  k.users[body.user.username] = { userId: body.user.id, name: body.user.name, role: body.user.role, wrap: await wrapDEK(session.dekRaw, password), lastLogin: nowISO() };
+  await saveKeyring(k);
+  session.user = { id: body.user.id, username: body.user.username, name: body.user.name, role: body.user.role };
+  session.token = body.token; session.tokenExpiresAt = body.expiresAt;
+  await saveToken();
+  await store.log('attach-server', { entityLabel: serverUrl, details: { serveur: serverUrl, compte: body.user.username } });
+  return body.user;
+}
+
+/** Appel authentifié à l'API d'administration du serveur. */
+export async function adminApi(path, { method = 'GET', body } = {}) {
+  if (session.mode !== 'server') throw new Error('Fonction disponible uniquement en mode serveur.');
+  if (!session.token) throw new Error('Reconnexion au serveur requise (Synchronisation).');
+  const res = await fetch(apiUrl(path), { method, headers: { Authorization: `Bearer ${session.token}`, 'X-Device-Id': session.device.id, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `Erreur serveur ${res.status}`);
+  return out;
+}

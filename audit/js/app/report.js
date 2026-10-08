@@ -64,7 +64,8 @@ export async function buildAuditReport(auditId) {
   };
   doc.footerFn = (d, page, total) => {
     d.line(d.m.left, d.H - 40, d.W - d.m.right, d.H - 40);
-    d.text(`${title} — généré le ${fmtDateTime(generatedAt)} par ${session.user?.name || ''} — ${org.reportFooter || ''}`.slice(0, 160), d.m.left, d.H - 34, { size: 6.8, color: '#6e7b82' });
+    const foot = d.wrap(`${title} — généré le ${fmtDateTime(generatedAt)} par ${session.user?.name || ''} — ${org.reportFooter || ''}`, 'regular', 6.8, d.contentWidth - 70);
+    foot.slice(0, 2).forEach((l, i) => d.text(l, d.m.left, d.H - 36 + i * 8, { size: 6.8, color: '#6e7b82' }));
     d.text(`Page ${page} / ${total}`, d.m.left, d.H - 34, { size: 7.5, color: '#4f5f67', align: 'right', width: d.contentWidth });
   };
 
@@ -175,7 +176,7 @@ export async function buildAuditReport(auditId) {
       const r = audit.responses?.[it.id];
       const n = st.counts[it.id] || 0;
       return [it.code || '', it.label + (it.refs?.length ? '\nRéf. : ' + it.refs.map(rf => refLabel(rf, audit.documentsSnapshot)).join(' ; ') : ''),
-        { text: responseText(it, r) || 'Sans réponse', color: COLORS[r?.status] || (r ? '#10202b' : '#b3261e'), font: r?.status === 'NC' ? 'bold' : 'regular' },
+        it.kind === 'photo' && n ? { text: `${n} photographie(s) jointe(s)`, color: COLORS.C } : { text: responseText(it, r) || 'Sans réponse', color: COLORS[r?.status] || (r ? '#10202b' : '#b3261e'), font: r?.status === 'NC' ? 'bold' : 'regular' },
         (r?.comment || '') + (n ? `${r?.comment ? '\n' : ''}[${n} preuve(s)]` : '') + (r?.at ? `\n${fmtTime(r.at)} ${r.byName || ''}` : '')];
     });
     if (rows.length) doc.table({ columns: [{ label: 'Code', width: 38 }, { label: 'Critère et références', width: 215 }, { label: 'Réponse', width: 92 }, { label: 'Observation / preuve', width: 166 }], rows, fontSize: 8 });

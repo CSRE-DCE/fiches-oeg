@@ -42,7 +42,7 @@ export function auditState(audit, { includeMissing = false } = {}) {
   const deviations = auditDeviations(audit.id);
   const prestation = audit.prestationId ? store.get('prestation', audit.prestationId) : null;
   const point = store.get('point', audit.pointId);
-  const operators = (audit.operatorIds || []).map(id => store.get('operator', id)).filter(Boolean);
+  const operators = [...(audit.operatorIds || []).map(id => store.get('operator', id)).filter(Boolean), ...(audit.adHocOperators || [])];
   const settings = orgSettings();
   const alerts = computeAlerts({ audit, grid, ctx, point, prestation, operators, settings, mediaCounts: counts, includeMissing, today: localDate() })
     .filter(a => !(audit.dismissedAlerts || []).some(d => d.key === a.key));

@@ -117,9 +117,8 @@ export function computeAlerts(input) {
 
   // 4. Opérateurs non habilités
   const stId = audit.samplingTypeId || prestation?.samplingTypeId || null;
-  for (const opId of audit.operatorIds || []) {
-    const op = operators.find(o => o.id === opId);
-    if (!op) continue;
+  for (const op of operators) {
+    if (!op || !((audit.operatorIds || []).includes(op.id) || op.adHoc)) continue;
     const st = operatorStatus(op, auditDate, stId);
     if (!st.ok) add({
       code: 'OPERATOR_NOT_QUALIFIED', level: 'critique', sectionId: sectionOfModule('operators'), target: { type: 'operator', id: op.id },

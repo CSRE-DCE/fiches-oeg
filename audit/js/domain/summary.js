@@ -35,7 +35,7 @@ export function auditSummary({ audit, grid, ctx = {}, deviations = [], criticali
   // Exigences les plus fréquemment non conformes (dans l'audit : par référence documentaire / section)
   const freq = new Map();
   for (const n of ncItems) {
-    const keys = n.refs.length ? n.refs.map(r => [r.docType || r.docKey, r.article].filter(Boolean).join(' art. ')) : [n.section];
+    const keys = n.refs.length ? n.refs.map(r => [r.docKey || r.docType, r.article].filter(Boolean).join(' § ')) : [n.section];
     for (const k of keys) freq.set(k, (freq.get(k) || 0) + 1);
   }
   const frequentRequirements = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([requirement, count]) => ({ requirement, count }));

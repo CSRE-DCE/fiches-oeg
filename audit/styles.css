@@ -65,6 +65,8 @@ main.view:focus{outline:none}
 .fab-obs{background:#fff;color:var(--brand);border:2px solid var(--brand)}
 .fab .ic{font-size:22px}
 body.in-audit .fab-obs{display:none}
+body.in-audit .fab-stack{bottom:calc(var(--bottom-h) + var(--safe-b) + 88px)}
+@media(min-width:1000px){body.in-audit .fab-stack{bottom:96px}}
 @media(max-width:600px){.fab-obs span:not(.ic){display:none}.fab-obs{padding:0;width:56px;justify-content:center}}
 
 /* ---------- Cartes et titres ---------- */
