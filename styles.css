@@ -155,3 +155,16 @@
 .miDiffDetail{margin-left:26px;font-size:12px;color:var(--muted)}
 .miBadgeNew{background:var(--soft);color:var(--accent);border-radius:6px;padding:1px 6px;font-size:11px;font-weight:800;margin-left:6px}
 .miBadgeChanged{background:#fff6df;color:#8a6100;border-radius:6px;padding:1px 6px;font-size:11px;font-weight:800;margin-left:6px}.crtPageHeadRight{text-align:right}
+
+/* ===== Terrain : indicateur de sauvegarde, contrôles de saisie (js/terrain.js) ===== */
+.backupPill{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:1px;border:1px solid #ffffff66;background:#ffffff26;color:#fff;border-radius:12px;padding:6px 10px;font-weight:800;font-size:12px;line-height:1.2;cursor:pointer;text-align:right;max-width:46%}
+.backupPill[data-level="warn"]{background:#fff3cd;color:#7a4b00;border-color:#f0c36d}
+.backupPill[data-level="ok"]{background:#e8f6ef;color:#21643a;border-color:#8fce97}
+.backupPill .bpSub{font-size:10px;font-weight:600;opacity:.85}
+.backupPill .bpSub:empty{display:none}
+input.fieldMissing,select.fieldMissing,div.fieldMissing{outline:2.5px solid var(--red)!important;outline-offset:1px;background:#fde9e7}
+input.valueBad{border-color:var(--red)!important;background:#fde9e7!important}
+input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
+@media(max-width:520px){.backupPill{max-width:none;font-size:11px;padding:5px 8px}.topin{flex-wrap:wrap}}
+@media print{.backupPill,#endOfDayCard{display:none!important}}
+.offTab{display:none!important}

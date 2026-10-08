@@ -70,6 +70,7 @@ function persistRecords(valeur){
 }
 
 function saveLS(key,valeur){
+  if(key===LS)setTimeout(()=>window.dispatchEvent(new Event('oeg:records-changed')),0);
   if(key===LS&&recordsBackend!=='ls'){
     // Fiches : écriture asynchrone dans IndexedDB (dans l'ordre des appels). Pendant le
     // chargement initial, l'écriture est reportée : la fusion de fin de chargement enregistrera
@@ -203,6 +204,7 @@ const recordsReady=(async()=>{
   if(typeof renderDashboard==='function'&&$('dashboard')?.classList.contains('active'))try{renderDashboard()}catch(e){}
   if(typeof renderSuivi==='function'&&$('suivi')?.classList.contains('active'))try{renderSuivi()}catch(e){}
   if(window.OEGSync)window.OEGSync.notifyChange();
+  window.dispatchEvent(new Event('oeg:records-changed'));
   return true;
 })();
 window.OEGRecordsReady=recordsReady;
@@ -1566,10 +1568,14 @@ $('addStation').onclick=()=>{
 // gestionnaire dans people-stations-core.js remplaçait silencieusement celui-ci, si bien que
 // toute correction faite ici était sans effet.) Les modules qui ont besoin de réagir à
 // l'ouverture d'un onglet ajoutent un addEventListener('click') sans toucher à .onclick.
+const FICHE_CARDS=['autoCard','missionCard','siteCard','insituCard','sampleCard','specificCard','mediaCard','obsCard','signCard'];
 function showTab(v){
   const view=$(v);if(!view)return;
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===v));
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));view.classList.add('active');
+  // Les cartes de la fiche sont hors de #new (enfants directs de <body>) : sans cela, une fiche
+  // en cours de saisie restait affichée sous les autres onglets (Données, Qualité...).
+  FICHE_CARDS.forEach(id=>$(id)?.classList.toggle('offTab',v!=='new'));
   $('bar').style.display=v==='new'?'flex':'none';
   const run=fn=>{try{fn()}catch(e){console.error(e)}};
   if(v==='new')setTimeout(fitCanvases,0);

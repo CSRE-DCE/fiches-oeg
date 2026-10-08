@@ -112,8 +112,11 @@ function clearFormNoConfirm(){state={network:null,activity:null,bioOperation:nul
     draftId=null;if(draftTimer){clearTimeout(draftTimer);draftTimer=null}
     q('draftBanner')?.remove();
   };
-  document.addEventListener('input',e=>{if(e.target?.closest?.('#new'))scheduleDraftSave()});
-  document.addEventListener('change',e=>{if(e.target?.closest?.('#new'))scheduleDraftSave()});
+  // Les cartes de mesures/prélèvement sont hors de #new (enfants directs de <body>) : inFiche()
+  // (app-core.js) les inclut, sinon les mesures saisies ne déclenchaient pas le brouillon.
+  const inForm=t=>!!t?.closest&&(typeof inFiche==='function'?inFiche(t):!!t.closest('#new'));
+  document.addEventListener('input',e=>{if(inForm(e.target))scheduleDraftSave()});
+  document.addEventListener('change',e=>{if(inForm(e.target))scheduleDraftSave()});
   function showDraftBanner(draft){
     if(q('draftBanner'))return;
     const r=draft.record,when=new Date(draft.savedAt).toLocaleString('fr-FR');
