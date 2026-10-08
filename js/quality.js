@@ -44,7 +44,9 @@ async function audit(event,recordId,details={}){
   custom.auditTrail.push(row);if(custom.auditTrail.length>5000)custom.auditTrail=custom.auditTrail.slice(-5000);saveLS(LSC,custom);return row.id;
 }
 function setField(id,v){if($(id))$(id).value=v??''}
-function radioSet(name,v){if(!v)return;const q=document.querySelector(`input[name="${name}"][value="${CSS.escape(v)}"]`);if(q)q.checked=true}
+// Décoche d'abord le groupe : sinon, en ouvrant une fiche sans réponse après une fiche qui en
+// avait une, l'ancienne réponse restait cochée et était enregistrée dans la nouvelle fiche.
+function radioSet(name,v){document.querySelectorAll(`input[name="${name}"]`).forEach(r=>{r.checked=false});if(!v)return;const q=document.querySelector(`input[name="${name}"][value="${CSS.escape(v)}"]`);if(q)q.checked=true}
 
 /* --- Métrologie --- */
 function equipStatus(e){
@@ -117,6 +119,7 @@ async function saveQualityRecord(){
     const turb=[1,2,3].map(n=>val('iv_turb_'+n)).filter(v=>v!=='').map(Number);
     if(turb.length!==3||turb.some(v=>!Number.isFinite(v))){toast('Turbidité : les 3 mesures sont obligatoires');return}
   }
+  const wasEditing=!!state.editing;
   /* Audit si modification après validation (ancien correctif) */
   const before=state.editing?records.find(x=>x.id===state.editing):null;
   if(before?.lifecycle?.status==='Validée') await audit('MODIFICATION_APRES_VALIDATION',before.id,{previousStatus:'Validée'});
@@ -142,7 +145,8 @@ async function saveQualityRecord(){
   // Formulaire vidé seulement si l'enregistrement a réussi (auparavant, un enregistrement refusé
   // effaçait toute la saisie), et aussi après une mise à jour (auparavant la fiche restait affichée
   // comme une nouvelle fiche et la suivante héritait de son schéma, sa signature et ses photos).
-  if(result===true && typeof window.clearFormNoConfirm==='function'){setTimeout(()=>window.clearFormNoConfirm(),0)}
+  // (après une mise à jour, un éventuel brouillon concerne une autre fiche non enregistrée : on le garde)
+  if(result===true && typeof window.clearFormNoConfirm==='function'){setTimeout(()=>window.clearFormNoConfirm({keepDraft:wasEditing}),0)}
   return result;
 }$('save').onclick=saveQualityRecord;
 

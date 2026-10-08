@@ -82,7 +82,12 @@ q('qualityRecord')?.addEventListener('change',()=>{if(q('qualityEditBtn'))return
 const pb=q('printBtn');if(pb)pb.onclick=()=>{if(window.preparePrint)window.preparePrint();window.print()};
 // La navigation entre onglets est gérée par showTab() dans app-core.js (gestionnaire unique).
 window.clearFormNoConfirm=clearFormNoConfirm;window.saveQualityRecord=saveQualityRecord;
-function clearFormNoConfirm(){state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};document.querySelectorAll('#new input,#new textarea').forEach(e=>{if(e.type!=='file')e.value=''});document.querySelectorAll('#new select').forEach(e=>e.value='');document.querySelectorAll('#new input[type=radio],#new input[type=checkbox]').forEach(e=>e.checked=false);document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);$('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();if(window.drawPhotoGroups)drawPhotoGroups();$('save').textContent='💾 Enregistrer la fiche';if(window.clearDraft)window.clearDraft();if(window.syncCanvases)window.syncCanvases()}
+// Vide TOUTE la fiche : les cartes mesures, prélèvement, site, observations et signature sont des
+// enfants directs de <body>, hors de #new (voir inFiche() dans app-core.js) — auparavant elles
+// n'étaient pas vidées et la fiche suivante reprenait observations, réponses qualité, conditions
+// du site... Les cases à cocher / boutons radio sont décochés sans toucher à leur valeur.
+// opts.keepDraft : ne pas effacer le brouillon (il concerne alors une autre fiche, non enregistrée).
+function clearFormNoConfirm(opts){state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};clearFicheFields();document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);$('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();if(window.drawPhotoGroups)drawPhotoGroups();$('save').textContent='💾 Enregistrer la fiche';if(window.clearDraft&&!(opts&&opts.keepDraft))window.clearDraft();if(window.syncCanvases)window.syncCanvases()}
 
 // ---------- Brouillon automatique (protège contre la perte de saisie en cours) ----------
 // Enregistre périodiquement, dans IndexedDB (repli localStorage ; jamais dans "records"), le contenu de la

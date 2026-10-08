@@ -144,6 +144,16 @@ function isFieldFilled(field){
 }
 /* Les cartes de la fiche (prélèvement, site, mesures in situ, observations, signature) sont des enfants directs de <body>, hors de #new : on considère donc "dans la fiche" tout champ hors des autres onglets. */
 function inFiche(f){return !f.closest('.view:not(#new),.top,.btnbar,.tabs,#oegErrorBox')}
+// Vide tous les champs de la fiche (y compris les cartes hors de #new), sans toucher à la valeur
+// des cases à cocher / boutons radio (on les décoche seulement).
+function clearFicheFields(){
+  document.querySelectorAll('input,textarea,select').forEach(e=>{
+    if(!inFiche(e)||e.closest('#endOfDayCard')||e.type==='file')return;
+    if(e.type==='radio'||e.type==='checkbox'){e.checked=false;return}
+    e.value='';
+  });
+}
+window.clearFicheFields=clearFicheFields;
 function markFilledFields(){
   document.querySelectorAll('.field').forEach(f=>{if(inFiche(f))f.classList.toggle('filled',isFieldFilled(f))});
 }
@@ -418,7 +428,7 @@ function fill(id,arr){
 function leaveEditedFiche(){
   if(!state.editing)return true;
   if(!confirm('Une fiche enregistrée est en cours de modification.\n\nAbandonner les modifications non enregistrées et commencer une nouvelle fiche ?'))return false;
-  if(typeof window.clearFormNoConfirm==='function')window.clearFormNoConfirm();
+  if(typeof window.clearFormNoConfirm==='function')window.clearFormNoConfirm({keepDraft:true});
   return true;
 }
 window.leaveEditedFiche=leaveEditedFiche;
@@ -491,10 +501,37 @@ $('session').onchange=()=>{
   }
   state.station=null;fillStations();hideForm();
 };
+// Changer de station reconstruit les tableaux de mesures / prélèvement (buildAll), ce qui effaçait
+// les valeurs déjà saisies (ex. corriger une station mal choisie). On les mémorise avant et on les
+// remet ensuite dans les champs restés vides (les valeurs propres à la nouvelle station priment).
+const KEEP_CARDS=['insituCard','sampleCard','specificCard','siteCard'];
+function snapshotFicheValues(){
+  const out=[];
+  KEEP_CARDS.forEach(c=>$(c)?.querySelectorAll('input,select,textarea').forEach(e=>{
+    if(e.type==='file')return;
+    if(e.type==='radio'||e.type==='checkbox'){if(e.checked&&(e.name||e.id))out.push({key:(e.name||e.id),v:e.value,check:true});return}
+    if(e.id&&e.value!=='')out.push({key:e.id,v:e.value});
+  }));
+  return out;
+}
+function restoreFicheValues(list){
+  list.forEach(x=>{
+    if(x.check){
+      const group=[...document.querySelectorAll(`input[name="${CSS.escape(x.key)}"],input#${CSS.escape(x.key)}`)];
+      const target=group.find(e=>e.value===x.v);
+      if(target&&!(target.type==='radio'&&group.some(e=>e.checked)))target.checked=true;
+      return;
+    }
+    const e=$(x.key);
+    if(e&&e.value===''){e.value=x.v;e.dispatchEvent(new Event('input',{bubbles:true}))}
+  });
+}
 $('station').onchange=()=>{
   state.station=val('station');
   if(!state.station){hideForm();return}
+  const kept=snapshotFicheValues();
   renderAuto();refreshSiteFields();showForm();buildAll();
+  restoreFicheValues(kept);
 };
 
 function dedupeProgram(v){
@@ -1306,11 +1343,16 @@ function collectRecord(){
   if(r.insitu)Object.entries(r.insitu).forEach(([k,d])=>{if(d)d.unite=(window.UNITS&&window.UNITS[k])||d.unite||''});
   return r;
 }
+// « Effacer » : même remise à zéro que après un enregistrement (clearFormNoConfirm). Auparavant
+// tous les champs de l'appli étaient vidés, y compris la VALEUR des boutons Oui/Non (les réponses
+// cochées étaient ensuite enregistrées vides jusqu'au rechargement) et des réglages d'autres
+// onglets (identifiant Google Drive, recherche, validateur...).
 function clearForm(){
   if(!confirm('Effacer le formulaire en cours ?'))return;
+  if(typeof window.clearFormNoConfirm==='function'){window.clearFormNoConfirm();renderPhotos();return}
   state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};
-  document.querySelectorAll('input,textarea').forEach(e=>{if(e.type!=='file')e.value=''});
-  document.querySelectorAll('select').forEach(e=>e.value='');document.querySelectorAll('input[type=radio]').forEach(e=>e.checked=false);
+  document.querySelectorAll('input,textarea').forEach(e=>{if(e.type!=='file'&&e.type!=='radio'&&e.type!=='checkbox')e.value=''});
+  document.querySelectorAll('select').forEach(e=>e.value='');document.querySelectorAll('input[type=radio],input[type=checkbox]').forEach(e=>e.checked=false);
   document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);
   $('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();renderPhotos();if(window.drawPhotoGroups)drawPhotoGroups();if(window.clearDraft)window.clearDraft();$('save').textContent='💾 Enregistrer la fiche';
   syncCanvases(); // efface schéma et signature de la fiche précédente
@@ -1323,6 +1365,7 @@ $('search').oninput=()=>{if(typeof window.renderList==='function')window.renderL
 function loadRecord(id){
   (function loadRecordCore(id){
   const f=records.find(x=>x.id===id);if(!f)return;
+  clearFicheFields(); // rien de la fiche précédemment affichée ne doit rester (champs absents de f)
   state.editing=id;state.network=f.network;state.activity=f.activity;state.bioOperation=f.bioOperation||'';state.session=f.session;state.station=f.station;state.preleveurs=[...(f.preleveurs||[])];state.photos=(f.photos||[]).map(p=>p&&typeof p==='object'?{...p}:p);state.draw=f.dessin||null;state.signature=f.signature||null;
   selectNetwork(f.network);
   state.activity=f.activity;state.preleveurs=[...(f.preleveurs||[])];state.bioOperation=f.bioOperation||'';
@@ -1370,7 +1413,7 @@ function loadRecord(id){
   const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
   Object.entries(mainMap).forEach(([k,v])=>{if($(k))$(k).value=v||''});
   renderOrgOptions(f.organisme);renderPre();
-  if(f.qc){const q=document.querySelector(`input[name="qc"][value="${f.qc}"]`);if(q)q.checked=true}
+  radioSet('qc',f.qc);
   if(f.sample){
     Object.entries(f.sample).forEach(([k,v])=>{
       if($(k))$(k).value=v||'';

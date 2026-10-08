@@ -269,6 +269,50 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e5.length===0,'aucune erreur JavaScript (fiches indépendantes) '+JSON.stringify(e5));
     await c5.close();
   }
+  // --- I : champs hors de #new (observations, qualité, site, signataire), Effacer, brouillon, changement de station ---
+  {
+    const c6=await browser.newContext({serviceWorkers:'block'});
+    await c6.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c6.newPage();const e6=[];p.on('pageerror',e=>e6.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const pickStation=async(i=0)=>{await p.click('#networks .chip[data-n="RCO"]');
+      for(const id of ['session','activity'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+      await p.evaluate(i=>{const s=$('station');s.value=[...s.options].filter(o=>o.value)[i].value;s.dispatchEvent(new Event('change',{bubbles:true}))},i)};
+    const fillA=async()=>{await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+      await p.fill('#obs','OBS A');await p.fill('#comment','COMMENT A');await p.fill('#qcType','QC A');await p.fill('#siteObs','SITE A');
+      await p.evaluate(()=>{$('meteo').selectedIndex=1;$('signName').selectedIndex=1;document.querySelector('input[name="qc"][value="Oui"]').checked=true;document.querySelector('input[name="representative"][value="Oui"]').checked=true})};
+    const leftovers=()=>p.evaluate(()=>({obs:$('obs').value,comment:$('comment').value,qcType:$('qcType').value,siteObs:$('siteObs').value,signName:$('signName').value,meteo:$('meteo').value,qc:radioValue('qc'),rep:radioValue('representative')}));
+    const empty=o=>Object.values(o).every(v=>v==='');
+    // Changer de station en cours de saisie : mesures conservées
+    await pickStation(0);await p.fill('#iv_ph','6.5');
+    await p.evaluate(()=>{const s=$('station');s.value=[...s.options].filter(o=>o.value)[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    ok(await p.inputValue('#iv_ph')==='6.5','changement de station en cours de saisie : les mesures in situ sont conservées');
+    await fillA();await p.click('#save');await p.waitForTimeout(1200);
+    const idA=await p.evaluate(()=>records[0]?.id);
+    ok(!!idA&&await p.evaluate(()=>records[0].obs==='OBS A'&&records[0].qc==='Oui'&&!!records[0].signName),'fiche A enregistrée avec observations, réponse qualité et signataire');
+    ok(empty(await leftovers()),'après enregistrement : observations, commentaires, qualité, météo, site et signataire vidés '+JSON.stringify(await leftovers()));
+    // Fiche B ne reprend rien de A
+    await pickStation(2);await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+    await p.click('#save');await p.waitForTimeout(1200);
+    ok(await p.evaluate(()=>{const b=records.find(r=>r.id!==records[0].id&&r.station!==records[0].station)||records[1];return b&&!b.obs&&!b.comment&&!b.qcType&&!b.qc&&!b.signName&&!b.conditions?.siteObs&&!b.quality?.representative}),'fiche B enregistrée sans rien de A (observations, qualité, site, signataire)');
+    // Ouvrir A puis B : la réponse qualité de A ne reste pas cochée
+    const idB=await p.evaluate(a=>records.find(r=>r.id!==a).id,idA);
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},idA);await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>radioValue('qc')==='Oui'&&$('obs').value==='OBS A'),'fiche A ouverte : ses réponses');
+    await p.evaluate(id=>{loadRecord(id);showTab('new')},idB);await p.waitForTimeout(300);
+    ok(empty(await leftovers()),'fiche B ouverte après A : aucune réponse ni observation de A '+JSON.stringify(await leftovers()));
+    // « Effacer » ne casse plus les boutons Oui/Non
+    await p.click('#clearForm');await p.waitForTimeout(200);
+    ok(await p.evaluate(()=>{const r=document.querySelector('input[name="qc"][value="Oui"]');r.checked=true;const v=radioValue('qc');r.checked=false;return v==='Oui'}),'après « Effacer » : les boutons Oui/Non gardent leur valeur');
+    // Brouillon d'une autre fiche conservé après une mise à jour
+    await pickStation(3);await p.fill('#obs','BROUILLON X');await p.waitForTimeout(3200);
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.obs==='BROUILLON X','brouillon de la fiche X enregistré');
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},idA);await p.waitForTimeout(300);
+    await p.click('#save');await p.waitForTimeout(1200);
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.obs==='BROUILLON X','mise à jour de A : le brouillon de la fiche X n’est pas effacé');
+    ok(e6.length===0,'aucune erreur JavaScript (champs de fiche) '+JSON.stringify(e6));
+    await c6.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
