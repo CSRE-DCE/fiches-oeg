@@ -19,6 +19,9 @@
   function saveAccess(x,modes,etapes,depart,marche,difficulte){custom.stationAccess=custom.stationAccess||{};const prev=ensureStationAccess(x);custom.stationAccess[stationKey(x)]={...prev,modes,etapes,pointDepart:depart,marche,difficulte};saveLS(LSC,custom)}
   function openStationEnhanced(x){
     if(!x)return;
+    // Fiche enregistrée en cours de modification : confirmation puis nouvelle fiche vierge,
+    // sinon l'enregistrement écrasait cette fiche avec la nouvelle station (voir app-core.js).
+    if(state.editing){if(!(window.leaveEditedFiche&&window.leaveEditedFiche()))return;if(x.network)selectNetwork(x.network)}
     state.network=x.network||state.network;state.activity=x.activity||state.activity;state.station=x.nom;state.session=state.session||null;
     const st=stationsFor(state.network,state.activity).find(s=>s.nom===x.nom)||x;
     try{fillStations();$('station').value=x.nom;refreshSiteFields();showForm();document.querySelector('[data-tab="new"]').click();toast('Station sélectionnée : '+x.nom)}catch(e){toast('Station sélectionnée : '+x.nom)}

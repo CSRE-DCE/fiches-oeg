@@ -62,7 +62,9 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
   const res0=await page.evaluate(()=>OEGSync.manualSyncNow());
   await page.waitForTimeout(2500);
   const byRid=()=>{const m={};for(const [fid,f] of drive){if(f.name.startsWith('fiche_')){const r=JSON.parse(f.text);m[r.id]=fid}}return m};
-  const fids=byRid();ok(Object.keys(fids).length===4,'envoi initial : 4 fiches sur Drive');
+  // (les fiches volumineuses de l'étape B peuvent aussi avoir été envoyées selon le moment où la
+  // synchronisation automatique s'est déclenchée : on vérifie précisément les 4 fiches attendues)
+  const fids=byRid();ok(['1','2','3','4'].every(id=>fids[id]),'envoi initial : les 4 fiches sur Drive');
   const setRemote=(id,upd,comment)=>{const f=drive.get(fids[id]);const r=JSON.parse(f.text);r.lifecycle.updatedAt=upd;r.comment=comment;f.text=JSON.stringify(r);f.v++};
   setRemote('1','2026-10-05T10:00:00.000Z','modif tablette B');           // distant plus récent, local intact -> remplacé
   setRemote('2','2026-10-05T10:00:00.000Z','modif tablette B');           // conflit : distant plus récent + local modifié
@@ -167,6 +169,149 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(!/hors plage|Valeurs atypiques/.test(board),'synthèse : compteurs « hors plage » retirés');
     ok(e3.length===0,'aucune erreur JavaScript (terrain) '+JSON.stringify(e3));
     await c3.close();
+  }
+  // --- G : schéma et signature propres à chaque fiche (pas de superposition entre fiches) ---
+  {
+    const c4=await browser.newContext({serviceWorkers:'block'});
+    await c4.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c4.newPage();const e4=[];p.on('pageerror',e=>e4.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const img=(color,x)=>{const c=document.createElement('canvas');c.width=600;c.height=220;const g=c.getContext('2d');g.fillStyle=color;g.fillRect(x,40,120,120);return c.toDataURL('image/png')};
+      selectNetwork('RCO');const st=[...$('station').options].find(o=>o.value).value;
+      const base=id=>({id,network:'RCO',activity:$('activity').options[1]?.value,session:$('session').options[1]?.value,station:st,date:'2026-10-01',savedAt:new Date().toISOString(),lifecycle:{status:'À contrôler',updatedAt:new Date().toISOString()},photos:[],auditRefs:[]});
+      records.push({...base('A'),dessin:img('#ff0000',30),signature:img('#ff0000',30)},{...base('B'),dessin:img('#0000ff',400),signature:img('#0000ff',400)},{...base('C'),dessin:'',signature:''});
+      saveLS(LS,records);
+    });
+    const pix=id=>p.evaluate(id=>{const c=document.getElementById(id),g=c.getContext('2d'),d=window.devicePixelRatio||1,r=c.getBoundingClientRect();
+      const at=(x,y)=>{const v=g.getImageData(Math.round(x*r.width/600*d),Math.round(y*r.height/220*d),1,1).data;return v[3]===0?'vide':v[0]>200&&v[2]<50?'rouge':v[2]>200&&v[0]<50?'bleu':'autre'};
+      return at(60,100)+'/'+at(450,100)},id);
+    const open=async id=>{await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},id);await p.waitForTimeout(500)};
+    await open('A');
+    ok(await pix('draw')==='rouge/vide'&&await pix('signature')==='rouge/vide','fiche A : son schéma et sa signature');
+    await open('B');
+    ok(await pix('draw')==='vide/bleu','fiche B ouverte après A : schéma de B seul, pas de superposition');
+    ok(await pix('signature')==='vide/bleu','fiche B ouverte après A : signature de B seule');
+    await open('C');
+    ok(await pix('draw')==='vide/vide'&&await pix('signature')==='vide/vide','fiche C sans schéma : zones vides (rien hérité de A ou B)');
+    ok(await p.evaluate(()=>canvasData('draw')===''&&canvasData('signature')===''),'fiche C : rien n’est enregistré comme schéma ni signature');
+    ok(await p.evaluate(()=>!qualityChecksFor({...records.find(r=>r.id==='C'),signature:canvasData('signature')}).find(c=>/Signature/.test(c.label)).ok),'contrôle « Signature présente » : non signé = signalé');
+    // Ouvertures rapides successives : seule la dernière fiche s'affiche
+    await p.evaluate(()=>{loadRecord('A');loadRecord('B');loadRecord('A');loadRecord('B')});await p.waitForTimeout(500);
+    ok(await pix('draw')==='vide/bleu','ouvertures rapides A→B→A→B : schéma de B seul');
+    // Nouvelle fiche après avoir vidé le formulaire
+    await p.evaluate(()=>{clearFormNoConfirm();selectNetwork('RCO');for(const id of ['session','activity','station']){const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))}});
+    await p.waitForTimeout(500);
+    ok(await pix('draw')==='vide/vide'&&await pix('signature')==='vide/vide','nouvelle fiche : schéma et signature vierges');
+    // Un vrai tracé à la souris est bien conservé
+    await p.locator('#draw').scrollIntoViewIfNeeded();
+    const box=await p.locator('#draw').boundingBox();
+    await p.mouse.move(box.x+40,box.y+40);await p.mouse.down();await p.mouse.move(box.x+200,box.y+150,{steps:8});await p.mouse.up();
+    ok(await p.evaluate(()=>canvasData('draw').length>500&&!!state.draw),'tracé à la souris : enregistré dans la fiche');
+    // Modifier A sans toucher au schéma : A garde son schéma
+    await open('A');
+    ok(await p.evaluate(()=>{const d=canvasData('draw');return d.length>500}),'fiche A modifiée : son schéma est conservé à l’enregistrement');
+    ok(e4.length===0,'aucune erreur JavaScript (schémas) '+JSON.stringify(e4));
+    await c4.close();
+  }
+  // --- H : aucune donnée d'une fiche ne passe dans une autre (station, réseau, dupliquer, mise à jour) ---
+  {
+    const c5=await browser.newContext({serviceWorkers:'block',deviceScaleFactor:2});
+    await c5.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c5.newPage();const e5=[];p.on('pageerror',e=>e5.push(e.message));
+    let accept=true;const msgs=[];p.on('dialog',async d=>{msgs.push(d.message());accept?await d.accept():await d.dismiss()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Fiche A ouverte AVANT tout dimensionnement des canevas (onglet Liste au démarrage) avec un écran dpr 2
+    await p.evaluate(()=>{
+      const img=(color,x,w=600,h=220)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');g.fillStyle=color;g.fillRect(x,40,120,120);return c.toDataURL('image/png')};
+      const blank=(()=>{const c=document.createElement('canvas');c.width=600;c.height=160;return c.toDataURL('image/png')})();
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY).map(x=>({...x,network:'RCO',activity:RCO_COMBINED_ACTIVITY}));
+      window.__st=st;
+      const base=(id,s)=>({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:s.nom,date:'2026-10-01',heureDebut:'08:00',preleveurs:['PF'],savedAt:'2026-10-01T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-01T08:00:00.000Z'},auditRefs:[]});
+      records.push({...base('A',st[0]),dessin:img('#0000ff',400),signature:img('#ff0000',30),photos:[{data:img('#00ff00',0),group:'Amont'},{data:img('#00ff00',100),group:'Aval'}]});
+      records.push({...base('OLD',st[1]),dessin:'',signature:blank,photos:[]});
+      saveLS(LS,records);
+    });
+    const open=async id=>{await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},id);await p.waitForTimeout(500)};
+    const A=()=>p.evaluate(()=>{const a=records.find(r=>r.id==='A');return {station:a.station,photos:a.photos.length,dessin:a.dessin.length,signature:a.signature.length,version:a.lifecycle.version}});
+    const A0=await A();
+    await p.click('.tab[data-tab="list"]');await p.evaluate(()=>{loadRecord('A');showTab('new')});await p.waitForTimeout(600);
+    ok(await p.evaluate(()=>canvasData('draw')===records.find(r=>r.id==='A').dessin),'fiche ouverte avant dimensionnement (dpr 2) : schéma conservé tel quel, ni réduit ni ré-encodé');
+    ok(await p.evaluate(()=>{const c=$('draw'),g=c.getContext('2d'),r=c.getBoundingClientRect(),d=2;const v=g.getImageData(Math.round(450*r.width/600*d),Math.round(100*r.height/220*d),1,1).data;return v[2]>200&&v[3]>0}),'schéma affiché à la bonne taille (carré bleu à droite, pas réduit dans un coin)');
+    // 1) Ouvrir une autre station depuis l'onglet Stations pendant la modification de A
+    accept=false;await p.evaluate(()=>window.openStation(window.__st[2]));await p.waitForTimeout(300);
+    ok(msgs.at(-1)?.includes('en cours de modification')&&await p.evaluate(()=>state.editing==='A'),'autre station pendant une modification : confirmation, « Annuler » garde la fiche A');
+    accept=true;await p.evaluate(()=>window.openStation(window.__st[2]));await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>state.editing===null&&state.station===window.__st[2].nom&&canvasData('draw')===''&&canvasData('signature')===''&&state.photos.length===0),'autre station confirmée : nouvelle fiche vierge (ni schéma, ni signature, ni photos de A)');
+    ok(JSON.stringify(await A())===JSON.stringify(A0),'fiche A intacte (station, photos, schéma, signature)');
+    // 2) Cliquer un réseau pendant la modification de A
+    await open('A');accept=true;await p.click('#networks .chip[data-n="BIO"]');await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>state.editing===null&&state.network==='BIO'&&canvasData('signature')===''),'réseau changé pendant une modification : confirmation puis nouvelle fiche vierge');
+    // 3) « Mettre à jour » puis fiche suivante
+    await open('A');
+    for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'5');
+    await p.click('#save');await p.waitForTimeout(1500);
+    ok(await p.evaluate(()=>records.find(r=>r.id==='A').lifecycle.version)===A0.version+1,'mise à jour de A enregistrée');
+    ok(await p.evaluate(()=>state.network===null&&state.editing===null&&canvasData('draw')===''&&canvasData('signature')===''&&state.photos.length===0),'après « Mettre à jour » : formulaire vidé, la fiche suivante n’hérite de rien');
+    // 4) Dupliquer : pas de signature, photos indépendantes
+    await p.click('.tab[data-tab="list"]');
+    await p.evaluate(()=>{const card=[...document.querySelectorAll('#records .listcard')].find(c=>c.textContent.includes(records.find(r=>r.id==='A').station)&&!c.textContent.includes('Copie'));card.querySelectorAll('button')[1].click()});
+    await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>state.editing===null&&canvasData('signature')===''&&canvasData('draw').length>500),'Dupliquer : schéma repris, signature vide (à refaire pour la nouvelle visite)');
+    await p.evaluate(()=>{state.photos.splice(0,1)});
+    ok((await A()).photos===2,'Dupliquer puis retirer une photo de la copie : la fiche A garde ses 2 photos');
+    // 5) Enregistrement refusé : rien n'est effacé
+    await p.evaluate(()=>{state.station=null});await p.click('#save');await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>canvasData('draw').length>500&&state.network==='RCO'),'enregistrement refusé (station manquante) : la saisie et le schéma sont conservés');
+    // 6) Ancienne fiche non signée (image blanche) : vue comme non signée
+    await open('OLD');await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>canvasData('signature')===''),'ancienne fiche avec signature « image blanche » : considérée comme non signée');
+    ok(e5.length===0,'aucune erreur JavaScript (fiches indépendantes) '+JSON.stringify(e5));
+    await c5.close();
+  }
+  // --- I : champs hors de #new (observations, qualité, site, signataire), Effacer, brouillon, changement de station ---
+  {
+    const c6=await browser.newContext({serviceWorkers:'block'});
+    await c6.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c6.newPage();const e6=[];p.on('pageerror',e=>e6.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const pickStation=async(i=0)=>{await p.click('#networks .chip[data-n="RCO"]');
+      for(const id of ['session','activity'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+      await p.evaluate(i=>{const s=$('station');s.value=[...s.options].filter(o=>o.value)[i].value;s.dispatchEvent(new Event('change',{bubbles:true}))},i)};
+    const fillA=async()=>{await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+      await p.fill('#obs','OBS A');await p.fill('#comment','COMMENT A');await p.fill('#qcType','QC A');await p.fill('#siteObs','SITE A');
+      await p.evaluate(()=>{$('meteo').selectedIndex=1;$('signName').selectedIndex=1;document.querySelector('input[name="qc"][value="Oui"]').checked=true;document.querySelector('input[name="representative"][value="Oui"]').checked=true})};
+    const leftovers=()=>p.evaluate(()=>({obs:$('obs').value,comment:$('comment').value,qcType:$('qcType').value,siteObs:$('siteObs').value,signName:$('signName').value,meteo:$('meteo').value,qc:radioValue('qc'),rep:radioValue('representative')}));
+    const empty=o=>Object.values(o).every(v=>v==='');
+    // Changer de station en cours de saisie : mesures conservées
+    await pickStation(0);await p.fill('#iv_ph','6.5');
+    await p.evaluate(()=>{const s=$('station');s.value=[...s.options].filter(o=>o.value)[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    ok(await p.inputValue('#iv_ph')==='6.5','changement de station en cours de saisie : les mesures in situ sont conservées');
+    await fillA();await p.click('#save');await p.waitForTimeout(1200);
+    const idA=await p.evaluate(()=>records[0]?.id);
+    ok(!!idA&&await p.evaluate(()=>records[0].obs==='OBS A'&&records[0].qc==='Oui'&&!!records[0].signName),'fiche A enregistrée avec observations, réponse qualité et signataire');
+    ok(empty(await leftovers()),'après enregistrement : observations, commentaires, qualité, météo, site et signataire vidés '+JSON.stringify(await leftovers()));
+    // Fiche B ne reprend rien de A
+    await pickStation(2);await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+    await p.click('#save');await p.waitForTimeout(1200);
+    ok(await p.evaluate(()=>{const b=records.find(r=>r.id!==records[0].id&&r.station!==records[0].station)||records[1];return b&&!b.obs&&!b.comment&&!b.qcType&&!b.qc&&!b.signName&&!b.conditions?.siteObs&&!b.quality?.representative}),'fiche B enregistrée sans rien de A (observations, qualité, site, signataire)');
+    // Ouvrir A puis B : la réponse qualité de A ne reste pas cochée
+    const idB=await p.evaluate(a=>records.find(r=>r.id!==a).id,idA);
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},idA);await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>radioValue('qc')==='Oui'&&$('obs').value==='OBS A'),'fiche A ouverte : ses réponses');
+    await p.evaluate(id=>{loadRecord(id);showTab('new')},idB);await p.waitForTimeout(300);
+    ok(empty(await leftovers()),'fiche B ouverte après A : aucune réponse ni observation de A '+JSON.stringify(await leftovers()));
+    // « Effacer » ne casse plus les boutons Oui/Non
+    await p.click('#clearForm');await p.waitForTimeout(200);
+    ok(await p.evaluate(()=>{const r=document.querySelector('input[name="qc"][value="Oui"]');r.checked=true;const v=radioValue('qc');r.checked=false;return v==='Oui'}),'après « Effacer » : les boutons Oui/Non gardent leur valeur');
+    // Brouillon d'une autre fiche conservé après une mise à jour
+    await pickStation(3);await p.fill('#obs','BROUILLON X');await p.waitForTimeout(3200);
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.obs==='BROUILLON X','brouillon de la fiche X enregistré');
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},idA);await p.waitForTimeout(300);
+    await p.click('#save');await p.waitForTimeout(1200);
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.obs==='BROUILLON X','mise à jour de A : le brouillon de la fiche X n’est pas effacé');
+    ok(e6.length===0,'aucune erreur JavaScript (champs de fiche) '+JSON.stringify(e6));
+    await c6.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

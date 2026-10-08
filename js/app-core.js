@@ -144,6 +144,16 @@ function isFieldFilled(field){
 }
 /* Les cartes de la fiche (prélèvement, site, mesures in situ, observations, signature) sont des enfants directs de <body>, hors de #new : on considère donc "dans la fiche" tout champ hors des autres onglets. */
 function inFiche(f){return !f.closest('.view:not(#new),.top,.btnbar,.tabs,#oegErrorBox')}
+// Vide tous les champs de la fiche (y compris les cartes hors de #new), sans toucher à la valeur
+// des cases à cocher / boutons radio (on les décoche seulement).
+function clearFicheFields(){
+  document.querySelectorAll('input,textarea,select').forEach(e=>{
+    if(!inFiche(e)||e.closest('#endOfDayCard')||e.type==='file')return;
+    if(e.type==='radio'||e.type==='checkbox'){e.checked=false;return}
+    e.value='';
+  });
+}
+window.clearFicheFields=clearFicheFields;
 function markFilledFields(){
   document.querySelectorAll('.field').forEach(f=>{if(inFiche(f))f.classList.toggle('filled',isFieldFilled(f))});
 }
@@ -411,11 +421,22 @@ function fill(id,arr){
     el.appendChild(o);
   });
 }
+// Changer de réseau (ou ouvrir une autre station) pendant la modification d'une fiche déjà
+// enregistrée écrasait cette fiche à l'enregistrement, avec la nouvelle station et le schéma,
+// la signature et les photos de l'ancienne. On demande donc confirmation, puis on repart d'une
+// fiche vierge. Retourne false si l'agent préfère rester sur la fiche en cours.
+function leaveEditedFiche(){
+  if(!state.editing)return true;
+  if(!confirm('Une fiche enregistrée est en cours de modification.\n\nAbandonner les modifications non enregistrées et commencer une nouvelle fiche ?'))return false;
+  if(typeof window.clearFormNoConfirm==='function')window.clearFormNoConfirm({keepDraft:true});
+  return true;
+}
+window.leaveEditedFiche=leaveEditedFiche;
 function renderNetworks(){
   const h=$('networks');h.innerHTML='';
   NETWORKS.forEach(([n])=>{
     const c=document.createElement('div');c.className='chip';c.dataset.n=n;c.textContent=netLabel(n);
-    c.onclick=()=>selectNetwork(n);h.appendChild(c);
+    c.onclick=()=>{if(!leaveEditedFiche())return;selectNetwork(n)};h.appendChild(c);
   });
 }
 function refreshSiteFields(){const surf=$('surfaceSandre');if(surf)surf.classList.toggle('hide',state.network==='ESO');document.querySelectorAll('.elHide').forEach(e=>e.classList.toggle('hide',state.network==='EL'))}
@@ -480,10 +501,37 @@ $('session').onchange=()=>{
   }
   state.station=null;fillStations();hideForm();
 };
+// Changer de station reconstruit les tableaux de mesures / prélèvement (buildAll), ce qui effaçait
+// les valeurs déjà saisies (ex. corriger une station mal choisie). On les mémorise avant et on les
+// remet ensuite dans les champs restés vides (les valeurs propres à la nouvelle station priment).
+const KEEP_CARDS=['insituCard','sampleCard','specificCard','siteCard'];
+function snapshotFicheValues(){
+  const out=[];
+  KEEP_CARDS.forEach(c=>$(c)?.querySelectorAll('input,select,textarea').forEach(e=>{
+    if(e.type==='file')return;
+    if(e.type==='radio'||e.type==='checkbox'){if(e.checked&&(e.name||e.id))out.push({key:(e.name||e.id),v:e.value,check:true});return}
+    if(e.id&&e.value!=='')out.push({key:e.id,v:e.value});
+  }));
+  return out;
+}
+function restoreFicheValues(list){
+  list.forEach(x=>{
+    if(x.check){
+      const group=[...document.querySelectorAll(`input[name="${CSS.escape(x.key)}"],input#${CSS.escape(x.key)}`)];
+      const target=group.find(e=>e.value===x.v);
+      if(target&&!(target.type==='radio'&&group.some(e=>e.checked)))target.checked=true;
+      return;
+    }
+    const e=$(x.key);
+    if(e&&e.value===''){e.value=x.v;e.dispatchEvent(new Event('input',{bubbles:true}))}
+  });
+}
 $('station').onchange=()=>{
   state.station=val('station');
   if(!state.station){hideForm();return}
+  const kept=snapshotFicheValues();
   renderAuto();refreshSiteFields();showForm();buildAll();
+  restoreFicheValues(kept);
 };
 
 function dedupeProgram(v){
@@ -1158,7 +1206,8 @@ function fitCanvas(c){
   const dpr=devicePixelRatio||1,w=Math.round(r.width*dpr),h=Math.round(r.height*dpr);
   if(c.width===w&&c.height===h)return true;
   const key=canvasKey(c);
-  const prev=(c.width>0&&c.height>0&&c._hasContent)?c.toDataURL('image/png'):(state[key]||null);
+  // Contenu de référence : state[key] (mis à jour après chaque trait) ; à défaut, le canevas.
+  const prev=state[key]||((c.width>0&&c.height>0&&c._hasContent)?c.toDataURL('image/png'):null);
   c.width=w;c.height=h;
   const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);applyPen(c);
   if(prev)restoreCanvas(c,prev);
@@ -1195,14 +1244,60 @@ function setupDrawTools(canvas){
     applyPen(canvas);
   };
 }
-function restoreCanvas(c,data){if(!data)return;const im=new Image();im.onload=()=>{const x=c.getContext('2d'),op=x.globalCompositeOperation;x.globalCompositeOperation='source-over';x.drawImage(im,0,0,c.width/(devicePixelRatio||1),c.height/(devicePixelRatio||1));x.globalCompositeOperation=op;c._hasContent=true};im.src=data}
-function canvasData(id){const c=$(id),key=canvasKey(c);if(c.width>0&&c.height>0&&(c._hasContent||!state[key]))return c.toDataURL('image/png');return state[key]||''}
+// Remplace le contenu du canevas par l'image "data" (ou le laisse vide si data est vide).
+// Le canevas est d'abord effacé, et une image encore en cours de chargement pour une fiche
+// précédente est ignorée (jeton) : sans cela, ouvrir une fiche puis une autre superposait les
+// schémas et les signatures, et une fiche sans schéma héritait de celui de la fiche précédente.
+function setCanvasContent(c,data){
+  if(!c)return;
+  const token=c._contentToken=(c._contentToken||0)+1;
+  const x=c.getContext('2d');
+  x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();
+  c._hasContent=false;
+  if(!data)return;
+  const key=canvasKey(c);
+  const im=new Image();
+  im.onload=()=>{
+    if(c._contentToken!==token)return; // une autre image a été demandée entre-temps
+    // Dessin en pixels réels (transformation neutre) : le canevas peut ne pas encore avoir été
+    // dimensionné (fiche ouverte depuis un autre onglet), sans quoi l'image était réduite dans
+    // un coin puis enregistrée ainsi. "destination-over" place l'image SOUS un éventuel trait
+    // fait pendant son chargement.
+    x.save();x.setTransform(1,0,0,1,0,0);x.globalCompositeOperation='destination-over';
+    x.drawImage(im,0,0,c.width,c.height);x.restore();
+    applyPen(c);
+    if(c.width>0&&c.height>0&&isCanvasBlank(c)){
+      // Image entièrement transparente (fiche non signée d'une ancienne version, enregistrée
+      // comme image blanche) : considérée comme vide, pour que le contrôle qualité le voie.
+      c._hasContent=false;if(state[key]===data)state[key]=null;return;
+    }
+    c._hasContent=true;
+    // Un trait a été fait pendant le chargement : la référence doit inclure image + trait.
+    if(state[key]&&state[key]!==data){try{state[key]=c.toDataURL('image/png')}catch(_){}}
+  };
+  im.src=data;
+}
+function isCanvasBlank(c){
+  try{const d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;for(let i=3;i<d.length;i+=4)if(d[i]!==0)return false;return true}
+  catch(e){return false}
+}
+function restoreCanvas(c,data){setCanvasContent(c,data)}
+// Aligne les deux canevas sur la fiche en cours (state.draw / state.signature).
+function syncCanvases(){setCanvasContent($('draw'),state.draw);setCanvasContent($('signature'),state.signature)}
+window.syncCanvases=syncCanvases;
+// Contenu à enregistrer : le canevas s'il contient un tracé ou une image chargée, sinon le
+// contenu mémorisé, sinon rien. Un canevas vierge n'est plus enregistré comme une image
+// blanche — celle-ci faisait passer à tort le contrôle « Signature présente ».
+// (state.draw / state.signature sont mis à jour après chaque trait et à chaque effacement : ils
+// font foi. Ne pas ré-encoder le canevas évite de déformer et de dégrader un schéma qu'on n'a
+// pas touché quand la fiche est modifiée sur un appareil dont l'écran a une autre taille.)
+function canvasData(id){const c=$(id),key=canvasKey(c);return state[key]||''}
 function initCanvases(){
   const dEl=$('draw'),sEl=$('signature');
-  /* ne jamais écraser un dessin mémorisé : le canevas peut être vide/masqué à ce moment */
+  /* Le contenu de référence est state.draw / state.signature (mis à jour après chaque trait) :
+     on remplace toujours le canevas par ce contenu, vide compris, sans jamais superposer. */
   setupCanvas(dEl);setupCanvas(sEl);setupDrawTools(dEl);
-  if(dEl.width>0&&state.draw)restoreCanvas(dEl,state.draw);
-  if(sEl.width>0&&state.signature)restoreCanvas(sEl,state.signature);
+  syncCanvases();
 }
 $('clearDraw').onclick=()=>{
   const c=$('draw'),ctx=c.getContext('2d');
@@ -1248,13 +1343,19 @@ function collectRecord(){
   if(r.insitu)Object.entries(r.insitu).forEach(([k,d])=>{if(d)d.unite=(window.UNITS&&window.UNITS[k])||d.unite||''});
   return r;
 }
+// « Effacer » : même remise à zéro que après un enregistrement (clearFormNoConfirm). Auparavant
+// tous les champs de l'appli étaient vidés, y compris la VALEUR des boutons Oui/Non (les réponses
+// cochées étaient ensuite enregistrées vides jusqu'au rechargement) et des réglages d'autres
+// onglets (identifiant Google Drive, recherche, validateur...).
 function clearForm(){
   if(!confirm('Effacer le formulaire en cours ?'))return;
+  if(typeof window.clearFormNoConfirm==='function'){window.clearFormNoConfirm();renderPhotos();return}
   state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};
-  document.querySelectorAll('input,textarea').forEach(e=>{if(e.type!=='file')e.value=''});
-  document.querySelectorAll('select').forEach(e=>e.value='');document.querySelectorAll('input[type=radio]').forEach(e=>e.checked=false);
+  document.querySelectorAll('input,textarea').forEach(e=>{if(e.type!=='file'&&e.type!=='radio'&&e.type!=='checkbox')e.value=''});
+  document.querySelectorAll('select').forEach(e=>e.value='');document.querySelectorAll('input[type=radio],input[type=checkbox]').forEach(e=>e.checked=false);
   document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);
   $('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();renderPhotos();if(window.drawPhotoGroups)drawPhotoGroups();if(window.clearDraft)window.clearDraft();$('save').textContent='💾 Enregistrer la fiche';
+  syncCanvases(); // efface schéma et signature de la fiche précédente
 }
 $('clearForm').onclick=clearForm;
 
@@ -1264,9 +1365,10 @@ $('search').oninput=()=>{if(typeof window.renderList==='function')window.renderL
 function loadRecord(id){
   (function loadRecordCore(id){
   const f=records.find(x=>x.id===id);if(!f)return;
-  state.editing=id;state.network=f.network;state.activity=f.activity;state.bioOperation=f.bioOperation||'';state.session=f.session;state.station=f.station;state.preleveurs=f.preleveurs||[];state.photos=f.photos||[];state.draw=f.dessin||null;state.signature=f.signature||null;
+  clearFicheFields(); // rien de la fiche précédemment affichée ne doit rester (champs absents de f)
+  state.editing=id;state.network=f.network;state.activity=f.activity;state.bioOperation=f.bioOperation||'';state.session=f.session;state.station=f.station;state.preleveurs=[...(f.preleveurs||[])];state.photos=(f.photos||[]).map(p=>p&&typeof p==='object'?{...p}:p);state.draw=f.dessin||null;state.signature=f.signature||null;
   selectNetwork(f.network);
-  state.activity=f.activity;state.preleveurs=f.preleveurs||[];state.bioOperation=f.bioOperation||'';
+  state.activity=f.activity;state.preleveurs=[...(f.preleveurs||[])];state.bioOperation=f.bioOperation||'';
   // Legacy activity names
   if(state.network==='BIO' && ['Eau dans un cours d’eau (CE)','Phytoplancton','ADNe','Eau dans un cours d’eau / ADNe / Phytoplancton','Eaux de surface — stations communes CE + ADNe + Phytoplancton'].includes(f.activity)){
     state.activity=BIO_EAU_ACTIVITY;
@@ -1311,7 +1413,7 @@ function loadRecord(id){
   const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
   Object.entries(mainMap).forEach(([k,v])=>{if($(k))$(k).value=v||''});
   renderOrgOptions(f.organisme);renderPre();
-  if(f.qc){const q=document.querySelector(`input[name="qc"][value="${f.qc}"]`);if(q)q.checked=true}
+  radioSet('qc',f.qc);
   if(f.sample){
     Object.entries(f.sample).forEach(([k,v])=>{
       if($(k))$(k).value=v||'';
