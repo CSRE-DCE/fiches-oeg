@@ -56,7 +56,7 @@ const ctx = { self: {} }; vm.runInNewContext(read('version.js'), ctx);
 if (!Number.isInteger(ctx.self.OEG_BUILD)) fail('version.js : OEG_BUILD doit être un nombre entier');
 const base = process.env.BASE_REF;
 if (base) {
-  const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8' });
+  const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const changed = git('diff', '--name-only', `${base}...HEAD`).split('\n').filter(Boolean);
   const appChanged = changed.filter(f => f === 'index.html' || f === 'styles.css' || f === 'sw.js' || f === 'manifest.json' || f.startsWith('js/') || f.startsWith('img/'));
   if (appChanged.length) {
