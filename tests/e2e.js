@@ -168,6 +168,50 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e3.length===0,'aucune erreur JavaScript (terrain) '+JSON.stringify(e3));
     await c3.close();
   }
+  // --- G : schéma et signature propres à chaque fiche (pas de superposition entre fiches) ---
+  {
+    const c4=await browser.newContext({serviceWorkers:'block'});
+    await c4.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c4.newPage();const e4=[];p.on('pageerror',e=>e4.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const img=(color,x)=>{const c=document.createElement('canvas');c.width=600;c.height=220;const g=c.getContext('2d');g.fillStyle=color;g.fillRect(x,40,120,120);return c.toDataURL('image/png')};
+      selectNetwork('RCO');const st=[...$('station').options].find(o=>o.value).value;
+      const base=id=>({id,network:'RCO',activity:$('activity').options[1]?.value,session:$('session').options[1]?.value,station:st,date:'2026-10-01',savedAt:new Date().toISOString(),lifecycle:{status:'À contrôler',updatedAt:new Date().toISOString()},photos:[],auditRefs:[]});
+      records.push({...base('A'),dessin:img('#ff0000',30),signature:img('#ff0000',30)},{...base('B'),dessin:img('#0000ff',400),signature:img('#0000ff',400)},{...base('C'),dessin:'',signature:''});
+      saveLS(LS,records);
+    });
+    const pix=id=>p.evaluate(id=>{const c=document.getElementById(id),g=c.getContext('2d'),d=window.devicePixelRatio||1,r=c.getBoundingClientRect();
+      const at=(x,y)=>{const v=g.getImageData(Math.round(x*r.width/600*d),Math.round(y*r.height/220*d),1,1).data;return v[3]===0?'vide':v[0]>200&&v[2]<50?'rouge':v[2]>200&&v[0]<50?'bleu':'autre'};
+      return at(60,100)+'/'+at(450,100)},id);
+    const open=async id=>{await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},id);await p.waitForTimeout(500)};
+    await open('A');
+    ok(await pix('draw')==='rouge/vide'&&await pix('signature')==='rouge/vide','fiche A : son schéma et sa signature');
+    await open('B');
+    ok(await pix('draw')==='vide/bleu','fiche B ouverte après A : schéma de B seul, pas de superposition');
+    ok(await pix('signature')==='vide/bleu','fiche B ouverte après A : signature de B seule');
+    await open('C');
+    ok(await pix('draw')==='vide/vide'&&await pix('signature')==='vide/vide','fiche C sans schéma : zones vides (rien hérité de A ou B)');
+    ok(await p.evaluate(()=>canvasData('draw')===''&&canvasData('signature')===''),'fiche C : rien n’est enregistré comme schéma ni signature');
+    ok(await p.evaluate(()=>!qualityChecksFor({...records.find(r=>r.id==='C'),signature:canvasData('signature')}).find(c=>/Signature/.test(c.label)).ok),'contrôle « Signature présente » : non signé = signalé');
+    // Ouvertures rapides successives : seule la dernière fiche s'affiche
+    await p.evaluate(()=>{loadRecord('A');loadRecord('B');loadRecord('A');loadRecord('B')});await p.waitForTimeout(500);
+    ok(await pix('draw')==='vide/bleu','ouvertures rapides A→B→A→B : schéma de B seul');
+    // Nouvelle fiche après avoir vidé le formulaire
+    await p.evaluate(()=>{clearFormNoConfirm();selectNetwork('RCO');for(const id of ['session','activity','station']){const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))}});
+    await p.waitForTimeout(500);
+    ok(await pix('draw')==='vide/vide'&&await pix('signature')==='vide/vide','nouvelle fiche : schéma et signature vierges');
+    // Un vrai tracé à la souris est bien conservé
+    await p.locator('#draw').scrollIntoViewIfNeeded();
+    const box=await p.locator('#draw').boundingBox();
+    await p.mouse.move(box.x+40,box.y+40);await p.mouse.down();await p.mouse.move(box.x+200,box.y+150,{steps:8});await p.mouse.up();
+    ok(await p.evaluate(()=>canvasData('draw').length>500&&!!state.draw),'tracé à la souris : enregistré dans la fiche');
+    // Modifier A sans toucher au schéma : A garde son schéma
+    await open('A');
+    ok(await p.evaluate(()=>{const d=canvasData('draw');return d.length>500}),'fiche A modifiée : son schéma est conservé à l’enregistrement');
+    ok(e4.length===0,'aucune erreur JavaScript (schémas) '+JSON.stringify(e4));
+    await c4.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

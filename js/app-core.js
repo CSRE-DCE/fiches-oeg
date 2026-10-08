@@ -1195,14 +1195,40 @@ function setupDrawTools(canvas){
     applyPen(canvas);
   };
 }
-function restoreCanvas(c,data){if(!data)return;const im=new Image();im.onload=()=>{const x=c.getContext('2d'),op=x.globalCompositeOperation;x.globalCompositeOperation='source-over';x.drawImage(im,0,0,c.width/(devicePixelRatio||1),c.height/(devicePixelRatio||1));x.globalCompositeOperation=op;c._hasContent=true};im.src=data}
-function canvasData(id){const c=$(id),key=canvasKey(c);if(c.width>0&&c.height>0&&(c._hasContent||!state[key]))return c.toDataURL('image/png');return state[key]||''}
+// Remplace le contenu du canevas par l'image "data" (ou le laisse vide si data est vide).
+// Le canevas est d'abord effacé, et une image encore en cours de chargement pour une fiche
+// précédente est ignorée (jeton) : sans cela, ouvrir une fiche puis une autre superposait les
+// schémas et les signatures, et une fiche sans schéma héritait de celui de la fiche précédente.
+function setCanvasContent(c,data){
+  if(!c)return;
+  const token=c._contentToken=(c._contentToken||0)+1;
+  const x=c.getContext('2d');
+  x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();
+  c._hasContent=false;
+  if(!data)return;
+  const im=new Image();
+  im.onload=()=>{
+    if(c._contentToken!==token)return; // une autre image a été demandée entre-temps
+    const op=x.globalCompositeOperation;x.globalCompositeOperation='source-over';
+    x.drawImage(im,0,0,c.width/(devicePixelRatio||1),c.height/(devicePixelRatio||1));
+    x.globalCompositeOperation=op;c._hasContent=true;
+  };
+  im.src=data;
+}
+function restoreCanvas(c,data){setCanvasContent(c,data)}
+// Aligne les deux canevas sur la fiche en cours (state.draw / state.signature).
+function syncCanvases(){setCanvasContent($('draw'),state.draw);setCanvasContent($('signature'),state.signature)}
+window.syncCanvases=syncCanvases;
+// Contenu à enregistrer : le canevas s'il contient un tracé ou une image chargée, sinon le
+// contenu mémorisé, sinon rien. Un canevas vierge n'est plus enregistré comme une image
+// blanche — celle-ci faisait passer à tort le contrôle « Signature présente ».
+function canvasData(id){const c=$(id),key=canvasKey(c);if(c.width>0&&c.height>0&&c._hasContent)return c.toDataURL('image/png');return state[key]||''}
 function initCanvases(){
   const dEl=$('draw'),sEl=$('signature');
-  /* ne jamais écraser un dessin mémorisé : le canevas peut être vide/masqué à ce moment */
+  /* Le contenu de référence est state.draw / state.signature (mis à jour après chaque trait) :
+     on remplace toujours le canevas par ce contenu, vide compris, sans jamais superposer. */
   setupCanvas(dEl);setupCanvas(sEl);setupDrawTools(dEl);
-  if(dEl.width>0&&state.draw)restoreCanvas(dEl,state.draw);
-  if(sEl.width>0&&state.signature)restoreCanvas(sEl,state.signature);
+  syncCanvases();
 }
 $('clearDraw').onclick=()=>{
   const c=$('draw'),ctx=c.getContext('2d');
@@ -1255,6 +1281,7 @@ function clearForm(){
   document.querySelectorAll('select').forEach(e=>e.value='');document.querySelectorAll('input[type=radio]').forEach(e=>e.checked=false);
   document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);
   $('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();renderPhotos();if(window.drawPhotoGroups)drawPhotoGroups();if(window.clearDraft)window.clearDraft();$('save').textContent='💾 Enregistrer la fiche';
+  syncCanvases(); // efface schéma et signature de la fiche précédente
 }
 $('clearForm').onclick=clearForm;
 
