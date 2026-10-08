@@ -557,6 +557,7 @@
       if(typeof renderList==='function')renderList();
     }
     renderDriveStatus();
+    window.dispatchEvent(new Event('oeg:sync-done'));
     if(typeof toast==='function')toast(`Historique récupéré : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(kept?`, ${kept} version(s) locale(s) plus récente(s) conservée(s)`:'')+(failed?`, ${failed} échec(s)`:'')+' ✓'+(conflicts?` — ⚠ ${conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
     return {ok:true,imported,updated,kept,conflicts,failed};
   }
@@ -640,6 +641,7 @@
       renderLocalStatus();
     } finally {
       syncing = false;
+      window.dispatchEvent(new Event('oeg:sync-done'));
       if(syncAgainAfter){syncAgainAfter = false; notifyChange()}
     }
   }
@@ -650,6 +652,7 @@
     const r1 = localFolderHandle ? await syncLocalFolder(items) : {ok:true, written:0};
     const r2 = driveCfg.connected ? await syncDrive(items) : {ok:true, written:0};
     renderLocalStatus();
+    window.dispatchEvent(new Event('oeg:sync-done'));
     if(typeof toast==='function'){
       const total = (r1.written||0) + (r2.written||0);
       if(r1.ok && r2.ok) toast(total ? `Synchronisation effectuée (${total} fichier${total>1?'s':''} mis à jour) ✓` : 'Déjà à jour ✓');
@@ -684,6 +687,7 @@
       const name = localFolderHandle.name || 'dossier sélectionné';
       if(p === 'granted'){
         el.textContent = `Dossier configuré : ${name} — ${count} fichier(s) à jour` + (last ? `, dernière écriture : ${new Date(last).toLocaleString('fr-FR')}` : '') + '.';
+        window.dispatchEvent(new Event('oeg:sync-done'));
       }else{
         el.textContent = `Dossier configuré : ${name} — autorisation à renouveler (touchez "Choisir le dossier de sauvegarde").`;
       }
@@ -765,7 +769,24 @@
     if(driveCfg.connected){driveHashes[recordId]=hash;saveDriveHashes()}
   }
 
+  // État des sauvegardes, pour l'indicateur toujours visible (js/terrain.js) : une fiche est
+  // "sauvegardée" quand sa version actuelle est déjà écrite dans le dossier local OU sur Drive.
+  async function backupStatus(){
+    await (window.OEGRecordsReady||Promise.resolve());
+    const localOk = !!localFolderHandle && (await localPermissionState()) === 'granted';
+    const drive = !!driveCfg.connected;
+    let pending = 0;
+    if(localOk || drive){
+      for(const r of records){
+        const h = await hashOf(r);
+        if(!((localOk && localHashes[r.id]===h) || (drive && driveHashes[r.id]===h))) pending++;
+      }
+    }
+    return {configured: localOk || drive, local: localOk, localNeedsPermission: !!localFolderHandle && !localOk, drive, pending, total: records.length};
+  }
+
   window.OEGSync = {
+    backupStatus,
     notifyChange,
     chooseLocalFolder,
     forgetLocalFolder,

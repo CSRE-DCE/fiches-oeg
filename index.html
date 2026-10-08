@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><meta name="theme-color" content="#003d7a"><title>Fiches terrain OEG — EL / RCO / BIO / ESO / Chimie</title>
+<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#003d7a"><title>Fiches terrain OEG — EL / RCO / BIO / ESO / Chimie</title>
 <script>
 /* Filet de sécurité contre les échecs silencieux : affiche toute erreur JavaScript non
    interceptée sous forme de bandeau rouge en bas d'écran, au lieu de laisser l'appli
@@ -806,7 +806,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <body>
 
-<script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script>
+<script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script><script src="js/terrain.js"></script>
 <script src="version.js"></script>
 <script>
 window.APP_BUILD=(self.OEG_BUILD_DATE||'?')+' · build '+(self.OEG_BUILD||'?');
@@ -843,6 +843,7 @@ window.addEventListener('load',()=>{
       ['js/people-stations-core.js', ()=>typeof window.drawPhotoGroups==='function'],
       ['js/app-core.js', ()=>typeof window.escapeHTML==='function'],
       ['js/crt-access.js', ()=>typeof window.setupCRT==='function'],
+      ['js/terrain.js', ()=>typeof window.refreshBackupPill==='function'],
     ];
     const missing=[...new Set(checks.filter(c=>{try{return !c[1]()}catch(e){return true}}).map(c=>c[0]))];
     if(missing.length){

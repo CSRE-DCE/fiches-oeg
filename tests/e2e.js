@@ -114,6 +114,51 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
   const nFiles=drive.size;await page.evaluate(()=>OEGSync.manualSyncNow());await page.waitForTimeout(2000);
   ok(drive.size===nFiles,'D : stable, pas de boucle ni de nouvelle copie');
   ok(errs.length===0,'aucune erreur JavaScript '+JSON.stringify(errs));
+  // --- F : confort terrain (indicateur, contrôles de saisie, fin de journée) ---
+  {
+    const c3=await browser.newContext({serviceWorkers:'block',acceptDownloads:true});
+    await c3.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c3.newPage();const e3=[];p.on('pageerror',e=>e3.push(e.message));
+    const dialogs=[];let answer=false;
+    p.on('dialog',async d=>{dialogs.push(d.type()+':'+d.message());answer?await d.accept():await d.dismiss()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.waitForFunction(()=>!/…/.test(document.getElementById('backupPill').textContent));
+    ok((await p.textContent('#backupPill')).includes('non configurée'),'indicateur : sauvegarde non configurée signalée');
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=document.getElementById(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.fill('#iv_ph','75');
+    ok((await p.textContent('#ivs_ph')).includes('impossible'),'pH 75 signalé impossible en direct');
+    await p.fill('#iv_ph','8.6');
+    ok((await p.textContent('#ivs_ph')).includes('inhabituel'),'pH 8.6 signalé inhabituel');
+    await p.fill('#date','');
+    await p.click('#save');await p.waitForTimeout(300);
+    ok(dialogs.at(-1)?.startsWith('alert:')&&dialogs.at(-1).includes('Date de la visite')&&await p.evaluate(()=>records.length)===0,'date manquante : enregistrement bloqué');
+    await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'12');
+    await p.click('#save');await p.waitForTimeout(300);
+    ok(dialogs.at(-1)?.startsWith('confirm:')&&dialogs.at(-1).includes('pH = 8.6')&&await p.evaluate(()=>records.length)===0,'valeur inhabituelle : confirmation demandée, refus = pas d’enregistrement');
+    answer=true;
+    await p.evaluate(()=>{const b=document.getElementById('save');b.click();b.click();b.click()});
+    await p.waitForTimeout(1500);
+    ok(await p.evaluate(()=>records.length)===1,'triple appui sur Enregistrer : une seule fiche créée');
+    ok(await p.evaluate(()=>document.querySelectorAll('.fieldMissing').length)===0,'après enregistrement : plus aucun champ surligné');
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=document.getElementById(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.fill('#iv_ph','6.8');await p.waitForTimeout(3500);
+    const draft=await p.evaluate(()=>OEGStore.get('oeg_draft_v1'));
+    ok(draft?.record?.insitu?.ph?.value==='6.8','brouillon : une mesure in situ saisie est bien enregistrée');
+    await p.click('.tab[data-tab="data"]');
+    ok(!await p.isVisible('#iv_ph'),'onglet Données : la fiche en cours n’apparaît plus dessous');
+    await p.click('.tab[data-tab="list"]');await p.click('#records .listcard button');
+    ok(await p.evaluate(()=>document.getElementById('new').classList.contains('active'))&&await p.isVisible('#iv_ph')&&await p.inputValue('#iv_ph')==='8.6','liste → Modifier : ouvre la fiche dans l’onglet de saisie');
+    await p.click('.tab[data-tab="data"]');
+    const dl=p.waitForEvent('download',{timeout:10000});
+    await p.click('#endOfDayBtn');
+    const file=await dl.catch(()=>null);
+    ok(!!file&&/sauvegarde_OEG_.*\.json$/.test(file.suggestedFilename()),'fin de journée : export JSON téléchargé');
+    ok((await p.textContent('#endOfDayResult')).includes('Aucune sauvegarde automatique'),'fin de journée : absence de sauvegarde configurée signalée');
+    ok(e3.length===0,'aucune erreur JavaScript (terrain) '+JSON.stringify(e3));
+    await c3.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

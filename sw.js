@@ -29,7 +29,8 @@ const APP_SHELL = [
   './js/people-stations-core.js',
   './js/crt-access.js',
   './js/stations-map.js',
-  './js/sync.js'
+  './js/sync.js',
+  './js/terrain.js'
 ];
 // Chargée si disponible au moment de l'installation ; son absence ne doit jamais
 // empêcher l'application de fonctionner hors-ligne.
