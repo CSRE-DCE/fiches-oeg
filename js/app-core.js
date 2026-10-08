@@ -9,7 +9,75 @@ const PRELEVEUR_ORGS=Object.keys(PRELEVEURS_BY_ORG);
 function load(key,fallback){
   try{const v=localStorage.getItem(key); return v?JSON.parse(v):fallback}catch(e){return fallback}
 }
+// ---- Stockage des fiches dans IndexedDB ----
+// localStorage est plafonné à ~5 Mo par le navigateur : avec les photos, une tablette saturait
+// après 5 à 10 fiches. Les fiches (clé LS) et le brouillon sont donc stockés dans IndexedDB,
+// qui dispose de centaines de Mo. localStorage ne sert plus qu'aux petits réglages (référentiel,
+// configuration de synchronisation...). Si IndexedDB est indisponible (navigateur très ancien,
+// navigation privée restrictive), l'appli continue de fonctionner sur localStorage comme avant.
+const OEGStore=(()=>{
+  const DB_NAME='oeg-data-db',STORE='kv';
+  let dbPromise=null;
+  function open(){
+    if(dbPromise)return dbPromise;
+    dbPromise=new Promise((resolve,reject)=>{
+      if(!('indexedDB' in window)){reject(new Error('no-idb'));return}
+      const req=indexedDB.open(DB_NAME,1);
+      req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains(STORE))req.result.createObjectStore(STORE)};
+      req.onsuccess=()=>{const db=req.result;db.onversionchange=()=>{db.close();dbPromise=null};resolve(db)};
+      req.onerror=()=>reject(req.error);
+      req.onblocked=()=>reject(new Error('idb-blocked'));
+    });
+    dbPromise.catch(()=>{dbPromise=null});
+    return dbPromise;
+  }
+  function run(mode,fn){
+    return open().then(db=>new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,mode);let result;
+      const req=fn(tx.objectStore(STORE));
+      req.onsuccess=()=>{result=req.result};
+      tx.oncomplete=()=>resolve(result);
+      tx.onerror=()=>reject(tx.error);
+      tx.onabort=()=>reject(tx.error||new Error('idb-abort'));
+    }));
+  }
+  return {
+    get:key=>run('readonly',st=>st.get(key)),
+    set:(key,value)=>run('readwrite',st=>st.put(value,key)),
+    del:key=>run('readwrite',st=>st.delete(key))
+  };
+})();
+window.OEGStore=OEGStore;
+
+// 'pending' : chargement IndexedDB en cours (aucune écriture des fiches tant qu'il n'est pas
+// terminé, sinon une liste encore vide écraserait les fiches stockées) ; 'idb' : fiches dans
+// IndexedDB ; 'ls' : repli sur localStorage.
+let recordsBackend='pending';
+let recordsWriteValue=null,recordsWriteQueued=false,recordsWriteChain=Promise.resolve(true);
+function persistRecords(valeur){
+  recordsWriteValue=valeur;
+  if(recordsWriteQueued)return recordsWriteChain; // une écriture est déjà prévue : elle prendra la dernière valeur
+  recordsWriteQueued=true;
+  recordsWriteChain=recordsWriteChain.then(()=>{
+    recordsWriteQueued=false;
+    return OEGStore.set(LS,recordsWriteValue).then(()=>true);
+  }).catch(()=>{
+    recordsWriteQueued=false;
+    toast('⚠️ La sauvegarde des fiches sur cet appareil a échoué (stockage plein ou indisponible). Exportez vos fiches en JSON (onglet Données) sans attendre.');
+    return false;
+  });
+  return recordsWriteChain;
+}
+
 function saveLS(key,valeur){
+  if(key===LS&&recordsBackend!=='ls'){
+    // Fiches : écriture asynchrone dans IndexedDB (dans l'ordre des appels). Pendant le
+    // chargement initial, l'écriture est reportée : la fusion de fin de chargement enregistrera
+    // tout (voir recordsReady ci-dessous).
+    if(recordsBackend==='idb')persistRecords(valeur);
+    if(recordsBackend==='idb'&&window.OEGSync)window.OEGSync.notifyChange();
+    return true;
+  }
   try{
     localStorage.setItem(key,JSON.stringify(valeur));
     if((key===LS||key===LSC)&&window.OEGSync)window.OEGSync.notifyChange();
@@ -89,6 +157,55 @@ if(typeof MutationObserver==='function'){
 }
 
 let records=load(LS,load('oeg_field_v3',[]));
+
+// Date de dernière modification d'une fiche (création, modification, contrôle, validation...).
+function recordStamp(r){return String(r?.lifecycle?.updatedAt||r?.savedAt||'')}
+
+// Chargement des fiches depuis IndexedDB + migration automatique depuis localStorage.
+// Au premier lancement de cette version, les fiches encore dans localStorage sont copiées
+// dans IndexedDB ; elles ne sont retirées de localStorage qu'après relecture et vérification
+// de la copie. Si une même fiche existe des deux côtés, la plus récente est conservée.
+const recordsReady=(async()=>{
+  let stored;
+  try{stored=await OEGStore.get(LS)}
+  catch(e){recordsBackend='ls';return false} // IndexedDB indisponible : on reste sur localStorage
+  const merged=new Map();
+  (Array.isArray(stored)?stored:[]).forEach(r=>{if(r&&r.id)merged.set(r.id,r)});
+  // "records" contient ici les fiches lues dans localStorage au démarrage (anciennes données à
+  // migrer) et celles éventuellement créées pendant le chargement.
+  (Array.isArray(records)?records:[]).forEach(r=>{
+    if(!r||!r.id)return;
+    const prev=merged.get(r.id);
+    if(!prev||recordStamp(r)>=recordStamp(prev))merged.set(r.id,r);
+  });
+  const all=[...merged.values()];
+  all.forEach(r=>{
+    if(!r.lifecycle)r.lifecycle={status:'À contrôler',version:1,createdAt:r.savedAt||new Date().toISOString(),updatedAt:r.savedAt||new Date().toISOString()};
+    if(!r.lifecycle.status)r.lifecycle.status='À contrôler';
+    if(!Array.isArray(r.auditRefs))r.auditRefs=[];
+  });
+  records=all;
+  try{
+    await OEGStore.set(LS,all);
+    const check=await OEGStore.get(LS);
+    if(!Array.isArray(check)||check.length!==all.length)throw new Error('verification');
+  }catch(e){
+    recordsBackend='ls'; // écriture impossible : on garde localStorage, rien n'est supprimé
+    toast('⚠️ Stockage étendu indisponible : les fiches restent dans le stockage limité du navigateur.');
+    return false;
+  }
+  recordsBackend='idb';
+  // Copie vérifiée : on libère localStorage (les anciennes clés ne sont plus lues).
+  try{localStorage.removeItem(LS);localStorage.removeItem('oeg_field_v3')}catch(e){}
+  if(typeof updateCount==='function')updateCount();
+  if(typeof renderList==='function')renderList();
+  if(typeof renderQuality==='function')try{renderQuality()}catch(e){}
+  if(typeof renderDashboard==='function'&&$('dashboard')?.classList.contains('active'))try{renderDashboard()}catch(e){}
+  if(typeof renderSuivi==='function'&&$('suivi')?.classList.contains('active'))try{renderSuivi()}catch(e){}
+  if(window.OEGSync)window.OEGSync.notifyChange();
+  return true;
+})();
+window.OEGRecordsReady=recordsReady;
 let custom=load(LSC,load('oeg_custom_v3',{preleveurs:[],stations:[],equipements:[]}));
 custom.preleveurs=(custom.preleveurs||[]).map(o=>typeof o==='string'?{nom:o,prenom:'',organisme:o==='PF'||o==='AA'||o==='SM'||o==='ML'||o==='MG'||o==='MB'?'Office de l\'Eau de Guyane':'',legacy:true}:o);
 custom.stations=custom.stations||[];
@@ -1402,7 +1519,7 @@ function mergeCustomInto(target,incoming){
 // l'ordre de chargement des scripts. mergeCustomInto() ci-dessus est réutilisée par ce
 // gestionnaire pour fusionner intelligemment le référentiel (équipements/opérateurs/stations)
 // de plusieurs fichiers importés sans rien écraser par erreur.
-$('reset').onclick=()=>{if(confirm('Effacer toutes les fiches et données personnalisées ?')){localStorage.removeItem(LS);localStorage.removeItem(LSC);localStorage.removeItem('oeg_field_v3');localStorage.removeItem('oeg_custom_v3');records=[];custom={preleveurs:[],stations:[],equipements:[]};updateCount();renderList();renderAdmin()}};
+$('reset').onclick=()=>{if(confirm('Effacer toutes les fiches et données personnalisées ?')){localStorage.removeItem(LS);OEGStore.del(LS).catch(()=>{});localStorage.removeItem(LSC);localStorage.removeItem('oeg_field_v3');localStorage.removeItem('oeg_custom_v3');records=[];custom={preleveurs:[],stations:[],equipements:[]};updateCount();renderList();renderAdmin()}};
 
 // Retire les photos (le contenu le plus volumineux ; le schéma et la signature sont toujours conservés) des fiches déjà
 // confirmées sauvegardées dans le dossier local et/ou sur Google Drive, pour libérer de la
@@ -1445,11 +1562,26 @@ $('addStation').onclick=()=>{
   custom.stations.push(x);saveLS(LSC,custom);['customNet','customStation','customCode','customX','customY','customME','customTransport'].forEach(id=>$(id).value='');if($('customMarche'))$('customMarche').value='';if($('customBassin'))$('customBassin').value='';if($('customProjection'))$('customProjection').value='RGFG 95 / UTM 22N';renderAdmin();
 };
 
-['new','dashboard','list','suivi','quality','data'].forEach(v=>document.querySelector(`.tab[data-tab="${v}"]`).onclick=()=>{
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelector(`.tab[data-tab="${v}"]`).classList.add('active');
-  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));$(v).classList.add('active');
-  $('bar').style.display=v==='new'?'flex':'none';if(v==='new')setTimeout(fitCanvases,0);if(v==='dashboard')renderDashboard();if(v==='list')renderList();if(v==='suivi')renderSuivi();if(v==='quality')renderQuality();if(v==='data')renderAdmin()
-});
+// Navigation entre onglets — SEUL gestionnaire de clic des onglets. (Auparavant un second
+// gestionnaire dans people-stations-core.js remplaçait silencieusement celui-ci, si bien que
+// toute correction faite ici était sans effet.) Les modules qui ont besoin de réagir à
+// l'ouverture d'un onglet ajoutent un addEventListener('click') sans toucher à .onclick.
+function showTab(v){
+  const view=$(v);if(!view)return;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===v));
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));view.classList.add('active');
+  $('bar').style.display=v==='new'?'flex':'none';
+  const run=fn=>{try{fn()}catch(e){console.error(e)}};
+  if(v==='new')setTimeout(fitCanvases,0);
+  if(v==='dashboard'&&typeof renderDashboard==='function')run(renderDashboard);
+  if(v==='list'&&typeof renderList==='function')run(renderList);
+  if(v==='suivi'&&typeof renderSuivi==='function')run(renderSuivi);
+  if(v==='quality'&&typeof renderQuality==='function')run(renderQuality);
+  if(v==='data'&&typeof renderAdmin==='function')run(renderAdmin);
+  if(v==='stations'&&typeof window.mapStations==='function')run(window.mapStations);
+}
+window.showTab=showTab;
+document.querySelectorAll('.tab[data-tab]').forEach(b=>{b.onclick=()=>showTab(b.dataset.tab)});
 
 renderNetworks();renderOrgOptions("Office de l'Eau de Guyane");setupSandre();if(typeof window.renderOperators==='function')window.renderOperators();else setTimeout(()=>window.renderOperators&&window.renderOperators(),0);if(typeof window.renderEquipment==='function')window.renderEquipment();else setTimeout(()=>window.renderEquipment&&window.renderEquipment(),0);if(typeof window.renderPre==='function')window.renderPre();else setTimeout(()=>window.renderPre&&window.renderPre(),0);updateCount();if(typeof window.renderList==='function')window.renderList();else setTimeout(()=>window.renderList&&window.renderList(),0);$('date').valueAsDate=new Date();setupMarketImport();
 

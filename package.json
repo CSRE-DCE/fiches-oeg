@@ -1,0 +1,13 @@
+{
+  "name": "fiches-oeg",
+  "private": true,
+  "description": "Fiches terrain OEG — vérifications automatiques (l'application elle-même n'a besoin d'aucune installation)",
+  "scripts": {
+    "check": "node tests/check-release.js",
+    "test:e2e": "node tests/e2e.js",
+    "test": "node tests/check-release.js && node tests/e2e.js"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

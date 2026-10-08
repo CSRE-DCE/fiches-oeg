@@ -6,15 +6,20 @@
  * tant que l'appareil a du réseau au moment de l'ouverture. Le cache ne sert que de
  * secours quand il n'y a vraiment aucune connexion.
  *
- * IMPORTANT : à chaque modification des fichiers de l'application, changez CACHE_VERSION
- * ci-dessous pour que les tablettes déjà installées récupèrent la nouvelle version.
+ * IMPORTANT : à chaque modification des fichiers de l'application, incrémentez OEG_BUILD dans
+ * version.js (seul endroit à modifier) pour que les tablettes déjà installées récupèrent la
+ * nouvelle version.
  */
-const CACHE_VERSION = 'oeg-v31';
+importScripts('./version.js');
+const CACHE_VERSION = 'oeg-build-' + self.OEG_BUILD;
 const APP_SHELL = [
   './',
   './index.html',
   './styles.css',
   './manifest.json',
+  './version.js',
+  './img/logo-oeg.png',
+  './img/legende-schema.png',
   './js/geo.js',
   './js/data.js',
   './js/app-core.js',
