@@ -1,11 +1,14 @@
 {
   "name": "fiches-oeg",
   "private": true,
-  "description": "Fiches terrain OEG — vérifications automatiques (l'application elle-même n'a besoin d'aucune installation)",
+  "description": "Fiches terrain OEG et PWA d'audit des prestations de prélèvement — vérifications automatiques (les applications elles-mêmes n'ont besoin d'aucune installation)",
   "scripts": {
     "check": "node tests/check-release.js",
     "test:e2e": "node tests/e2e.js",
-    "test": "node tests/check-release.js && node tests/e2e.js"
+    "test:audit": "node --test tests/audit-unit.mjs",
+    "test:audit-e2e": "node tests/audit-e2e.mjs",
+    "audit-server": "node audit-api/server.mjs",
+    "test": "node tests/check-release.js && node --test tests/audit-unit.mjs && node tests/e2e.js && node tests/audit-e2e.mjs"
   },
   "devDependencies": {
     "playwright": "1.56.1"

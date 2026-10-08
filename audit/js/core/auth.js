@@ -12,32 +12,8 @@ import { store } from './store.js';
 import { wrapDEK, unwrapDEK, importDEK, newDEKRaw } from './crypto.js';
 import { uuid, nowISO, bytesToBase64, base64ToBytes } from './util.js';
 
-export const ROLES = {
-  admin: 'Administrateur',
-  rq: 'Responsable qualité',
-  superviseur: 'Superviseur',
-  auditeur: 'Auditeur',
-  consultation: 'Consultation'
-};
-
-/** Matrice des droits par profil (le serveur applique la même matrice à la synchronisation). */
-export const PERMISSIONS = {
-  'audit.create': ['admin', 'rq', 'superviseur', 'auditeur'],
-  'audit.edit': ['admin', 'rq', 'superviseur', 'auditeur'],
-  'audit.editOthers': ['admin', 'rq', 'superviseur'],
-  'audit.amend': ['admin', 'rq'],                 // modification d'un audit signé (avec motif)
-  'audit.delete': ['admin', 'rq'],                // abandon d'un audit non signé
-  'deviation.manage': ['admin', 'rq', 'superviseur', 'auditeur'],
-  'deviation.close': ['admin', 'rq', 'superviseur'],
-  'observation.create': ['admin', 'rq', 'superviseur', 'auditeur'],
-  'planning.manage': ['admin', 'rq', 'superviseur'],
-  'ref.manage': ['admin', 'rq'],                  // référentiels, documents, grilles
-  'trail.view': ['admin', 'rq', 'superviseur'],
-  'users.manage': ['admin'],
-  'devices.manage': ['admin'],
-  'settings.manage': ['admin'],
-  'export': ['admin', 'rq', 'superviseur', 'auditeur', 'consultation']
-};
+import { ROLES, PERMISSIONS } from '../domain/permissions.js';
+export { ROLES, PERMISSIONS };
 
 export function can(perm, user = session.user) {
   if (!user) return false;

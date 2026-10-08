@@ -81,30 +81,33 @@ export async function runSync({ reason = 'manuelle', full = false } = {}) {
   if (!session.token) { syncState.needsLogin = true; emit(); return { skipped: 'reconnexion requise' }; }
   if (syncState.running) return { skipped: 'déjà en cours' };
   syncState.running = true; syncState.lastError = null; emit();
-  const log = { id: uuid(), at: nowISO(), reason, pushed: 0, pulled: 0, media: 0, conflicts: 0, rejected: 0, errors: [], durationMs: 0, user: session.user?.name };
+  const log = { id: uuid(), at: nowISO(), reason, pushed: 0, pulled: 0, media: 0, merged: 0, conflicts: 0, rejected: 0, errors: [], durationMs: 0, user: session.user?.name };
   const t0 = Date.now();
+  let revoked = false;
   try {
     await store.flush();
     await push(log);
     await pushMedia(log);
     await pull(log, { full });
+    // Les fusions de conflits produisent des versions à renvoyer : second envoi dans la même synchronisation.
+    if (log.merged) { await store.flush(); await push(log); }
     await reserveNumbers(log);
     syncState.lastSyncAt = nowISO(); syncState.needsLogin = false;
     await meta.set('lastSyncAt', syncState.lastSyncAt);
   } catch (e) {
-    if (e.status === 401) {
-      if (e.body?.code === 'DEVICE_REVOKED') { syncState.running = false; emit(); await onRevoked(); return { revoked: true }; }
+    if (e.status === 401 && e.body?.code === 'DEVICE_REVOKED') revoked = true;
+    else if (e.status === 401) {
       syncState.needsLogin = true; session.token = null;
       log.errors.push('Session serveur expirée : reconnectez-vous (mot de passe) pour reprendre la synchronisation.');
     } else log.errors.push(e.message || String(e));
-    syncState.lastError = log.errors[log.errors.length - 1];
+    syncState.lastError = log.errors[log.errors.length - 1] || null;
   } finally {
     log.durationMs = Date.now() - t0;
     syncState.running = false;
     syncState.lastResult = log;
-    await store.put('syncLog', log);
-    await refreshPending();
+    if (!revoked) { await store.put('syncLog', log); await refreshPending(); }
   }
+  if (revoked) { stopSync(); emit(); await onRevoked(); return { revoked: true }; }
   return log;
 }
 
@@ -121,6 +124,7 @@ async function push(log) {
     for (const r of res.results || []) {
       const sent = batch.find(b => b.type === r.type && b.id === r.id);
       if (!sent) continue;
+      if (r.status === 'ignored') { await idb.del('outbox', sent.key); continue; }
       if (r.status === 'ok') {
         log.pushed++;
         const cur = store.getRaw(r.type, r.id);
@@ -133,7 +137,6 @@ async function push(log) {
         }
         await store.setBase(r.type, { ...sent.data, id: r.id, _rev: r.rev });
       } else if (r.status === 'conflict') {
-        log.conflicts++;
         await resolveConflict(r.type, r.id, { ...(r.current?.data || {}), id: r.id, _rev: r.current?.rev, ...(r.current?.deleted ? { _deleted: true } : {}) }, log);
       } else {
         log.rejected++;
@@ -192,6 +195,7 @@ async function resolveConflict(type, id, remote, log) {
   const base = store.getBase(type, id);
   const { merged, conflicts } = mergeEntity(type, base, local, remote);
   const needsPush = !deepEqual(stripMeta(merged), stripMeta(remote));
+  log.merged = (log.merged || 0) + 1;
   await store.applyMerged(type, merged, { needsPush, baseRev: remote._rev || 0 });
   await store.setBase(type, remote);
   if (conflicts.length) {

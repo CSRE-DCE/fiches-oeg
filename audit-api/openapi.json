@@ -1,0 +1,789 @@
+{
+ "openapi": "3.0.3",
+ "info": {
+  "title": "API — Audit des prestations de prélèvement (OEG)",
+  "version": "1.0.0",
+  "description": "API de synchronisation et d’interopérabilité de la PWA d’audit terrain. Toutes les routes (sauf /health, /openapi.json et /auth/login) exigent un jeton Bearer obtenu par /auth/login. Les écritures sont contrôlées par la matrice de droits des profils (administrateur, responsable qualité, superviseur, auditeur, consultation). HTTPS obligatoire en production."
+ },
+ "servers": [
+  {
+   "url": "/api/v1"
+  }
+ ],
+ "components": {
+  "securitySchemes": {
+   "bearer": {
+    "type": "http",
+    "scheme": "bearer"
+   }
+  }
+ },
+ "security": [
+  {
+   "bearer": []
+  }
+ ],
+ "paths": {
+  "/health": {
+   "get": {
+    "summary": "État du service",
+    "tags": [
+     "Système"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "security": []
+   }
+  },
+  "/auth/login": {
+   "post": {
+    "summary": "Ouverture de session (utilisateur + appareil)",
+    "tags": [
+     "Authentification"
+    ],
+    "responses": {
+     "200": {
+      "description": "{token, expiresAt, user, device, deviceKey?}"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "security": [],
+    "description": "Enregistre l’appareil au premier usage (numéro d’appareil attribué). Refusée pour un appareil désactivé (DEVICE_REVOKED). 10 échecs en 15 min bloquent l’identifiant et l’adresse IP.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "username",
+         "password",
+         "device"
+        ],
+        "properties": {
+         "username": {
+          "type": "string"
+         },
+         "password": {
+          "type": "string"
+         },
+         "device": {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "name": {
+            "type": "string"
+           },
+           "userAgent": {
+            "type": "string"
+           }
+          }
+         },
+         "deviceKey": {
+          "type": "string",
+          "description": "Clé de chiffrement de l’appareil (base64) déposée au premier enregistrement — chiffrée au repos par le serveur"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/auth/logout": {
+   "post": {
+    "summary": "Fermeture de session",
+    "tags": [
+     "Authentification"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    }
+   }
+  },
+  "/me": {
+   "get": {
+    "summary": "Profil de l’utilisateur connecté",
+    "tags": [
+     "Authentification"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    }
+   }
+  },
+  "/me/password": {
+   "post": {
+    "summary": "Changement de mot de passe",
+    "tags": [
+     "Authentification"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "oldPassword": {
+          "type": "string"
+         },
+         "newPassword": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/users": {
+   "get": {
+    "summary": "Liste des utilisateurs (administrateur)",
+    "tags": [
+     "Administration"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    }
+   },
+   "post": {
+    "summary": "Création d’un utilisateur (administrateur)",
+    "tags": [
+     "Administration"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "username": {
+          "type": "string"
+         },
+         "name": {
+          "type": "string"
+         },
+         "role": {
+          "type": "string",
+          "enum": [
+           "admin",
+           "rq",
+           "superviseur",
+           "auditeur",
+           "consultation"
+          ]
+         },
+         "password": {
+          "type": "string"
+         },
+         "active": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/users/{id}": {
+   "patch": {
+    "summary": "Modification d’un utilisateur (profil, activation, mot de passe)",
+    "tags": [
+     "Administration"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object"
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": ""
+     }
+    ]
+   }
+  },
+  "/devices": {
+   "get": {
+    "summary": "Liste des appareils (administrateur)",
+    "tags": [
+     "Administration"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    }
+   }
+  },
+  "/devices/{id}/revoke": {
+   "post": {
+    "summary": "Désactiver un appareil perdu",
+    "tags": [
+     "Administration"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "description": "Les sessions de l’appareil sont supprimées ; à sa prochaine connexion il reçoit DEVICE_REVOKED et efface ses données locales.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "reason": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": ""
+     }
+    ]
+   }
+  },
+  "/devices/{id}/restore": {
+   "post": {
+    "summary": "Réactiver un appareil",
+    "tags": [
+     "Administration"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": ""
+     }
+    ]
+   }
+  },
+  "/sync/push": {
+   "post": {
+    "summary": "Envoi des modifications locales",
+    "tags": [
+     "Synchronisation"
+    ],
+    "responses": {
+     "200": {
+      "description": "{results:[{type,id,status: ok|conflict|rejected|ignored, rev?, seq?, current?, error?}]}"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "description": "Contrôle optimiste par révision : si baseRev diffère de la révision courante, la réponse « conflict » contient la version serveur (fusion à trois versions côté client). Le journal (trail) est en ajout seul ; un audit verrouillé n’est modifiable que par le responsable qualité ou l’administrateur.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "deviceId": {
+          "type": "string"
+         },
+         "changes": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "required": [
+            "type",
+            "id"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "example": "audit"
+            },
+            "id": {
+             "type": "string"
+            },
+            "baseRev": {
+             "type": "integer",
+             "description": "Révision serveur sur laquelle s’appuie la modification (0 = création)"
+            },
+            "deleted": {
+             "type": "boolean"
+            },
+            "data": {
+             "type": "object"
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/sync/pull": {
+   "get": {
+    "summary": "Réception différentielle",
+    "tags": [
+     "Synchronisation"
+    ],
+    "responses": {
+     "200": {
+      "description": "{changes:[{seq,type,id,rev,deleted,data}], cursor, more}"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "parameters": [
+     {
+      "name": "since",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Curseur (séquence) de la dernière réception"
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      },
+      "description": ""
+     }
+    ]
+   }
+  },
+  "/sequences/reserve": {
+   "post": {
+    "summary": "Réservation d’un bloc de numéros d’audit",
+    "tags": [
+     "Synchronisation"
+    ],
+    "responses": {
+     "200": {
+      "description": "{name, year, from, to}"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string",
+          "example": "AUD"
+         },
+         "year": {
+          "type": "integer"
+         },
+         "count": {
+          "type": "integer",
+          "maximum": 100
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/media/{id}": {
+   "put": {
+    "summary": "Dépôt du contenu d’un média (photo, document, signature)",
+    "tags": [
+     "Médias"
+    ],
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": ""
+     },
+     {
+      "name": "X-Sha256",
+      "in": "header",
+      "schema": {
+       "type": "string"
+      },
+      "description": "Empreinte SHA-256 attendue du contenu"
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/octet-stream": {}
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Enregistré (immuable)"
+     }
+    }
+   },
+   "get": {
+    "summary": "Contenu d’un média",
+    "tags": [
+     "Médias"
+    ],
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": ""
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Contenu binaire, en-tête X-Sha256"
+     }
+    }
+   }
+  },
+  "/entities/{type}": {
+   "get": {
+    "summary": "Lecture d’un type d’objets (interopérabilité : logiciel qualité, SIG, GED…)",
+    "tags": [
+     "Interopérabilité"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "parameters": [
+     {
+      "name": "type",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": "audit, deviation, prestation, provider, site, point, document, grid…"
+     },
+     {
+      "name": "updatedSince",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "string"
+      },
+      "description": "ISO 8601"
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      },
+      "description": ""
+     }
+    ]
+   }
+  },
+  "/entities/{type}/{id}": {
+   "get": {
+    "summary": "Lecture d’un objet",
+    "tags": [
+     "Interopérabilité"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "parameters": [
+     {
+      "name": "type",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": ""
+     },
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": ""
+     }
+    ]
+   }
+  },
+  "/export/{name}": {
+   "get": {
+    "summary": "Export CSV (deviations.csv, audits.csv)",
+    "tags": [
+     "Interopérabilité"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "parameters": [
+     {
+      "name": "name",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": ""
+     }
+    ]
+   }
+  },
+  "/journal": {
+   "get": {
+    "summary": "Journal serveur (ajout seul)",
+    "tags": [
+     "Système"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "parameters": [
+     {
+      "name": "since",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      },
+      "description": ""
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer"
+      },
+      "description": ""
+     }
+    ]
+   }
+  },
+  "/admin/backup": {
+   "get": {
+    "summary": "Sauvegarde complète du serveur (administrateur)",
+    "tags": [
+     "Système"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    }
+   }
+  },
+  "/openapi.json": {
+   "get": {
+    "summary": "Ce document",
+    "tags": [
+     "Système"
+    ],
+    "responses": {
+     "200": {
+      "description": "Réponse JSON"
+     },
+     "401": {
+      "description": "Non authentifié (code TOKEN_EXPIRED, DEVICE_REVOKED, USER_DISABLED, BAD_CREDENTIALS)"
+     },
+     "403": {
+      "description": "Droit insuffisant"
+     }
+    },
+    "security": []
+   }
+  }
+ }
+}

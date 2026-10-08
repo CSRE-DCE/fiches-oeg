@@ -48,6 +48,7 @@ const SHELL = [
   './js/domain/seed.js',
   './js/domain/default-grids.js',
   './js/domain/normalize.js',
+  './js/domain/permissions.js',
   './js/formats/csv.js',
   './js/formats/ics.js',
   './js/formats/xlsx.js',

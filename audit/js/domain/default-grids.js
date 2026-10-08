@@ -159,7 +159,7 @@ export const GRID_GENERAL = {
     },
     {
       id: 'sec-transport', title: 'Conservation et transport', domain: 'transport', phase: 'apres',
-      help: 'Contrôle de la partie pré-analytique directement liée au prélèvement, jusqu’à la remise au laboratoire. Les analyses ne sont pas auditées.',
+      help: 'Conditionnement, conservation, chaîne du froid, délais et traçabilité jusqu’à la remise au laboratoire.',
       items: [
         { id: 'it-T00', code: 'T00', label: 'Prélèvement nécessitant une conservation à température contrôlée', kind: 'boolean', required: true, help: 'Si « Oui », les contrôles de la chaîne du froid s’affichent automatiquement.' },
         C('T01', 'Conditionnement adapté', { refs: [iso('7.4.1', 'Transport et stockage des objets')] }),

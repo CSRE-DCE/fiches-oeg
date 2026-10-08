@@ -17,7 +17,8 @@ import { auditState, setResponse, updateAudit, finishAudit, reopenAudit, signAud
 import { refLabel, refArticle } from '../app/documents.js';
 import { operatorsModule, operatorHandlers, equipmentModule, equipmentHandlers, gpsModule, gpsHandlers, samplesModule, sampleHandlers, openDeviationForm, deviationChips } from './audit-modules.js';
 
-const amendState = new Map();   // audit id → motif de la modification en cours (audit signé)
+const amendState = new Map();   // « utilisateur:audit » → motif de la modification en cours (audit signé)
+const amendKey = id => `${session.user?.id}:${session.unlockedAt}:${id}`;
 const STEP_FIXED = { identification: '🪪 Identification', ecarts: '⚠️ Écarts', synthese: '📊 Synthèse', signatures: '✍️ Signatures' };
 
 function stepsOf(st) {
@@ -186,7 +187,7 @@ export default {
     const cur = steps.includes(step) ? step : (audit.status === 'en_cours' ? (st.structure.find(s => s.visible && st.progress.bySection[s.id]?.answered < st.progress.bySection[s.id]?.total)?.id || 'identification') : 'signatures');
     const idx = steps.indexOf(cur);
     const locked = !!audit.lock?.lockedAt;
-    const amendReason = amendState.get(audit.id) || null;
+    const amendReason = amendState.get(amendKey(audit.id)) || null;
     ctx.amendReason = amendReason;
     const editable = locked ? (!!amendReason && can('audit.amend')) : (canEditAudit(audit) && audit.status !== 'abandonne');
     const sec = st.structure.find(s => s.id === cur);
@@ -373,12 +374,12 @@ export default {
     async 'amend-start'() {
       const reason = await promptDialog({ title: 'Modifier un audit signé', label: 'Motif de la modification (obligatoire)', hint: 'Le motif, l’auteur, la date et les valeurs avant/après seront conservés.' });
       if (!reason) return;
-      amendState.set(this.params.id, reason);
+      amendState.set(amendKey(this.params.id), reason);
       await store.log('amend-start', { entityType: 'audit', entityId: this.params.id, entityLabel: store.get('audit', this.params.id).number, reason });
       this.refresh();
     },
     async 'amend-stop'() {
-      amendState.delete(this.params.id);
+      amendState.delete(amendKey(this.params.id));
       await store.log('amend-stop', { entityType: 'audit', entityId: this.params.id, entityLabel: store.get('audit', this.params.id).number });
       this.refresh();
     },

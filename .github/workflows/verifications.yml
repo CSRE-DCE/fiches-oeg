@@ -25,6 +25,9 @@ jobs:
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
 
+      - name: Tests unitaires de l'application d'audit
+        run: node --test tests/audit-unit.mjs
+
       - name: Installation de Playwright (Chromium)
         run: |
           npm install --no-audit --no-fund
@@ -32,3 +35,6 @@ jobs:
 
       - name: Tests de bout en bout (stockage, synchronisation Drive, hors-ligne)
         run: node tests/e2e.js
+
+      - name: Tests de bout en bout de l'application d'audit (terrain, hors-ligne, serveur, synchronisation)
+        run: node tests/audit-e2e.mjs

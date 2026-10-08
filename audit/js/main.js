@@ -81,7 +81,16 @@ async function enterApp({ password = null } = {}) {
   if (session.mode === 'server' && password) {
     const r = await auth.refreshServerToken(password);
     if (r?.revoked) return onRevoked();
-    runSync({ reason: 'ouverture de session' }).then(res => { if (res?.pulled || res?.pushed) toast(`Synchronisation : ${res.pushed} envoi(s), ${res.pulled} réception(s)`, 'ok'); }).catch(() => {});
+    runSync({ reason: 'ouverture de session' }).then(async res => {
+      if (res?.pulled || res?.pushed) toast(`Synchronisation : ${res.pushed} envoi(s), ${res.pulled} réception(s)`, 'ok');
+      // Serveur vierge : le premier administrateur / responsable qualité initialise le référentiel de base.
+      if (!res?.errors?.length && !res?.skipped && !store.count('grid') && auth.can('ref.manage')) {
+        const { seedBase } = await import('./app/bootstrap.js');
+        await seedBase();
+        toast('Serveur vierge : référentiel de base et grilles initialisés. Reprenez les stations depuis Administration › Données.', 'ok', 7000);
+        runSync({ reason: 'initialisation du référentiel' });
+      }
+    }).catch(() => {});
   }
 }
 

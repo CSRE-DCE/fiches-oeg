@@ -7,8 +7,10 @@
  */
 const DB_NAME = 'oeg-audit', VERSION = 1;
 let dbp = null;
+let destroyed = false;   // base effacée (appareil révoqué) : plus aucune écriture possible
 
 export function openDB() {
+  if (destroyed) return Promise.reject(new Error('Données locales effacées'));
   if (dbp) return dbp;
   dbp = new Promise((resolve, reject) => {
     if (!globalThis.indexedDB) return reject(new Error('IndexedDB indisponible sur ce navigateur'));
@@ -70,6 +72,7 @@ export const meta = {
 
 /** Efface entièrement la base locale (appareil perdu révoqué, réinitialisation). */
 export async function destroyDB() {
+  destroyed = true;
   if (dbp) { try { (await dbp).close(); } catch (e) { /* déjà fermée */ } dbp = null; }
   await new Promise((resolve, reject) => {
     const r = indexedDB.deleteDatabase(DB_NAME);

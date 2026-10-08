@@ -5,6 +5,7 @@
  *  - fichiers de l'appli modifiés SANS incrémenter OEG_BUILD dans version.js (les tablettes
  *    resteraient alors sur l'ancienne version) ;
  *  - identifiant HTML en double (un getElementById ne trouverait que le premier).
+ *  - mêmes contrôles pour l'application d'audit (audit/, AUDIT_BUILD) et le serveur (audit-api/).
  * Usage : node tests/check-release.js   (variable BASE_REF = branche de comparaison, optionnelle)
  */
 'use strict';
@@ -67,8 +68,41 @@ if (base) {
   }
 }
 
+// 6) Application d'audit (dossier audit/) et serveur de référence (audit-api/)
+const walk = d => fs.readdirSync(path.join(ROOT, d), { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
+const auditJs = [...walk('audit/js'), 'audit/sw.js', 'audit/version.js', ...walk('audit-api').filter(f => f.endsWith('.mjs'))].filter(f => /\.m?js$/.test(f));
+for (const f of auditJs) {
+  try { execFileSync(process.execPath, ['--check', path.join(ROOT, f)], { stdio: 'pipe' }); }
+  catch (e) { fail(`Erreur de syntaxe dans ${f} :\n${String(e.stderr || e.message).trim()}`); }
+}
+const asw = read('audit/sw.js');
+const ashellMatch = asw.match(/const SHELL\s*=\s*\[([\s\S]*?)\]/);
+const ashell = ashellMatch ? [...ashellMatch[1].matchAll(/'([^']+)'/g)].map(m => path.normalize(path.join('audit', m[1]))) : [];
+if (!ashellMatch) fail('SHELL introuvable dans audit/sw.js');
+for (const f of ashell) if (f !== 'audit' && !fs.existsSync(path.join(ROOT, f))) fail(`audit/sw.js met en cache "${f}", qui n'existe pas`);
+for (const f of walk('audit/js')) if (!ashell.includes(path.normalize(f))) fail(`${f} absent du cache hors-ligne (SHELL de audit/sw.js)`);
+const ahtml = read('audit/index.html');
+for (const u of new Set([...ahtml.matchAll(/\b(?:src|href)="([^"#?]+)"/g)].map(m => m[1]).filter(u => !/^(https?:|data:|\/\/)/.test(u)))) {
+  const f = path.normalize(path.join('audit', u));
+  if (!fs.existsSync(path.join(ROOT, f))) fail(`audit/index.html référence "${u}", qui n'existe pas`);
+  else if (!ashell.includes(f)) fail(`"${u}" est utilisé par audit/index.html mais absent du cache hors-ligne`);
+}
+try { JSON.parse(read('audit/manifest.webmanifest')); } catch (e) { fail('audit/manifest.webmanifest : JSON invalide'); }
+const actx = { self: {} }; vm.runInNewContext(read('audit/version.js'), actx);
+if (!Number.isInteger(actx.self.AUDIT_BUILD)) fail('audit/version.js : AUDIT_BUILD doit être un nombre entier');
+if (base) {
+  const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const changed = git('diff', '--name-only', `${base}...HEAD`).split('\n').filter(Boolean).filter(f => f.startsWith('audit/') && !f.endsWith('.md'));
+  if (changed.length) {
+    let baseBuild = null;
+    try { const c = { self: {} }; vm.runInNewContext(git('show', `${base}:audit/version.js`), c); baseBuild = c.self.AUDIT_BUILD; } catch (e) { /* application d'audit absente de la base */ }
+    if (baseBuild !== null && !(actx.self.AUDIT_BUILD > baseBuild))
+      fail(`Fichiers de l'application d'audit modifiés mais AUDIT_BUILD n'a pas été incrémenté dans audit/version.js (actuel : ${actx.self.AUDIT_BUILD}, base : ${baseBuild})`);
+  }
+}
+
 if (errors.length) {
   console.error('❌ ' + errors.length + ' problème(s) :\n\n' + errors.map(e => '• ' + e).join('\n'));
   process.exit(1);
 }
-console.log(`✅ Vérifications OK — ${jsFiles.length} fichiers JS, ${n} scripts intégrés, ${shell.length} fichiers en cache, build ${ctx.self.OEG_BUILD}`);
+console.log(`✅ Vérifications OK — ${jsFiles.length} fichiers JS, ${n} scripts intégrés, ${shell.length} fichiers en cache, build ${ctx.self.OEG_BUILD} — application d'audit : ${auditJs.length} fichiers JS, ${ashell.length} fichiers en cache, build ${actx.self.AUDIT_BUILD}`);
