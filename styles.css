@@ -168,3 +168,4 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
 @media(max-width:520px){.backupPill{max-width:none;font-size:11px;padding:5px 8px}.topin{flex-wrap:wrap}}
 @media print{.backupPill,#endOfDayCard{display:none!important}}
 .offTab{display:none!important}
+.crtMapFallback{height:100%;display:flex;align-items:center;justify-content:center}.crtMapFallback[hidden]{display:none}

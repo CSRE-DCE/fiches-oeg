@@ -422,7 +422,11 @@
   <input id="crtRef" placeholder="CRT-AAAA-NNN">
   </div>
   <div class="field"><label>Date du rapport</label>
-  <input id="crtDate" type="date">
+  <input id="crtDate" type="date"><div class="hint">Vide : date du jour de l’impression.</div>
+  </div>
+  <div class="field"><label>Saison</label>
+  <select id="crtSaison"><option value="">Automatique (d’après la date de la visite)</option><option>SAISON SÈCHE</option><option>SAISON DES PLUIES</option></select>
+  <div class="hint">Automatique : saison sèche d’août à novembre, saison des pluies de décembre à juillet.</div>
   </div>
   <div class="field"><label>Rédacteur</label>
   <select id="crtAuthor"><option value="">— sélectionner —</option>

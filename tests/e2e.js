@@ -313,6 +313,51 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e6.length===0,'aucune erreur JavaScript (champs de fiche) '+JSON.stringify(e6));
     await c6.close();
   }
+  // --- J : CRT (saison, date du rapport, saisies mémorisées par fiche, consolidé, carte hors ligne, logo) ---
+  {
+    const c7=await browser.newContext({serviceWorkers:'block'});
+    await c7.route('https://unpkg.com/**',r=>r.abort());
+    await c7.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c7.newPage();const e7=[];p.on('pageerror',e=>e7.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY);
+      const base=(id,s,date)=>({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:s.nom,stationInfo:s,date,heureDebut:'08:00',preleveurs:['PF'],organisme:"Office de l'Eau de Guyane",savedAt:date+'T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:date+'T08:00:00.000Z'},auditRefs:[],photos:[],insitu:{ph:{value:'6.5'}},comment:'Observation terrain'});
+      records.push(base('R1',st[0],'2026-10-05'),base('R2',st[1],'2027-02-10'));saveLS(LS,records);
+    });
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);
+    const pick=id=>p.evaluate(id=>{const s=$('crtRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await pick('R1');await p.waitForTimeout(300);
+    let txt=await p.textContent('#crtPreviewBox');
+    ok(txt.includes('SAISON SÈCHE'),'CRT : visite d’octobre = saison sèche');
+    await pick('R2');await p.waitForTimeout(300);
+    ok((await p.textContent('#crtPreviewBox')).includes('SAISON DES PLUIES'),'CRT : visite de février = saison des pluies (auparavant toujours « sèche »)');
+    // Saisies du CRT mémorisées par fiche
+    await pick('R1');await p.fill('#crtRef','CRT-2026-001');await p.fill('#crtDate','2026-10-20');await p.fill('#crtConclusion','Conclusion R1');await p.click('#crtPreview');await p.waitForTimeout(200);
+    txt=await p.textContent('#crtPreviewBox');
+    ok(txt.includes('CRT-2026-001')&&txt.includes('20/10/2026')&&txt.includes('Conclusion R1'),'CRT : référence, date du rapport et conclusion imprimées');
+    ok(!/Conclusion \/ synthèse\s*Observation terrain/.test(txt),'CRT : la conclusion ne recopie plus les observations');
+    await pick('R2');await p.waitForTimeout(200);
+    ok(await p.inputValue('#crtRef')===''&&await p.inputValue('#crtConclusion')==='','CRT : autre fiche = champs propres à cette fiche (vides)');
+    await p.fill('#crtRef','CRT-2027-002');await p.waitForTimeout(600);
+    await pick('R1');await p.waitForTimeout(200);
+    ok(await p.inputValue('#crtRef')==='CRT-2026-001'&&await p.inputValue('#crtConclusion')==='Conclusion R1','CRT : retour sur la fiche R1 = ses saisies retrouvées');
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);await pick('R2');await p.waitForTimeout(200);
+    ok(await p.inputValue('#crtRef')==='CRT-2027-002','CRT : saisies conservées après rechargement de l’appli');
+    // Consolidé : chaque fiche avec sa propre référence
+    await p.evaluate(()=>{window.print=()=>{window.__printed=(window.__printed||0)+1}});
+    await p.evaluate(()=>{const n=$('crtBatchNetwork');n.value='RCO';n.dispatchEvent(new Event('change'));const s=$('crtBatchSession');s.value=s.options[1].value;s.dispatchEvent(new Event('change'))});
+    await p.click('#crtBatchGenerate');await p.waitForFunction(()=>window.__printed>=1,null,{timeout:10000});
+    txt=await p.textContent('#crtPreviewBox');
+    ok(txt.includes('CRT-2026-001')&&txt.includes('CRT-2027-002'),'CRT consolidé : chaque fiche avec sa propre référence');
+    // Carte hors ligne : carte schématique au lieu d'un cadre vide ; logo en fichier
+    await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox .crtMapPlaceholder')].every(b=>{const fb=b.querySelector('.crtMapFallback');return fb&&!fb.hidden&&fb.querySelector('svg')})),'CRT : fond de carte indisponible = carte schématique affichée');
+    ok(await p.evaluate(()=>{const imgs=[...document.querySelectorAll('#crtPreviewBox img.crtPageLogo,#crtPreviewBox img.crtCoverLogo')];return imgs.length>0&&imgs.every(i=>i.getAttribute('src')==='img/logo-oeg.png'&&i.naturalWidth>0)}),'CRT : logo chargé depuis img/logo-oeg.png (plus 260 Ko recopiés par page)');
+    ok(await p.evaluate(()=>$('crtPreviewBox').innerHTML.length<200000),'CRT consolidé de 2 fiches : document léger ('+await p.evaluate(()=>Math.round($('crtPreviewBox').innerHTML.length/1024))+' Ko)');
+    ok(e7.length===0,'aucune erreur JavaScript (CRT) '+JSON.stringify(e7));
+    await c7.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
