@@ -27,6 +27,7 @@
   const DRIVE_HASH_KEY = 'oeg_sync_drive_hashes_v1';
   const DRIVE_FILEIDS_KEY = 'oeg_sync_drive_fileids_v1';
   const DRIVE_NAMES_KEY = 'oeg_sync_drive_filenames_v1';
+  const DRIVE_VERSIONS_KEY = 'oeg_sync_drive_versions_v1';
   const DEBOUNCE_MS = 1500;
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
   const DRIVE_FOLDER_NAME = 'Fiches terrain OEG';
@@ -96,6 +97,7 @@
   let driveHashes = loadJson(DRIVE_HASH_KEY, {});  // id -> hash déjà envoyé sur Drive
   let driveFileIds = loadJson(DRIVE_FILEIDS_KEY, {}); // id -> Drive fileId
   let driveNames = loadJson(DRIVE_NAMES_KEY, {});  // id -> nom de fichier actuel sur Drive
+  let driveVersions = loadJson(DRIVE_VERSIONS_KEY, {}); // id -> numéro de version Drive du fichier, tel que vu lors du dernier envoi/téléchargement
   let driveCfg = loadJson(DRIVE_CFG_KEY, {clientId:'', folderId:'', connected:false});
 
   let driveAccessToken = null;
@@ -109,6 +111,7 @@
   function saveDriveHashes(){ saveJson(DRIVE_HASH_KEY, driveHashes) }
   function saveDriveFileIds(){ saveJson(DRIVE_FILEIDS_KEY, driveFileIds) }
   function saveDriveNames(){ saveJson(DRIVE_NAMES_KEY, driveNames) }
+  function saveDriveVersions(){ saveJson(DRIVE_VERSIONS_KEY, driveVersions) }
 
   // ---------- utilitaires de contenu ----------
   function safeName(s){
@@ -162,6 +165,7 @@
   // date...) : si ces champs changent, le nom souhaité change aussi, ce qui déclenche un
   // renommage du fichier au moment de l'écriture (voir syncLocalFolder / syncDrive).
   async function collectItems(){
+    await (window.OEGRecordsReady||Promise.resolve()); // jamais sur une liste de fiches incomplète
     const items = [];
     for(const r of records){
       items.push({id: r.id, filename: filenameForRecord(r), content: r, hash: await hashOf(r)});
@@ -365,13 +369,13 @@
     const body =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
       `--${boundary}\r\nContent-Type: ${mimeFor(filename)}\r\n\r\n${text}\r\n--${boundary}--`;
-    const resp = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    const resp = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,version', {
       method:'POST',
       headers:{'Authorization':'Bearer ' + driveAccessToken, 'Content-Type':'multipart/related; boundary=' + boundary},
       body
     });
     const json = await resp.json();
-    return json.id;
+    return {id: json.id, version: json.version};
   }
 
   // Met à jour le contenu ET le nom en une seule requête : si le nom souhaité a changé
@@ -383,11 +387,25 @@
     const body =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
       `--${boundary}\r\nContent-Type: ${mimeFor(filename)}\r\n\r\n${text}\r\n--${boundary}--`;
-    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`, {
+    const resp = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,version`, {
       method:'PATCH',
       headers:{'Authorization':'Bearer ' + driveAccessToken, 'Content-Type':'multipart/related; boundary=' + boundary},
       body
     });
+    const json = await resp.json().catch(()=>({}));
+    return json.version;
+  }
+
+  // Numéro de version actuel d'un fichier Drive (Drive l'incrémente à chaque modification,
+  // quelle que soit la tablette qui modifie le fichier).
+  async function driveFileVersion(fileId){
+    const resp = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=version`, {headers:{'Authorization':'Bearer ' + driveAccessToken}});
+    const json = await resp.json();
+    return json.version;
+  }
+  async function driveDownloadJson(fileId){
+    const resp = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {headers:{'Authorization':'Bearer ' + driveAccessToken}});
+    return await resp.json();
   }
 
   // N'envoie que les fiches / fichiers de référence dont le contenu a changé depuis le dernier
@@ -402,16 +420,28 @@
     try{ folderId = await ensureDriveFolder() }
     catch(e){ renderDriveStatus('Impossible de créer le dossier Drive'); return {ok:false, reason:'folder'} }
     let written = 0, failed = 0;
+    const mergeStats = {conflicts:0, merged:0};
     for(const item of items){
       if(driveHashes[item.id] === item.hash) continue; // déjà à jour sur Drive
       const text = itemText(item);
       try{
         const sameNameAsBefore = driveFileIds[item.id] && driveNames[item.id] === item.filename;
         if(sameNameAsBefore){
-          await driveUpdateFile(driveFileIds[item.id], item.filename, text);
+          // Fiche : avant d'écraser le fichier Drive, on vérifie qu'aucune autre tablette ne
+          // l'a modifié depuis notre dernier passage. Si c'est le cas, on ne l'écrase pas : on
+          // télécharge sa version et on la fusionne (même règle que "Récupérer l'historique"),
+          // puis l'envoi se refait au passage suivant, sur la fiche fusionnée.
+          if(!item.id.startsWith('_') && await remoteChangedElsewhere(item.id)){
+            await mergeRemoteRecord(await driveDownloadJson(driveFileIds[item.id]), driveFileIds[item.id], driveNames[item.id], await driveFileVersion(driveFileIds[item.id]), mergeStats);
+            mergeStats.merged++;
+            continue;
+          }
+          const version = await driveUpdateFile(driveFileIds[item.id], item.filename, text);
+          if(version !== undefined) driveVersions[item.id] = version;
         }else{
-          const fileId = await driveCreateFile(item.filename, folderId, text);
-          driveFileIds[item.id] = fileId;
+          const created = await driveCreateFile(item.filename, folderId, text);
+          driveFileIds[item.id] = created.id;
+          if(created.version !== undefined) driveVersions[item.id] = created.version;
           saveDriveFileIds();
         }
         driveHashes[item.id] = item.hash;
@@ -423,6 +453,18 @@
     }
     if(written){saveDriveHashes(); saveDriveNames()}
     if(written) localStorage.setItem('oeg_sync_drive_last', new Date().toISOString());
+    saveDriveVersions();
+    if(mergeStats.merged){
+      // Fiches fusionnées avec la version d'une autre tablette : on enregistre (ce qui relance
+      // une synchronisation pour envoyer le résultat) et on prévient l'agent.
+      saveDriveFileIds(); saveDriveHashes(); saveDriveNames();
+      saveLS(LS, records);
+      if(typeof updateCount==='function') updateCount();
+      if(typeof renderList==='function') renderList();
+      if(typeof toast==='function') toast(mergeStats.conflicts
+        ? `⚠ ${mergeStats.conflicts} fiche(s) modifiée(s) aussi sur une autre tablette : les deux versions sont conservées, vérifiez l'onglet Fiches.`
+        : `${mergeStats.merged} fiche(s) mise(s) à jour depuis une autre tablette ✓`);
+    }
     renderDriveStatus();
     return {written, failed, ok: failed===0};
   }
@@ -477,7 +519,7 @@
     try{
       do{
         const q=encodeURIComponent(`'${folderId}' in parents and trashed=false`);
-        let url=`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name)&pageSize=1000`;
+        let url=`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,version)&pageSize=1000`;
         if(pageToken)url+='&pageToken='+encodeURIComponent(pageToken);
         const resp=await driveFetch(url,{headers:{'Authorization':'Bearer '+driveAccessToken}});
         const json=await resp.json();
@@ -497,7 +539,7 @@
         const rec=await resp.json();
         if(!rec||!rec.id){failed++;continue}
         const prev=remoteById.get(rec.id);
-        if(!prev||recordStamp(rec)>recordStamp(prev.rec))remoteById.set(rec.id,{rec,fileId:f.id,name:f.name});
+        if(!prev||recordStamp(rec)>recordStamp(prev.rec))remoteById.set(rec.id,{rec,fileId:f.id,name:f.name,version:f.version});
       }catch(e){failed++}
     }
     // 2) Fusion avec les fiches de cet appareil, fondée sur la date de dernière modification.
@@ -505,31 +547,10 @@
     //    versions ont divergé (modifiée ici ET sur une autre tablette), la plus récente devient
     //    la fiche principale et l'autre est gardée comme "copie de conflit" à examiner.
     await (window.OEGRecordsReady||Promise.resolve());
-    let imported=0,updated=0,kept=0,conflicts=0;
-    const editingId=(typeof state!=='undefined'&&state)?state.editing:null;
-    for(const [id,{rec,fileId,name}] of remoteById){
-      const remoteHash=await hashOf(rec);
-      const adoptRemote=()=>{driveFileIds[id]=fileId;driveNames[id]=name;driveHashes[id]=remoteHash};
-      const idx=records.findIndex(r=>r.id===id);
-      if(idx===-1){records.push(rec);adoptRemote();imported++;continue}
-      const local=records[idx];
-      const localHash=await hashOf(local);
-      if(localHash===remoteHash){adoptRemote();continue}
-      const localDirty=driveHashes[id]!==localHash;   // modifications locales pas encore envoyées sur Drive
-      const remoteSeen=driveHashes[id]===remoteHash;  // version Drive déjà connue de cet appareil
-      const remoteNewer=recordStamp(rec)>recordStamp(local);
-      if(remoteNewer&&id!==editingId){
-        if(localDirty){records.push(await conflictCopy(local,'cette tablette'));conflicts++}
-        records[idx]=rec;adoptRemote();updated++;
-      }else{
-        // Version locale plus récente (ou fiche ouverte en cours de modification) : elle est
-        // conservée et sera envoyée sur Drive au prochain passage. Si la version Drive contient
-        // des modifications inconnues ici (autre tablette), elle est gardée en copie de conflit.
-        if(!remoteSeen){records.push(await conflictCopy(rec,'Google Drive'));conflicts++}
-        kept++;
-      }
-    }
-    saveDriveFileIds();saveDriveHashes();saveDriveNames();
+    const stats={imported:0,updated:0,kept:0,conflicts:0};
+    for(const {rec,fileId,name,version} of remoteById.values())await mergeRemoteRecord(rec,fileId,name,version,stats);
+    const {imported,updated,kept,conflicts}=stats;
+    saveDriveFileIds();saveDriveHashes();saveDriveNames();saveDriveVersions();
     if(imported||updated||conflicts){
       saveLS(LS,records);
       if(typeof updateCount==='function')updateCount();
@@ -538,6 +559,51 @@
     renderDriveStatus();
     if(typeof toast==='function')toast(`Historique récupéré : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(kept?`, ${kept} version(s) locale(s) plus récente(s) conservée(s)`:'')+(failed?`, ${failed} échec(s)`:'')+' ✓'+(conflicts?` — ⚠ ${conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
     return {ok:true,imported,updated,kept,conflicts,failed};
+  }
+
+  // Fusionne UNE fiche venue de Drive avec celle de cet appareil, selon la date de dernière
+  // modification. Règle d'or : une saisie n'est JAMAIS écrasée sans être conservée. Quand les
+  // deux versions ont divergé (modifiée ici ET sur une autre tablette), la plus récente devient
+  // la fiche principale et l'autre est gardée comme "copie de conflit" à examiner.
+  async function mergeRemoteRecord(rec,fileId,name,version,stats){
+    if(!rec||!rec.id)return;
+    const id=rec.id;
+    const remoteHash=await hashOf(rec);
+    const adoptRemote=()=>{driveFileIds[id]=fileId;driveNames[id]=name;driveHashes[id]=remoteHash;if(version!==undefined)driveVersions[id]=version};
+    const idx=records.findIndex(r=>r.id===id);
+    if(idx===-1){records.push(rec);adoptRemote();stats.imported=(stats.imported||0)+1;return}
+    const local=records[idx];
+    const localHash=await hashOf(local);
+    if(localHash===remoteHash){adoptRemote();return}
+    const localDirty=driveHashes[id]!==localHash;   // modifications locales pas encore envoyées sur Drive
+    const remoteSeen=driveHashes[id]===remoteHash;  // version Drive déjà connue de cet appareil
+    const remoteNewer=recordStamp(rec)>recordStamp(local);
+    const editingId=(typeof state!=='undefined'&&state)?state.editing:null;
+    if(remoteNewer&&id!==editingId){
+      if(localDirty){records.push(await conflictCopy(local,'cette tablette'));stats.conflicts=(stats.conflicts||0)+1}
+      records[idx]=rec;adoptRemote();stats.updated=(stats.updated||0)+1;
+    }else{
+      // Version locale plus récente (ou fiche ouverte en cours de modification) : elle est
+      // conservée et sera envoyée sur Drive. Si la version Drive contient des modifications
+      // inconnues ici (autre tablette), elle est d'abord gardée en copie de conflit.
+      if(!remoteSeen){records.push(await conflictCopy(rec,'Google Drive'));stats.conflicts=(stats.conflicts||0)+1}
+      // La version Drive est désormais connue : le prochain envoi pourra la remplacer.
+      if(fileId===driveFileIds[id]&&version!==undefined)driveVersions[id]=version;
+      stats.kept=(stats.kept||0)+1;
+    }
+  }
+
+  // Le fichier Drive de cette fiche a-t-il été modifié ailleurs depuis notre dernier passage ?
+  async function remoteChangedElsewhere(id){
+    const fileId=driveFileIds[id];
+    const current=await driveFileVersion(fileId);
+    if(current===undefined)return false; // vérification impossible : comportement habituel
+    if(driveVersions[id]!==undefined)return String(current)!==String(driveVersions[id]);
+    // Fichier envoyé par une version précédente de l'appli (numéro de version inconnu) :
+    // on compare son contenu avec ce que cet appareil y a envoyé en dernier.
+    const rec=await driveDownloadJson(fileId);
+    if(rec&&await hashOf(rec)===driveHashes[id]){driveVersions[id]=current;return false}
+    return true;
   }
 
   // Duplique une fiche sous un nouvel identifiant, marquée comme copie de conflit, pour que
