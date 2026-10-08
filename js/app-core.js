@@ -411,11 +411,22 @@ function fill(id,arr){
     el.appendChild(o);
   });
 }
+// Changer de réseau (ou ouvrir une autre station) pendant la modification d'une fiche déjà
+// enregistrée écrasait cette fiche à l'enregistrement, avec la nouvelle station et le schéma,
+// la signature et les photos de l'ancienne. On demande donc confirmation, puis on repart d'une
+// fiche vierge. Retourne false si l'agent préfère rester sur la fiche en cours.
+function leaveEditedFiche(){
+  if(!state.editing)return true;
+  if(!confirm('Une fiche enregistrée est en cours de modification.\n\nAbandonner les modifications non enregistrées et commencer une nouvelle fiche ?'))return false;
+  if(typeof window.clearFormNoConfirm==='function')window.clearFormNoConfirm();
+  return true;
+}
+window.leaveEditedFiche=leaveEditedFiche;
 function renderNetworks(){
   const h=$('networks');h.innerHTML='';
   NETWORKS.forEach(([n])=>{
     const c=document.createElement('div');c.className='chip';c.dataset.n=n;c.textContent=netLabel(n);
-    c.onclick=()=>selectNetwork(n);h.appendChild(c);
+    c.onclick=()=>{if(!leaveEditedFiche())return;selectNetwork(n)};h.appendChild(c);
   });
 }
 function refreshSiteFields(){const surf=$('surfaceSandre');if(surf)surf.classList.toggle('hide',state.network==='ESO');document.querySelectorAll('.elHide').forEach(e=>e.classList.toggle('hide',state.network==='EL'))}
@@ -1158,7 +1169,8 @@ function fitCanvas(c){
   const dpr=devicePixelRatio||1,w=Math.round(r.width*dpr),h=Math.round(r.height*dpr);
   if(c.width===w&&c.height===h)return true;
   const key=canvasKey(c);
-  const prev=(c.width>0&&c.height>0&&c._hasContent)?c.toDataURL('image/png'):(state[key]||null);
+  // Contenu de référence : state[key] (mis à jour après chaque trait) ; à défaut, le canevas.
+  const prev=state[key]||((c.width>0&&c.height>0&&c._hasContent)?c.toDataURL('image/png'):null);
   c.width=w;c.height=h;
   const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);applyPen(c);
   if(prev)restoreCanvas(c,prev);
@@ -1206,14 +1218,31 @@ function setCanvasContent(c,data){
   x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();
   c._hasContent=false;
   if(!data)return;
+  const key=canvasKey(c);
   const im=new Image();
   im.onload=()=>{
     if(c._contentToken!==token)return; // une autre image a été demandée entre-temps
-    const op=x.globalCompositeOperation;x.globalCompositeOperation='source-over';
-    x.drawImage(im,0,0,c.width/(devicePixelRatio||1),c.height/(devicePixelRatio||1));
-    x.globalCompositeOperation=op;c._hasContent=true;
+    // Dessin en pixels réels (transformation neutre) : le canevas peut ne pas encore avoir été
+    // dimensionné (fiche ouverte depuis un autre onglet), sans quoi l'image était réduite dans
+    // un coin puis enregistrée ainsi. "destination-over" place l'image SOUS un éventuel trait
+    // fait pendant son chargement.
+    x.save();x.setTransform(1,0,0,1,0,0);x.globalCompositeOperation='destination-over';
+    x.drawImage(im,0,0,c.width,c.height);x.restore();
+    applyPen(c);
+    if(c.width>0&&c.height>0&&isCanvasBlank(c)){
+      // Image entièrement transparente (fiche non signée d'une ancienne version, enregistrée
+      // comme image blanche) : considérée comme vide, pour que le contrôle qualité le voie.
+      c._hasContent=false;if(state[key]===data)state[key]=null;return;
+    }
+    c._hasContent=true;
+    // Un trait a été fait pendant le chargement : la référence doit inclure image + trait.
+    if(state[key]&&state[key]!==data){try{state[key]=c.toDataURL('image/png')}catch(_){}}
   };
   im.src=data;
+}
+function isCanvasBlank(c){
+  try{const d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;for(let i=3;i<d.length;i+=4)if(d[i]!==0)return false;return true}
+  catch(e){return false}
 }
 function restoreCanvas(c,data){setCanvasContent(c,data)}
 // Aligne les deux canevas sur la fiche en cours (state.draw / state.signature).
@@ -1222,7 +1251,10 @@ window.syncCanvases=syncCanvases;
 // Contenu à enregistrer : le canevas s'il contient un tracé ou une image chargée, sinon le
 // contenu mémorisé, sinon rien. Un canevas vierge n'est plus enregistré comme une image
 // blanche — celle-ci faisait passer à tort le contrôle « Signature présente ».
-function canvasData(id){const c=$(id),key=canvasKey(c);if(c.width>0&&c.height>0&&c._hasContent)return c.toDataURL('image/png');return state[key]||''}
+// (state.draw / state.signature sont mis à jour après chaque trait et à chaque effacement : ils
+// font foi. Ne pas ré-encoder le canevas évite de déformer et de dégrader un schéma qu'on n'a
+// pas touché quand la fiche est modifiée sur un appareil dont l'écran a une autre taille.)
+function canvasData(id){const c=$(id),key=canvasKey(c);return state[key]||''}
 function initCanvases(){
   const dEl=$('draw'),sEl=$('signature');
   /* Le contenu de référence est state.draw / state.signature (mis à jour après chaque trait) :
@@ -1291,9 +1323,9 @@ $('search').oninput=()=>{if(typeof window.renderList==='function')window.renderL
 function loadRecord(id){
   (function loadRecordCore(id){
   const f=records.find(x=>x.id===id);if(!f)return;
-  state.editing=id;state.network=f.network;state.activity=f.activity;state.bioOperation=f.bioOperation||'';state.session=f.session;state.station=f.station;state.preleveurs=f.preleveurs||[];state.photos=f.photos||[];state.draw=f.dessin||null;state.signature=f.signature||null;
+  state.editing=id;state.network=f.network;state.activity=f.activity;state.bioOperation=f.bioOperation||'';state.session=f.session;state.station=f.station;state.preleveurs=[...(f.preleveurs||[])];state.photos=(f.photos||[]).map(p=>p&&typeof p==='object'?{...p}:p);state.draw=f.dessin||null;state.signature=f.signature||null;
   selectNetwork(f.network);
-  state.activity=f.activity;state.preleveurs=f.preleveurs||[];state.bioOperation=f.bioOperation||'';
+  state.activity=f.activity;state.preleveurs=[...(f.preleveurs||[])];state.bioOperation=f.bioOperation||'';
   // Legacy activity names
   if(state.network==='BIO' && ['Eau dans un cours d’eau (CE)','Phytoplancton','ADNe','Eau dans un cours d’eau / ADNe / Phytoplancton','Eaux de surface — stations communes CE + ADNe + Phytoplancton'].includes(f.activity)){
     state.activity=BIO_EAU_ACTIVITY;

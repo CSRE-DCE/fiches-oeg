@@ -117,7 +117,6 @@ async function saveQualityRecord(){
     const turb=[1,2,3].map(n=>val('iv_turb_'+n)).filter(v=>v!=='').map(Number);
     if(turb.length!==3||turb.some(v=>!Number.isFinite(v))){toast('Turbidité : les 3 mesures sont obligatoires');return}
   }
-  const wasEditing=!!state.editing;
   /* Audit si modification après validation (ancien correctif) */
   const before=state.editing?records.find(x=>x.id===state.editing):null;
   if(before?.lifecycle?.status==='Validée') await audit('MODIFICATION_APRES_VALIDATION',before.id,{previousStatus:'Validée'});
@@ -138,8 +137,12 @@ async function saveQualityRecord(){
   if(!saveLS(LS,records)){records=previous?records.map(x=>x.id===id?previous:x):records.filter(x=>x!==r);return}
   state.editing=null;$('save').textContent='💾 Enregistrer la fiche';updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi();toast(previous?'Fiche mise à jour ✓':'Fiche enregistrée ✓');
   if(typeof window.maybeAutoBackup==='function')setTimeout(()=>window.maybeAutoBackup(),1200);
+  return true;
   })();
-  if(!wasEditing && typeof window.clearFormNoConfirm==='function'){setTimeout(()=>window.clearFormNoConfirm(),0)}
+  // Formulaire vidé seulement si l'enregistrement a réussi (auparavant, un enregistrement refusé
+  // effaçait toute la saisie), et aussi après une mise à jour (auparavant la fiche restait affichée
+  // comme une nouvelle fiche et la suivante héritait de son schéma, sa signature et ses photos).
+  if(result===true && typeof window.clearFormNoConfirm==='function'){setTimeout(()=>window.clearFormNoConfirm(),0)}
   return result;
 }$('save').onclick=saveQualityRecord;
 
@@ -242,7 +245,7 @@ $('importJSON').onchange=e=>{
 };
 
 /* --- Liste des fiches : statut + métrologie + NC ouvertes --- */
-function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>JSON.stringify(x).toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.heureDebut||'')}–${qEscape(f.heureFin||'')}</div></div><span class="badge">${qEscape(st)}</span></div><div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${f.conflict?`<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — comparez avec la fiche d’origine, gardez la bonne et supprimez l’autre.</div>`:''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button></div>`;const b=d.querySelectorAll('button');b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
+function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>JSON.stringify(x).toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.heureDebut||'')}–${qEscape(f.heureFin||'')}</div></div><span class="badge">${qEscape(st)}</span></div><div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${f.conflict?`<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — comparez avec la fiche d’origine, gardez la bonne et supprimez l’autre.</div>`:''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button></div>`;const b=d.querySelectorAll('button');b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
 
 /* --- Qualité : configuration persistante --- */
 ['qualityMethodRef','qualityMethodVersion','qualityInterlab','qualityMaterialRef'].forEach(id=>{
