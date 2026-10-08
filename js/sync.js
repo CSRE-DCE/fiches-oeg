@@ -462,7 +462,8 @@
   // connectées au même compte Google, contribuent chacune une partie des visites sur une
   // station : sans cet appel, l'historique et l'histogramme du CRT ne voient que les fiches
   // déjà présentes sur CET appareil). Les fiches récupérées sont fusionnées dans "records"
-  // (ajoutées si nouvelles, remplacées si déjà connues) puis sauvegardées localement — elles
+  // (ajoutées si nouvelles ; pour une fiche déjà connue, la version la plus récente l'emporte et une
+  // version divergente est conservée en copie de conflit) puis sauvegardées localement — elles
   // seront donc aussi recopiées dans le dossier local de cet appareil au prochain passage.
   async function pullFromDrive(){
     if(!driveCfg.connected){if(typeof toast==='function')toast("Connectez d'abord Google Drive.");return {ok:false,reason:'not-connected'}}
@@ -484,30 +485,74 @@
         pageToken=json.nextPageToken;
       }while(pageToken);
     }catch(e){renderDriveStatus('Échec de la récupération de la liste des fiches');return {ok:false,reason:'list'}}
-    let imported=0,updated=0,failed=0;
+    // 1) Téléchargement : une même fiche peut exister dans plusieurs fichiers Drive (un
+    //    changement de date/station crée un nouveau fichier, l'ancien reste comme version
+    //    précédente). On ne retient que la version la plus récente de chaque fiche.
+    let failed=0;
+    const remoteById=new Map();
     for(const f of files){
       if(f.name.startsWith('_'))continue; // fichiers de référence (équipements, qualité), pas des fiches
       try{
         const resp=await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`,{headers:{'Authorization':'Bearer '+driveAccessToken}});
         const rec=await resp.json();
         if(!rec||!rec.id){failed++;continue}
-        const idx=records.findIndex(r=>r.id===rec.id);
-        if(idx>-1)records[idx]=rec;else records.push(rec);
-        idx>-1?updated++:imported++;
-        driveFileIds[rec.id]=f.id;
-        driveHashes[rec.id]=await hashOf(rec);
-        localNames[rec.id]=f.name;
+        const prev=remoteById.get(rec.id);
+        if(!prev||recordStamp(rec)>recordStamp(prev.rec))remoteById.set(rec.id,{rec,fileId:f.id,name:f.name});
       }catch(e){failed++}
     }
-    if(imported||updated){
-      saveDriveFileIds();saveDriveHashes();saveLocalNames();
+    // 2) Fusion avec les fiches de cet appareil, fondée sur la date de dernière modification.
+    //    Règle d'or : une saisie locale n'est JAMAIS écrasée sans être conservée. Quand les deux
+    //    versions ont divergé (modifiée ici ET sur une autre tablette), la plus récente devient
+    //    la fiche principale et l'autre est gardée comme "copie de conflit" à examiner.
+    await (window.OEGRecordsReady||Promise.resolve());
+    let imported=0,updated=0,kept=0,conflicts=0;
+    const editingId=(typeof state!=='undefined'&&state)?state.editing:null;
+    for(const [id,{rec,fileId,name}] of remoteById){
+      const remoteHash=await hashOf(rec);
+      const adoptRemote=()=>{driveFileIds[id]=fileId;driveNames[id]=name;driveHashes[id]=remoteHash};
+      const idx=records.findIndex(r=>r.id===id);
+      if(idx===-1){records.push(rec);adoptRemote();imported++;continue}
+      const local=records[idx];
+      const localHash=await hashOf(local);
+      if(localHash===remoteHash){adoptRemote();continue}
+      const localDirty=driveHashes[id]!==localHash;   // modifications locales pas encore envoyées sur Drive
+      const remoteSeen=driveHashes[id]===remoteHash;  // version Drive déjà connue de cet appareil
+      const remoteNewer=recordStamp(rec)>recordStamp(local);
+      if(remoteNewer&&id!==editingId){
+        if(localDirty){records.push(await conflictCopy(local,'cette tablette'));conflicts++}
+        records[idx]=rec;adoptRemote();updated++;
+      }else{
+        // Version locale plus récente (ou fiche ouverte en cours de modification) : elle est
+        // conservée et sera envoyée sur Drive au prochain passage. Si la version Drive contient
+        // des modifications inconnues ici (autre tablette), elle est gardée en copie de conflit.
+        if(!remoteSeen){records.push(await conflictCopy(rec,'Google Drive'));conflicts++}
+        kept++;
+      }
+    }
+    saveDriveFileIds();saveDriveHashes();saveDriveNames();
+    if(imported||updated||conflicts){
       saveLS(LS,records);
       if(typeof updateCount==='function')updateCount();
       if(typeof renderList==='function')renderList();
     }
     renderDriveStatus();
-    if(typeof toast==='function')toast(`Historique récupéré : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(failed?`, ${failed} échec(s)`:'')+' ✓');
-    return {ok:true,imported,updated,failed};
+    if(typeof toast==='function')toast(`Historique récupéré : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(kept?`, ${kept} version(s) locale(s) plus récente(s) conservée(s)`:'')+(failed?`, ${failed} échec(s)`:'')+' ✓'+(conflicts?` — ⚠ ${conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
+    return {ok:true,imported,updated,kept,conflicts,failed};
+  }
+
+  // Duplique une fiche sous un nouvel identifiant, marquée comme copie de conflit, pour que
+  // les deux versions divergentes restent disponibles (rien n'est perdu ; l'agent choisit).
+  async function conflictCopy(r,origine){
+    const copy=JSON.parse(JSON.stringify(r));
+    copy.id=r.id+'_conflit_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    copy.conflict={originalId:r.id,origine,detectedAt:new Date().toISOString()};
+    if(copy.lifecycle&&copy.lifecycle.integrityHash&&typeof integrityPayload==='function'){
+      try{
+        const validBefore=r.lifecycle.integrityHash===await sha256(integrityPayload(r));
+        if(validBefore)copy.lifecycle.integrityHash=await sha256(integrityPayload(copy));
+      }catch(e){}
+    }
+    return copy;
   }
 
   // ---------- orchestration ----------
@@ -520,6 +565,9 @@
     if(syncing){syncAgainAfter = true; return}
     syncing = true;
     try{
+      // Jamais de synchronisation avant la fin du chargement des fiches (IndexedDB) :
+      // l'index et les fichiers seraient calculés sur une liste incomplète.
+      await (window.OEGRecordsReady||Promise.resolve());
       const items = await collectItems();
       if(localFolderHandle) await syncLocalFolder(items);
       if(driveCfg.connected) await syncDrive(items);
@@ -531,6 +579,7 @@
   }
 
   async function manualSyncNow(){
+    await (window.OEGRecordsReady||Promise.resolve());
     const items = await collectItems();
     const r1 = localFolderHandle ? await syncLocalFolder(items) : {ok:true, written:0};
     const r2 = driveCfg.connected ? await syncDrive(items) : {ok:true, written:0};

@@ -85,7 +85,7 @@ window.clearFormNoConfirm=clearFormNoConfirm;window.saveQualityRecord=saveQualit
 function clearFormNoConfirm(){state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};document.querySelectorAll('#new input,#new textarea').forEach(e=>{if(e.type!=='file')e.value=''});document.querySelectorAll('#new select').forEach(e=>e.value='');document.querySelectorAll('#new input[type=radio],#new input[type=checkbox]').forEach(e=>e.checked=false);document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);$('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();if(window.drawPhotoGroups)drawPhotoGroups();$('save').textContent='💾 Enregistrer la fiche';if(window.clearDraft)window.clearDraft()}
 
 // ---------- Brouillon automatique (protège contre la perte de saisie en cours) ----------
-// Enregistre périodiquement, dans localStorage (jamais dans "records"), le contenu de la
+// Enregistre périodiquement, dans IndexedDB (repli localStorage ; jamais dans "records"), le contenu de la
 // fiche en cours de création. Au prochain chargement de l'appli, si un brouillon existe,
 // une bannière propose de le reprendre. Le brouillon est effacé dès que la fiche est
 // réellement enregistrée ou que le formulaire est explicitement vidé (clearFormNoConfirm).
@@ -98,12 +98,17 @@ function clearFormNoConfirm(){state={network:null,activity:null,bioOperation:nul
     try{
       if(!draftId)draftId=Date.now()+'_'+Math.random().toString(36).slice(2,7);
       const r=collectRecord();r.id=draftId;
-      localStorage.setItem(DRAFT_KEY,JSON.stringify({record:r,savedAt:new Date().toISOString()}));
-    }catch(e){/* stockage plein ou indisponible : tant pis pour ce brouillon */}
+      const draft={record:r,savedAt:new Date().toISOString()};
+      // IndexedDB (photos comprises, sans risque de saturer localStorage) ; repli localStorage.
+      OEGStore.set(DRAFT_KEY,draft)
+        .then(()=>{try{localStorage.removeItem(DRAFT_KEY)}catch(e){}})
+        .catch(()=>{try{localStorage.setItem(DRAFT_KEY,JSON.stringify(draft))}catch(e){/* stockage plein : tant pis pour ce brouillon */}});
+    }catch(e){/* collecte impossible : tant pis pour ce brouillon */}
   }
   function scheduleDraftSave(){if(draftTimer)clearTimeout(draftTimer);draftTimer=setTimeout(saveDraftNow,2500)}
   window.clearDraft=function(){
     try{localStorage.removeItem(DRAFT_KEY)}catch(e){}
+    OEGStore.del(DRAFT_KEY).catch(()=>{});
     draftId=null;if(draftTimer){clearTimeout(draftTimer);draftTimer=null}
     q('draftBanner')?.remove();
   };
@@ -126,11 +131,11 @@ function clearFormNoConfirm(){state={network:null,activity:null,bioOperation:nul
     };
     q('draftDiscardBtn').onclick=()=>window.clearDraft();
   }
-  setTimeout(()=>{
-    try{
-      const raw=localStorage.getItem(DRAFT_KEY);
-      if(raw){const draft=JSON.parse(raw);if(draft?.record)showDraftBanner(draft)}
-    }catch(e){}
+  setTimeout(async()=>{
+    let draft=null;
+    try{draft=await OEGStore.get(DRAFT_KEY)}catch(e){}
+    if(!draft?.record){try{const raw=localStorage.getItem(DRAFT_KEY);if(raw)draft=JSON.parse(raw)}catch(e){}}
+    if(draft?.record)showDraftBanner(draft);
   },300);
 })();
 setTimeout(()=>{refreshPeople();refreshPre();photoGroups();receivers('recepteur');receivers('esoRecepteur');sedRules();document.querySelectorAll('input[id$="SedHauteur"]').forEach(h=>{h.addEventListener('input',()=>{if(+h.value>5){h.value=5;toast('La hauteur de prélèvement ne peut pas dépasser 5 cm')}})})},100);
