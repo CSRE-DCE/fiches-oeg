@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "PWA d’audit des prestations de prélèvement — modules ES (aucune installation nécessaire)"
+}

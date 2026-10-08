@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#003d7a">
+<meta name="description" content="Audit terrain des prestations de prélèvement — Office de l'Eau de Guyane. Fonctionne hors connexion.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Audit prélèvements">
+<title>Audit prélèvements — OEG</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="styles.css">
+<script>
+/* Filet de sécurité : toute erreur JavaScript non interceptée s'affiche en bandeau (même très tôt
+   dans le chargement), au lieu d'un comportement silencieux incompréhensible sur le terrain. */
+(function(){
+  var seen=[];
+  function show(msg){
+    if(seen.indexOf(msg)!==-1)return;seen.push(msg);
+    var line=document.createElement('div');
+    line.setAttribute('role','alert');
+    line.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#a3261f;color:#fff;padding:10px 14px;font:13px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;gap:10px';
+    var t=document.createElement('div');t.style.flex='1';t.textContent='⚠ Erreur : '+msg+' — vos données déjà enregistrées sont conservées. Faites une capture de ce message si le problème persiste.';
+    var b=document.createElement('button');b.textContent='×';b.style.cssText='background:none;border:0;color:#fff;font-size:22px';b.onclick=function(){line.remove()};
+    line.appendChild(t);line.appendChild(b);(document.body||document.documentElement).appendChild(line);
+  }
+  window.addEventListener('error',function(e){if(e&&e.message)show(e.message+(e.filename?' ('+String(e.filename).split('/').pop()+':'+e.lineno+')':''))});
+  window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;show(r&&r.message?r.message:String(r))});
+})();
+</script>
+<script src="version.js"></script>
+</head>
+<body>
+<div id="app"><div class="auth"><div class="auth-card"><img class="logo" src="icons/logo-oeg.png" alt="Office de l'Eau de Guyane"><h1>Audit des prestations de prélèvement</h1><p class="sub">Chargement…</p></div></div></div>
+<div id="toast-root" aria-live="polite"></div>
+<noscript><p style="padding:20px">Cette application nécessite JavaScript.</p></noscript>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script type="module" src="js/main.js"></script>
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('sw.js',{scope:'./',updateViaCache:'none'}).then(function(reg){
+      reg.update().catch(function(){});
+      document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')reg.update().catch(function(){})});
+    }).catch(function(){});
+  });
+}
+if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(function(){})}
+</script>
+</body>
+</html>
