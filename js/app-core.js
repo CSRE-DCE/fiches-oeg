@@ -1562,11 +1562,26 @@ $('addStation').onclick=()=>{
   custom.stations.push(x);saveLS(LSC,custom);['customNet','customStation','customCode','customX','customY','customME','customTransport'].forEach(id=>$(id).value='');if($('customMarche'))$('customMarche').value='';if($('customBassin'))$('customBassin').value='';if($('customProjection'))$('customProjection').value='RGFG 95 / UTM 22N';renderAdmin();
 };
 
-['new','dashboard','list','suivi','quality','data'].forEach(v=>document.querySelector(`.tab[data-tab="${v}"]`).onclick=()=>{
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelector(`.tab[data-tab="${v}"]`).classList.add('active');
-  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));$(v).classList.add('active');
-  $('bar').style.display=v==='new'?'flex':'none';if(v==='new')setTimeout(fitCanvases,0);if(v==='dashboard')renderDashboard();if(v==='list')renderList();if(v==='suivi')renderSuivi();if(v==='quality')renderQuality();if(v==='data')renderAdmin()
-});
+// Navigation entre onglets — SEUL gestionnaire de clic des onglets. (Auparavant un second
+// gestionnaire dans people-stations-core.js remplaçait silencieusement celui-ci, si bien que
+// toute correction faite ici était sans effet.) Les modules qui ont besoin de réagir à
+// l'ouverture d'un onglet ajoutent un addEventListener('click') sans toucher à .onclick.
+function showTab(v){
+  const view=$(v);if(!view)return;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===v));
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));view.classList.add('active');
+  $('bar').style.display=v==='new'?'flex':'none';
+  const run=fn=>{try{fn()}catch(e){console.error(e)}};
+  if(v==='new')setTimeout(fitCanvases,0);
+  if(v==='dashboard'&&typeof renderDashboard==='function')run(renderDashboard);
+  if(v==='list'&&typeof renderList==='function')run(renderList);
+  if(v==='suivi'&&typeof renderSuivi==='function')run(renderSuivi);
+  if(v==='quality'&&typeof renderQuality==='function')run(renderQuality);
+  if(v==='data'&&typeof renderAdmin==='function')run(renderAdmin);
+  if(v==='stations'&&typeof window.mapStations==='function')run(window.mapStations);
+}
+window.showTab=showTab;
+document.querySelectorAll('.tab[data-tab]').forEach(b=>{b.onclick=()=>showTab(b.dataset.tab)});
 
 renderNetworks();renderOrgOptions("Office de l'Eau de Guyane");setupSandre();if(typeof window.renderOperators==='function')window.renderOperators();else setTimeout(()=>window.renderOperators&&window.renderOperators(),0);if(typeof window.renderEquipment==='function')window.renderEquipment();else setTimeout(()=>window.renderEquipment&&window.renderEquipment(),0);if(typeof window.renderPre==='function')window.renderPre();else setTimeout(()=>window.renderPre&&window.renderPre(),0);updateCount();if(typeof window.renderList==='function')window.renderList();else setTimeout(()=>window.renderList&&window.renderList(),0);$('date').valueAsDate=new Date();setupMarketImport();
 

@@ -1,0 +1,34 @@
+# Vérifications automatiques avant chaque publication de l'appli.
+# Une pull request ne doit être fusionnée que si ces vérifications sont vertes.
+name: Vérifications
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verifications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fichiers, syntaxe et numéro de version
+        run: node tests/check-release.js
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+
+      - name: Installation de Playwright (Chromium)
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Tests de bout en bout (stockage, synchronisation Drive, hors-ligne)
+        run: node tests/e2e.js
