@@ -159,6 +159,12 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     const file=await dl.catch(()=>null);
     ok(!!file&&/sauvegarde_OEG_.*\.json$/.test(file.suggestedFilename()),'fin de journée : export JSON téléchargé');
     ok((await p.textContent('#endOfDayResult')).includes('Aucune sauvegarde automatique'),'fin de journée : absence de sauvegarde configurée signalée');
+    // Onglet Qualité : plus de plage de référence pour le pH ni la température
+    const qc=await p.evaluate(()=>{const r={...records[0],insitu:{ph:{value:'9.5'},temp:{value:'35'}}};return qualityChecksFor(r).filter(c=>/pH|Température de l'eau/.test(c.label)&&/valeur|plage/.test(c.label)).map(c=>({l:c.label,ok:c.ok}))});
+    ok(qc.length>0&&qc.every(c=>c.ok&&!/plage/.test(c.l)),'contrôle Qualité : pH 9,5 et 35 °C acceptés, aucune plage '+JSON.stringify(qc));
+    await p.click('.tab[data-tab="dashboard"]');await p.waitForTimeout(300);
+    const board=await p.textContent('body');
+    ok(!/hors plage|Valeurs atypiques/.test(board),'synthèse : compteurs « hors plage » retirés');
     ok(e3.length===0,'aucune erreur JavaScript (terrain) '+JSON.stringify(e3));
     await c3.close();
   }
