@@ -14,13 +14,13 @@
   'use strict';
 
   // ---------- 3. Plages de valeurs ----------
-  // "habituel" : mêmes bornes que le contrôle qualité automatique (quality-automation.js) ;
+  // "habituel" (facultatif, aucun paramètre ne l'utilise pour l'instant) : plage de référence ;
   // en dehors, la valeur est signalée comme inhabituelle (simple confirmation).
   // "possible" : bornes physiques ; en dehors, c'est presque toujours une faute de frappe
   // (virgule oubliée, mauvaise unité) et l'enregistrement est bloqué.
   const PLAGES={
-    ph:   {label:'pH',unit:'u.pH',habituel:[4,8],possible:[0,14]},
-    temp: {label:"Température de l'eau",unit:'°C',habituel:[21,32],possible:[0,45]},
+    ph:   {label:'pH',unit:'u.pH',possible:[0,14]},
+    temp: {label:"Température de l'eau",unit:'°C',possible:[0,45]},
     air:  {label:"Température de l'air",unit:'°C',possible:[0,50]},
     cond: {label:'Conductivité',unit:'µS/cm',possible:[0,100000]},
     condus:{label:'Conductivité',unit:'µS/cm',possible:[0,100000]},

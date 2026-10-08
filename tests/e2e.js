@@ -129,13 +129,16 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.fill('#iv_ph','75');
     ok((await p.textContent('#ivs_ph')).includes('impossible'),'pH 75 signalé impossible en direct');
     await p.fill('#iv_ph','8.6');
-    ok((await p.textContent('#ivs_ph')).includes('inhabituel'),'pH 8.6 signalé inhabituel');
+    ok((await p.textContent('#ivs_ph')).includes('✓'),'pH 8.6 accepté (pas de plage de référence pH/température)');
+    await p.fill('#iv_temp','35');
+    ok((await p.textContent('#ivs_temp')).includes('✓'),'température 35 °C acceptée');
+    await p.fill('#iv_temp','');
     await p.fill('#date','');
     await p.click('#save');await p.waitForTimeout(300);
     ok(dialogs.at(-1)?.startsWith('alert:')&&dialogs.at(-1).includes('Date de la visite')&&await p.evaluate(()=>records.length)===0,'date manquante : enregistrement bloqué');
     await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'12');
     await p.click('#save');await p.waitForTimeout(300);
-    ok(dialogs.at(-1)?.startsWith('confirm:')&&dialogs.at(-1).includes('pH = 8.6')&&await p.evaluate(()=>records.length)===0,'valeur inhabituelle : confirmation demandée, refus = pas d’enregistrement');
+    ok(dialogs.at(-1)?.startsWith('confirm:')&&dialogs.at(-1).includes('Préleveur(s)')&&!dialogs.at(-1).includes('pH')&&await p.evaluate(()=>records.length)===0,'champs recommandés manquants : confirmation demandée (sans mention du pH), refus = pas d’enregistrement');
     answer=true;
     await p.evaluate(()=>{const b=document.getElementById('save');b.click();b.click();b.click()});
     await p.waitForTimeout(1500);
