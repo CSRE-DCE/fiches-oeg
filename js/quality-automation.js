@@ -4,7 +4,8 @@
   const UNITS={ph:'u.pH',temp:'°C',cond:'µS/cm',sal:'µS/cm',o2mg:'mg/L',o2pc:'%',turb:'NTU',air:'°C'};
   window.UNITS=UNITS;
   const LABELS={ph:'pH',temp:"Température de l'eau",cond:'Conductivité',sal:'Salinité',o2mg:'Oxygène dissous',o2pc:'Saturation O₂',turb:'Turbidité',air:"Température de l'air"};
-  const RANGES={ph:{min:4,max:8,unit:'u.pH'},temp:{min:21,max:32,unit:'°C'}};
+  // Pas de plage de référence pour le pH ni la température (retirées à la demande de l'OEG) :
+  // seul le caractère numérique des mesures est contrôlé ci-dessous.
   custom.qualityConfig=custom.qualityConfig||{};
   if(custom.qualityConfig.gpsMaxDeviationM==null || Number(custom.qualityConfig.gpsMaxDeviationM)===100) custom.qualityConfig.gpsMaxDeviationM=1000;
   if(custom.qualityConfig.maxDelayHours==null) custom.qualityConfig.maxDelayHours=48;
@@ -89,8 +90,7 @@
   }
   function atypicalChecks(r){
     const out=[];Object.entries(r?.insitu||{}).forEach(([k,d])=>{const n=qcNum(d?.value);if(n==null)return;
-      if(RANGES[k]){const z=RANGES[k];out.push({label:`${LABELS[k]} : valeur dans la plage  ${z.min}–${z.max} ${z.unit}`,ok:n>=z.min&&n<=z.max,level:'warning',detail:String(n)});}
-      else out.push({label:`${LABELS[k]||k} : valeur numérique`,ok:Number.isFinite(n),level:'critical'});
+      out.push({label:`${LABELS[k]||k} : valeur numérique`,ok:Number.isFinite(n),level:'critical'});
     });return out;
   }
   function insituChecks(r){
@@ -189,8 +189,8 @@
     const eq=custom.equipements||[];let eqValid=0,eq30=0,eqExp=0,eqImm=0;eq.forEach(e=>{const st=equipStatus(e);if(e.statut==='Hors service'||e.statut==='Immobilisé'){eqImm++;return}if(st.cls==='metrologyBad')eqExp++;else if(st.cls==='metrologyWarn')eq30++;else eqValid++});
     const ops=custom.preleveurs||[];let hvalid=0,h30=0,h60=0,h90=0,hexp=0;ops.forEach(o=>{const due=o.habilitationEcheance||o.habEch;if(!due)return;const d=new Date(due+'T23:59:59'),days=(d-now)/864e5;if(days<0)hexp++;else{hvalid++;if(days<31)h30++;else if(days<61)h60++;else if(days<91)h90++}});
     const ncs=custom.nonConformites||[],open=ncs.filter(x=>x.status!=='Clôturée'),crit=open.filter(x=>x.severity==='Critique'),late=open.filter(x=>x.dueDate&&x.dueDate<now.toISOString().slice(0,10));
-    let totalChecks=0,passChecks=0,atypical=0,outRange=0,modifiedAfter=0;rs.forEach(r=>{const c=qualityChecksV19(r);c.forEach(x=>{totalChecks++;if(x.ok)passChecks++});if(c.some(x=>/plage/.test(x.label)&&!x.ok))atypical++;if(c.some(x=>/plage/.test(x.label)&&!x.ok))outRange++;if(r.lifecycle?.validatedAt&&r.lifecycle?.updatedAt&&r.lifecycle.updatedAt>r.lifecycle.validatedAt)modifiedAfter++});
-    return {missions,stations,metrology:{valid:eqValid,soon30:eq30,expired:eqExp,immobilized:eqImm},hab:{valid:hvalid,d30:h30,d60:h60,d90:h90,expired:hexp},quality:{open:open.length,critical:crit.length,late:late.length,pending:rs.filter(r=>(r.lifecycle?.status||'À contrôler')==='À contrôler').length},data:{completeness:totalChecks?Math.round(passChecks/totalChecks*100):100,atypical,outRange,modifiedAfter}};
+    let totalChecks=0,passChecks=0,modifiedAfter=0;rs.forEach(r=>{const c=qualityChecksV19(r);c.forEach(x=>{totalChecks++;if(x.ok)passChecks++});if(r.lifecycle?.validatedAt&&r.lifecycle?.updatedAt&&r.lifecycle.updatedAt>r.lifecycle.validatedAt)modifiedAfter++});
+    return {missions,stations,metrology:{valid:eqValid,soon30:eq30,expired:eqExp,immobilized:eqImm},hab:{valid:hvalid,d30:h30,d60:h60,d90:h90,expired:hexp},quality:{open:open.length,critical:crit.length,late:late.length,pending:rs.filter(r=>(r.lifecycle?.status||'À contrôler')==='À contrôler').length},data:{completeness:totalChecks?Math.round(passChecks/totalChecks*100):100,modifiedAfter}};
   }
   function renderEnhancedDashboard(){
     const host=$('dashQualityBoard');if(!host)return;const m=dashQualityMetrics();
@@ -201,7 +201,7 @@
     <div class="grid2"><div class="card"><h2>Métrologie</h2><div class="qualityChecks"><div class="qualityCheck ok">✓ Équipements valides <b>${m.metrology.valid}</b></div><div class="qualityCheck warn">⚠ Échéance &lt;30 jours <b>${m.metrology.soon30}</b></div><div class="qualityCheck bad">✕ Expirés <b>${m.metrology.expired}</b></div><div class="qualityCheck bad">✕ Immobilisés <b>${m.metrology.immobilized}</b></div></div></div>
     <div class="card"><h2>Habilitations</h2><div class="qualityChecks"><div class="qualityCheck ok">✓ Valides <b>${m.hab.valid}</b></div><div class="qualityCheck warn">⚠ &lt;30 j <b>${m.hab.d30}</b></div><div class="qualityCheck warn">⚠ 30–60 j <b>${m.hab.d60}</b></div><div class="qualityCheck warn">⚠ 60–90 j <b>${m.hab.d90}</b></div><div class="qualityCheck bad">✕ Expirées <b>${m.hab.expired}</b></div></div></div></div>
     <div class="grid2"><div class="card"><h2>Qualité</h2><div class="qualityChecks"><div class="qualityCheck warn">⚠ NC ouvertes <b>${m.quality.open}</b></div><div class="qualityCheck bad">✕ NC critiques <b>${m.quality.critical}</b></div><div class="qualityCheck warn">⚠ Actions en retard <b>${m.quality.late}</b></div><div class="qualityCheck warn">⚠ Fiches en attente de validation <b>${m.quality.pending}</b></div></div></div>
-    <div class="card"><h2>Données</h2><div class="qualityChecks"><div class="qualityCheck ok">✓ Taux de complétude <b>${m.data.completeness}%</b></div><div class="qualityCheck warn">⚠ Valeurs atypiques <b>${m.data.atypical}</b></div><div class="qualityCheck warn">⚠ Mesures hors plage <b>${m.data.outRange}</b></div><div class="qualityCheck warn">⚠ Fiches modifiées après validation <b>${m.data.modifiedAfter}</b></div></div></div></div>`;
+    <div class="card"><h2>Données</h2><div class="qualityChecks"><div class="qualityCheck ok">✓ Taux de complétude <b>${m.data.completeness}%</b></div><div class="qualityCheck warn">⚠ Fiches modifiées après validation <b>${m.data.modifiedAfter}</b></div></div></div></div>`;
   }
   if(!$('dashQualityBoard')){
     const dash=$('dashboard'); const first=dash?.firstElementChild; if(first)first.insertAdjacentHTML('afterend','<div id="dashQualityBoard"></div>');
