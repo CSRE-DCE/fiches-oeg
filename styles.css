@@ -170,3 +170,31 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
 .offTab{display:none!important}
 .crtMapFallback{height:100%;display:flex;align-items:center;justify-content:center}.crtMapFallback[hidden]{display:none}
 .crtDraftBand{margin-top:6mm;border:1.5px solid #a3261f;color:#a3261f;background:#fde9e7;font-weight:800;letter-spacing:.4px;padding:3mm 5mm;font-size:9.5pt;text-align:center}.crtSignature{max-height:18mm;max-width:60mm;object-fit:contain;display:block}
+/* ---- CRT imprimé (audit) ---- */
+/* Carte : contenu (tuiles de 900 px) confiné au cadre, sans élargir la page imprimée */
+.crtMapPlaceholder{contain:layout paint}
+/* Texte long sans espace (référence, URL, saisie) : retour à la ligne au lieu de déborder du cadre */
+.crtComment,.crtTwoCol>div,.crtTable td,.crtTable th,.accessGrid>div{overflow-wrap:anywhere;word-break:break-word}
+/* Photos entières (auparavant recadrées : une photo verticale perdait le haut et le bas) */
+.crtPhotoGrid figure{break-inside:avoid;page-break-inside:avoid}
+.crtPhotoGrid img{object-fit:contain;height:60mm;background:#f3f6f7}
+.crtGraphCard svg{height:auto}
+.crtTable tr{break-inside:avoid;page-break-inside:avoid}
+.crtPage h2,.crtPage h3{break-after:avoid;page-break-after:avoid}
+@media print{
+  html,body{background:#fff!important}
+  /* Formulaire du CRT consolidé et en-tête « Fiche terrain » : jamais imprimés avec un CRT */
+  #crtBatchCard{display:none!important}
+  body:has(#crt.view.active) .printHeader{display:none!important}
+  #crtPreviewCard{break-inside:auto}
+  /* Titres de section : la règle d'impression des cartes du formulaire (.card h2 : bandeau bleu
+     foncé) s'appliquait aussi au CRT, dont les titres, bleu foncé, devenaient invisibles. */
+  #crtPreviewBox .crtPage h2{background:none;color:var(--crt-blue);text-align:left;font-size:11pt;letter-spacing:.3px;text-transform:uppercase;padding:0 0 2mm;margin:5mm 0 3mm;border-bottom:1px solid var(--crt-line)}
+  #crtPreviewBox .crtCover h2{background:none;color:var(--crt-muted);text-align:center;font-size:12pt;font-weight:600;text-transform:none;border:0;margin:0 0 8mm;padding:0}
+  /* Numéro de page : celui de la page réellement imprimée (une section du CRT peut en occuper
+     plusieurs ; le compteur par section donnait « Page 4 » sur la 5e page). Placé dans la marge
+     de page, il numérote aussi la fiche terrain imprimée. Pas de page nommée (@page crt) :
+     Chromium éclatait alors le CRT sur 15 pages au lieu de 6. */
+  .crtPage::after{content:attr(data-report) '  •  Office de l’Eau de Guyane'}
+}
+@page{@bottom-right{content:'Page ' counter(page) ' / ' counter(pages);font-family:Arial,Helvetica,sans-serif;font-size:7.5pt;color:#6e7b82}}

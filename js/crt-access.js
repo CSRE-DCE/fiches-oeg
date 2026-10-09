@@ -201,7 +201,7 @@
       }
       function header(code,r,label){return '<div class="crtPageHead"><div class="crtPageHeadLeft"><img src="img/logo-oeg.png" class="crtPageLogo" alt="OEG"><span>'+esc(label||'RAPPORT DE TERRAIN')+'</span></div><div class="crtPageHeadRight"><b>'+esc(code)+' — '+esc(r.station)+'</b><br><span class="crtSmall">'+esc(r.network||'—')+' · '+esc(frDate(r.date))+' · '+esc(r.session||'—')+'</span></div></div>'}
       function graphSvg(series,unit){
-        const W=640,H=280,L=78,R=30,T=28,B=54,iw=W-L-R,ih=H-T-B;
+        const W=640,H=300,L=82,R=34,T=30,B=58,iw=W-L-R,ih=H-T-B;
         if(!series.length)return '<div class="crtNoData">Aucune mesure exploitable pour ce paramètre.</div>';
         const o=series.slice().sort((a,b)=>a.depth-b.depth),xs=o.map(x=>x.value),ys=o.map(x=>x.depth);
         let xmin=Math.min(...xs),xmax=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys);
@@ -209,16 +209,16 @@
         const padX=xr?xr*.14:Math.max(Math.abs(xmax)*.12,1), padY=yr?Math.max(yr*.08,.25):1;
         let x0=xmin-padX,x1=xmax+padX;
         if(xmin===xmax){x0=xmin-Math.max(Math.abs(xmin)*.2,1);x1=xmax+Math.max(Math.abs(xmax)*.2,1)}
-        let y0=Math.min(0,ymin-padY),y1=Math.max(ymax+padY,Math.max(1,ymax));
+        let y0=0,y1=Math.max(ymax+padY,1); // une profondeur n'est jamais négative (l'axe affichait -0,25 m)
         if(y1===y0)y1=y0+1;
         const sx=v=>L+(v-x0)/(x1-x0)*iw,sy=v=>T+(v-y0)/(y1-y0)*ih;
         const fmt=v=>{const n=Number(v);if(Math.abs(n)>=100)return n.toFixed(0);if(Math.abs(n)>=10)return n.toFixed(1);return n.toFixed(2)};
         let g='';
-        for(let i=0;i<=5;i++){const x=x0+(x1-x0)*i/5,px=sx(x);g+='<line x1="'+px.toFixed(1)+'" y1="'+T+'" x2="'+px.toFixed(1)+'" y2="'+(T+ih)+'" stroke="#dfe7ec"/><text x="'+px.toFixed(1)+'" y="'+(H-30)+'" text-anchor="middle" font-size="9" fill="#617180">'+esc(fmt(x))+'</text>'}
-        for(let i=0;i<=5;i++){const y=y0+(y1-y0)*i/5,py=sy(y);g+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#edf1f4"/><text x="'+(L-9)+'" y="'+(py+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#617180">'+esc(fmt(y))+'</text>'}
+        for(let i=0;i<=5;i++){const x=x0+(x1-x0)*i/5,px=sx(x);g+='<line x1="'+px.toFixed(1)+'" y1="'+T+'" x2="'+px.toFixed(1)+'" y2="'+(T+ih)+'" stroke="#dfe7ec"/><text x="'+px.toFixed(1)+'" y="'+(H-30)+'" text-anchor="middle" font-size="13" fill="#617180">'+esc(fmt(x))+'</text>'}
+        for(let i=0;i<=5;i++){const y=y0+(y1-y0)*i/5,py=sy(y);g+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#edf1f4"/><text x="'+(L-9)+'" y="'+(py+3).toFixed(1)+'" text-anchor="end" font-size="13" fill="#617180">'+esc(fmt(y))+'</text>'}
         const path=o.length>1?o.map((p,i)=>(i?'L':'M')+sx(p.value).toFixed(1)+' '+sy(p.depth).toFixed(1)).join(' '):'';
-        const pts=o.map(p=>{const px=sx(p.value),py=sy(p.depth);return '<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+px.toFixed(1)+'" y2="'+py.toFixed(1)+'" stroke="#c9d5dc" stroke-dasharray="3 3"/><circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="5" fill="#003D7A" stroke="#fff" stroke-width="2"/><text x="'+(px+9).toFixed(1)+'" y="'+(py-7).toFixed(1)+'" font-size="9" font-weight="700" fill="#003D7A">'+esc(fmt(p.value))+' '+esc(unit)+'</text><text x="'+(L+5)+'" y="'+(py-7).toFixed(1)+'" font-size="8.5" fill="#17212b">'+esc(p.name)+'</text>'}).join('');
-        return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Profil vertical '+esc(unit)+' selon la profondeur"><rect width="100%" height="100%" fill="#fff"/><rect x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="#f8fafb" stroke="#cbd6dd"/>'+g+'<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.4"/><line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.4"/>'+(o.length>1?'<path d="'+path+'" fill="none" stroke="#003D7A" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>':'')+pts+'<text x="'+(L+iw/2)+'" y="'+(H-8)+'" text-anchor="middle" font-size="10" font-weight="700" fill="#17212b">Valeur ('+esc(unit)+')</text><text x="18" y="'+(T+ih/2)+'" text-anchor="middle" transform="rotate(-90 18 '+(T+ih/2)+')" font-size="10" font-weight="700" fill="#17212b">Profondeur / niveau (m)</text></svg>';
+        const pts=o.map(p=>{const px=sx(p.value),py=sy(p.depth);return '<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+px.toFixed(1)+'" y2="'+py.toFixed(1)+'" stroke="#c9d5dc" stroke-dasharray="3 3"/><circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="5" fill="#003D7A" stroke="#fff" stroke-width="2"/><text x="'+(px+9).toFixed(1)+'" y="'+(py-7).toFixed(1)+'" font-size="13" font-weight="700" fill="#003D7A">'+esc(fmt(p.value))+' '+esc(unit)+'</text><text x="'+(L+5)+'" y="'+(py-7).toFixed(1)+'" font-size="12" fill="#17212b">'+esc(p.name)+'</text>'}).join('');
+        return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Profil vertical '+esc(unit)+' selon la profondeur"><rect width="100%" height="100%" fill="#fff"/><rect x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="#f8fafb" stroke="#cbd6dd"/>'+g+'<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.4"/><line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.4"/>'+(o.length>1?'<path d="'+path+'" fill="none" stroke="#003D7A" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>':'')+pts+'<text x="'+(L+iw/2)+'" y="'+(H-8)+'" text-anchor="middle" font-size="13" font-weight="700" fill="#17212b">Valeur ('+esc(unit)+')</text><text x="18" y="'+(T+ih/2)+'" text-anchor="middle" transform="rotate(-90 18 '+(T+ih/2)+')" font-size="13" font-weight="700" fill="#17212b">Profondeur / niveau (m)</text></svg>';
       }
       function elCards(ins){
         const defs=[['temp','Température de l’eau','°C'],['ph','pH','u.pH'],['sal','Salinité','—'],['condus','Conductivité','µS/cm'],['condms','Conductivité','mS/cm'],['o2mg','Oxygène dissous','mg O₂/L'],['o2pc','Saturation O₂','%'],['turb','Turbidité','NTU']];
@@ -276,7 +276,7 @@
         const d=i[key]||{};let v=d.value;if(key==='turb'&&Array.isArray(d.mesures))v=d.moyenne??d.value;return num(v);
       }
       function histogramSvg(points){
-        const W=640,H=210,L=52,R=16,T=18,B=48,iw=W-L-R,ih=H-T-B;
+        const W=640,H=230,L=60,R=16,T=22,B=40,iw=W-L-R,ih=H-T-B;
         if(points.length<2)return '<div class="crtNoData">Historique insuffisant (au moins 2 relevés nécessaires).</div>';
         const vals=points.map(p=>p.value);
         let vmin=Math.min(0,...vals),vmax=Math.max(...vals);if(vmax===vmin)vmax=vmin+1;
@@ -284,12 +284,12 @@
         const gap=iw/points.length,bw=Math.min(34,gap*.55);
         const fmtv=v=>{const n=Number(v);if(Math.abs(n)>=100)return n.toFixed(0);if(Math.abs(n)>=10)return n.toFixed(1);return n.toFixed(2)};
         let bars='',labels='',grid='';
-        for(let i=0;i<=4;i++){const v=vmin+(vmax-vmin)*i/4,py=sy(v);grid+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#edf1f4"/><text x="'+(L-6)+'" y="'+(py+3).toFixed(1)+'" text-anchor="end" font-size="8" fill="#617180">'+esc(fmtv(v))+'</text>'}
+        for(let i=0;i<=4;i++){const v=vmin+(vmax-vmin)*i/4,py=sy(v);grid+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#edf1f4"/><text x="'+(L-6)+'" y="'+(py+3).toFixed(1)+'" text-anchor="end" font-size="12" fill="#617180">'+esc(fmtv(v))+'</text>'}
         points.forEach((p,i)=>{
           const cx=L+gap*i+gap/2,y=sy(p.value),h=(T+ih)-y;
           bars+='<rect x="'+(cx-bw/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,h).toFixed(1)+'" fill="#00AC97"/>';
-          bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-4).toFixed(1)+'" text-anchor="middle" font-size="7.5" font-weight="700" fill="#003D7A">'+esc(fmtv(p.value))+'</text>';
-          labels+='<text x="'+cx.toFixed(1)+'" y="'+(T+ih+11)+'" text-anchor="middle" font-size="7" fill="#617180">'+esc(p.label)+'</text>';
+          bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-4).toFixed(1)+'" text-anchor="middle" font-size="12" font-weight="700" fill="#003D7A">'+esc(fmtv(p.value))+'</text>';
+          labels+='<text x="'+cx.toFixed(1)+'" y="'+(T+ih+15)+'" text-anchor="middle" font-size="11" fill="#617180">'+esc(p.label)+'</text>';
         });
         return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Historique des mesures"><rect width="100%" height="100%" fill="#fff"/>'+grid+'<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/><line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/>'+bars+labels+'</svg>';
       }
@@ -298,7 +298,7 @@
         const history=records.filter(x=>x.station===r.station&&x.network===network).slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
         if(history.length<2)return '';
         const cards=defs.map(([k,label,unit])=>{
-          const points=history.map(rec=>({label:(rec.date||'').slice(5)||'—',value:paramValue(rec,network,k)})).filter(p=>p.value!==null);
+          const points=history.map(rec=>({label:/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',value:paramValue(rec,network,k)})).filter(p=>p.value!==null);
           if(points.length<2)return '';
           return '<div class="crtGraphCard"><h3>'+esc(label)+' <span class="crtSmall">('+esc(unit)+')</span></h3>'+histogramSvg(points)+'</div>';
         }).filter(Boolean).join('');
@@ -560,6 +560,8 @@
         const ready=Promise.all(imgs.map(i=>new Promise(res=>{i.addEventListener('load',res,{once:true});i.addEventListener('error',res,{once:true})})));
         if(imgs.length)toast('Préparation de l’impression…');
         Promise.race([ready,new Promise(res=>setTimeout(res,8000))]).then(()=>{
+          // Fond de carte encore incomplet après 8 s (réseau lent) : carte schématique plutôt qu'une carte trouée
+          box.querySelectorAll('.crtMapPlaceholder:not([data-failed]) img').forEach(i=>{if(!i.complete||!i.naturalWidth)window.crtMapFail(i)});
           const oldTitle=document.title;document.title=title;
           window.print();
           setTimeout(()=>document.title=oldTitle,1500);

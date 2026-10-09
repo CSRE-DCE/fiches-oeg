@@ -707,6 +707,41 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e12.length===0,'aucune erreur JavaScript (contenu du CRT) '+JSON.stringify(e12));
     await c12.close();
   }
+  // --- Q : CRT imprimé (titres visibles, formulaire masqué, photos entières, graphes, carte lente) ---
+  {
+    const c13=await browser.newContext({serviceWorkers:'block'});
+    await c13.route('https://unpkg.com/**',r=>r.abort());
+    await c13.route('https://tile.openstreetmap.org/**',()=>{}); // réseau lent : tuiles jamais reçues
+    const p=await c13.newPage();const e13=[];p.on('pageerror',e=>e13.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const el=DATA.EL_STATIONS[0],m={savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler'},auditRefs:[]};
+      const c=document.createElement('canvas');c.width=300;c.height=600;c.getContext('2d').fillRect(0,0,300,600);
+      records.push({id:'QEL',network:'EL',station:el.nom,stationInfo:el,date:'2026-10-07',...m,photos:[{data:c.toDataURL('image/png'),group:'Amont'}],obs:'x'.repeat(400),
+        insitu:{profondeurs:{surface:'0',intermediaire:'3',fond:'6'},params:{temp:{surface:'29',intermediaire:'28',fond:'27'}},turbidite:{}}});
+      [['2026-03-10','27.5'],['2027-01-15','28.9']].forEach(([d,t],i)=>records.push({id:'QH'+i,network:'EL',station:el.nom,date:d,...m,photos:[],insitu:{params:{temp:{surface:t}}}}));
+      saveLS(LS,records);
+    });
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);
+    await p.evaluate(()=>{window.print=()=>{window.__printed=(window.__printed||0)+1};const s=$('crtRecord');s.value='QEL';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    const svgTxt=await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox svg')].map(s=>s.textContent).join(' '));
+    ok(!/-0[.,]\d/.test(svgTxt),'CRT : axe des profondeurs sans valeur négative');
+    ok(svgTxt.includes('10/03/26')&&svgTxt.includes('15/01/27'),'CRT : historique daté jj/mm/aa (auparavant « 03-10 », mois-jour)');
+    await p.emulateMedia({media:'print'});
+    const st=await p.evaluate(()=>{const cs=e=>e&&getComputedStyle(e);const h2=document.querySelector('#crtPreviewBox .crtPage:not(.crtCover) h2'),ch2=document.querySelector('#crtPreviewBox .crtCover h2'),img=document.querySelector('#crtPreviewBox .crtPhotoGrid img');
+      return {h2bg:cs(h2).backgroundColor,h2col:cs(h2).color,cbg:cs(ch2).backgroundColor,batch:cs($('crtBatchCard')).display,head:cs($('printHeader')).display,html:cs(document.documentElement).backgroundColor,fit:cs(img).objectFit,wrap:cs(document.querySelector('#crtPreviewBox .crtComment')).overflowWrap}});
+    ok(st.h2bg==='rgba(0, 0, 0, 0)'&&st.h2col!=='rgb(255, 255, 255)'&&st.cbg==='rgba(0, 0, 0, 0)','CRT imprimé : titres de section lisibles (auparavant bleu foncé sur bandeau bleu foncé) '+JSON.stringify([st.h2bg,st.h2col,st.cbg]));
+    ok(st.batch==='none'&&st.head==='none','CRT imprimé : ni formulaire « CRT consolidé » ni en-tête « Fiche terrain » en page 1');
+    ok(st.html==='rgb(255, 255, 255)','CRT imprimé : fond blanc (auparavant gris sous la dernière page)');
+    ok(st.fit==='contain'&&st.wrap==='anywhere','CRT imprimé : photos entières (non recadrées) et texte long renvoyé à la ligne');
+    await p.emulateMedia({media:'screen'});
+    // Carte : tuiles toujours en attente au bout de 8 s -> carte schématique à l'impression
+    await p.evaluate(()=>{Object.defineProperty(navigator,'onLine',{get:()=>true,configurable:true})});
+    await p.click('#crtGenerate');await p.waitForFunction(()=>window.__printed>=1,null,{timeout:15000});
+    ok(await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox .crtMapPlaceholder')].every(b=>{const fb=b.querySelector('.crtMapFallback');return fb&&!fb.hidden&&!b.querySelector('img[src*="openstreetmap"]')})),'CRT imprimé : fond de carte incomplet après 8 s = carte schématique (et non carte trouée)');
+    ok(e13.length===0,'aucune erreur JavaScript (CRT imprimé) '+JSON.stringify(e13));
+    await c13.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
