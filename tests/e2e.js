@@ -610,6 +610,54 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e10.length===0,'aucune erreur JavaScript (règles de saisie et qualité) '+JSON.stringify(e10));
     await b2.close();
   }
+  // --- O : dernier audit — robustesse, synthèse, qualité ---
+  {
+    const c11=await browser.newContext({serviceWorkers:'block'});
+    await c11.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c11.newPage();const e11=[];p.on('pageerror',e=>e11.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Coordonnées terrain vides : pas de faux écart
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.evaluate(()=>{$('xT').value='';$('yT').value='';updateDistance()});
+    ok((await p.textContent('#distance')).trim()==='—','coordonnées terrain vides : écart « — » (auparavant ≈ 600 km)');
+    ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'RCO',station:'x',xTerrain:'',yTerrain:'',stationInfo:{x:'350000',y:'550000'}});const g=c.find(x=>/GPS terrain numériques/.test(x.label));return g&&!g.ok}),'contrôle qualité : coordonnées terrain manquantes signalées (et non un faux écart)');
+    // Mise à jour de l'appli pendant une saisie : pas de rechargement, bandeau
+    await p.evaluate(()=>{window.__noReload=true;navigator.serviceWorker.dispatchEvent(new Event('controllerchange'))});await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>!!document.getElementById('updateBanner')&&window.__noReload===true),'nouvelle version pendant une saisie : bandeau, pas de rechargement (la saisie est préservée)');
+    await Promise.all([p.waitForNavigation({timeout:8000}),p.evaluate(()=>clearFormNoConfirm())]);
+    ok(true,'fiche enregistrée / vidée : la mise à jour se fait ensuite d’elle-même');
+    await p.evaluate(()=>window.OEGRecordsReady);
+    // Brouillon enregistré immédiatement quand l'appli passe en arrière-plan
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.fill('#obs','Saisie juste avant de prendre une photo');await p.evaluate(()=>window.dispatchEvent(new Event('pagehide')));await p.waitForTimeout(200);
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.obs==='Saisie juste avant de prendre une photo','passage en arrière-plan : brouillon enregistré immédiatement');
+    await p.evaluate(()=>clearFormNoConfirm());
+    // Qualité : identifiant d'échantillon contrôlé, mesure vide non « numérique », chaîne du froid EL
+    ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'RCO',station:'x',sample:{stype:'x'},sampleTrace:{}});const i=c.find(x=>/Identifiant échantillon/.test(x.label));return i&&!i.ok&&i.level==='warning'}),'contrôle « Identifiant échantillon » actif (désactivé par erreur auparavant)');
+    ok(await p.evaluate(()=>!qualityChecksFor({network:'RCO',insitu:{sal:{value:''},ph:{value:'7'}}}).some(x=>/Salinité : valeur numérique/.test(x.label)&&x.ok)),'mesure vide : plus de « valeur numérique ✓ » contradictoire');
+    ok(await p.evaluate(()=>qualityChecksFor({network:'EL',sample:{transportFroid:'Glacières + blocs eutectiques',transportSuivi:'x'},sampleTrace:{}}).filter(x=>/température (départ|réception)/.test(x.label)).every(x=>x.level==='warning')),'EL avec glacière : températures de transport en avertissement (validation possible)');
+    // Suivi EL : turbidité non mesurée absente
+    await p.evaluate(()=>{records.push({id:'ELT',network:'EL',station:'Cayenne côte',date:'2026-10-05',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',updatedAt:'2026-10-05T08:00:00Z'},photos:[],auditRefs:[],insitu:{params:{temp:{surface:'28'}},turbidite:{surf:{mesures:[12,12,12],moyenne:12},inter:{mesures:[null,null,null],moyenne:null},fond:{mesures:[null,null,null],moyenne:null}}}});saveLS(LS,records)});
+    ok(await p.evaluate(()=>{const ks=suiviParamsFor('EL','Cayenne côte');return ks.includes('turb_surf')&&!ks.includes('turb_inter')&&!ks.includes('turb_fond')}),'suivi EL : turbidité non mesurée (intermédiaire, fond) absente au lieu de 0');
+    // Synthèse : stations BIO/EL, mesures EL, échéances dépassées
+    await p.evaluate(()=>{records.push({id:'BIO1',network:'BIO',station:'Station BIO test',date:'2026-10-05',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',updatedAt:'2026-10-05T08:00:00Z'},photos:[],auditRefs:[],insitu:{ph:{value:'6.8'}}});custom.equipements.push({gmao:'OLD-1',nom:'Sonde',echeance:'2020-01-01'});saveLS(LS,records);saveLS(LSC,custom)});
+    await p.click('.tab[data-tab="dashboard"]');await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>dashStationList('BIO').some(s=>s.nom==='Station BIO test')),'synthèse : stations BIO listées (liste vide auparavant)');
+    await p.evaluate(()=>{const n=$('dashNetwork');n.value='EL';n.dispatchEvent(new Event('change',{bubbles:true}));if(typeof renderDashStations==='function')renderDashStations();const s=$('dashStation');s.value='Cayenne côte';s.dispatchEvent(new Event('change',{bubbles:true}));renderDashStation()});
+    ok(!/Aucune mesure in situ/.test(await p.textContent('#dashParams')),'synthèse : mesures EL affichées pour la station');
+    ok(/échéance métrologique est dépassée/.test(await p.textContent('#dashActions')),'synthèse : étalonnage expiré signalé dans les actions prioritaires');
+    // Aller sur une station sans carte (hors ligne)
+    await p.click('.tab[data-tab="stations"]');await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>$('gotoStation').options.length>5),'« Aller sur une station » : liste remplie même sans la carte (hors ligne)');
+    // Recherche dans la liste des fiches : pas de correspondance dans les photos
+    await p.evaluate(()=>{const ph='data:image/png;base64,QUJDTUJERUY=';records.push({id:'SR1',network:'RCO',station:'S1',preleveurs:['PF'],photos:[{data:ph,group:'Amont'}],date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',lifecycle:{status:'À contrôler'},auditRefs:[]},{id:'SR2',network:'RCO',station:'S2',preleveurs:['QZX'],photos:[],date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',lifecycle:{status:'À contrôler'},auditRefs:[]});saveLS(LS,records)});
+    await p.click('.tab[data-tab="list"]');await p.fill('#search','QZX');await p.waitForTimeout(200);
+    ok(await p.evaluate(()=>document.querySelectorAll('#records .listcard').length)===1,'recherche par préleveur : seulement la bonne fiche (les photos ne sont plus fouillées)');
+    ok(e11.length===0,'aucune erreur JavaScript (dernier audit) '+JSON.stringify(e11));
+    await c11.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

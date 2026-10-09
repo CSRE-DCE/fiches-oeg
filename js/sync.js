@@ -293,7 +293,7 @@
       s.src = 'https://accounts.google.com/gsi/client';
       s.async = true;
       s.onload = ()=>resolve();
-      s.onerror = ()=>reject(new Error('gis-load-failed'));
+      s.onerror = ()=>{gisLoading = null; s.remove(); reject(new Error('gis-load-failed'))}; // nouvel essai possible au prochain passage
       document.head.appendChild(s);
     });
     return gisLoading;

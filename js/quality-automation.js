@@ -13,7 +13,7 @@
   custom.qualityConfig.appVersion=V19_VERSION;
   saveLS(LSC,custom);
 
-  function qcNum(v){const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:null}
+  function qcNum(v){if(v===''||v==null)return null;const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:null}
   function pad(n){return String(n).padStart(2,'0')}
   function dtLocal(date,time){ if(!date||!time)return null; const d=new Date(`${date}T${time}`); return Number.isNaN(d.getTime())?null:d; }
   function asDate(s){const d=new Date(s);return Number.isNaN(d.getTime())?null:d}
@@ -76,8 +76,11 @@
     if(cooling){
       checks.push({label:'Chaîne de froid : moyen renseigné',ok:true});
       checks.push({label:'Chaîne de froid : suivi température renseigné',ok:!!(sm.transportSuivi||sm.esoSuivi||''),level:'critical'});
-      checks.push({label:'Chaîne de froid : température départ renseignée',ok:s.tempDeparture!==''&&s.tempDeparture!=null,level:'critical'});
-      checks.push({label:'Chaîne de froid : température réception renseignée',ok:s.tempReception!==''&&s.tempReception!=null,level:'critical'});
+      // la fiche EL n'a pas de champs de température départ / réception : avertissement (à
+      // justifier) au lieu d'un blocage — sinon aucune fiche EL avec glacière n'était validable
+      const lvl=r?.network==='EL'?'warning':'critical';
+      checks.push({label:'Chaîne de froid : température départ renseignée',ok:s.tempDeparture!==''&&s.tempDeparture!=null,level:lvl});
+      checks.push({label:'Chaîne de froid : température réception renseignée',ok:s.tempReception!==''&&s.tempReception!=null,level:lvl});
     }
     return checks;
   }
@@ -149,7 +152,9 @@
     checks.push(...delayCheck(r));
     const ncs=openNCsFor(r?.id);checks.push({label:'Aucune NC critique ouverte',ok:ncs.every(n=>n.severity!=='Critique'),level:'critical'});
     checks.push({label:'Empreinte d’intégrité présente',ok:!!r?.lifecycle?.integrityHash,level:'critical'});
-    const missing=(!r?.sampleTrace?.sampleId && r?.sample && r?.network!=='BIO' && r?.network!=='EL'); // pas de champ identifiant sur la fiche ELchecks.push({label:'Identifiant échantillon / traçabilité',ok:!missing,level:'warning'});
+    // (pas de champ identifiant sur la fiche EL)
+    const missing=(!r?.sampleTrace?.sampleId && r?.sample && r?.network!=='BIO' && r?.network!=='EL');
+    checks.push({label:'Identifiant échantillon / traçabilité',ok:!missing,level:'warning'});
     return checks;
   }
   function statusFromChecks(c){return c.some(x=>!x.ok&&(x.level||'critical')==='critical')?'critical':c.some(x=>!x.ok)?'warning':'ok'}

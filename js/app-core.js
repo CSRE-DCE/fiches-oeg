@@ -1222,8 +1222,8 @@ function numOrNull(v){if(v===''||v==null)return null;const n=Number(String(v).re
 // UTM 21N donnait un écart GPS d'environ 665 km).
 function stationXY22(s){return s?terrainToZone22(s.x,s.y,s.projection):null}
 function terrainToZone22(xRaw,yRaw,projLabel){
-  const x=Number(xRaw),y=Number(yRaw);
-  if(!Number.isFinite(x)||!Number.isFinite(y))return null;
+  const x=numOrNull(xRaw),y=numOrNull(yRaw); // vide = absent (Number('') valait 0 : faux écart de ~600 km)
+  if(x===null||y===null)return null;
   if(/21/.test(String(projLabel||''))){
     if(typeof utmToLatLon!=='function'||typeof latLonToUtm!=='function')return null; // module géo pas encore chargé : pas de conversion silencieuse hasardeuse
     const [lat,lon]=utmToLatLon(x,y,21);
@@ -1565,7 +1565,7 @@ function suiviValueFor(record,param){
     const m=/^(.+)_(surf|inter|fond)$/.exec(param);
     if(!m)return undefined;
     const [,base,depth]=m;
-    if(base==='turb')return ins.turbidite?.[depth]?.moyenne;
+    if(base==='turb'){const t=ins.turbidite?.[depth]?.moyenne;return (t===undefined||t===null||t==='')?undefined:Number(t)}
     const key=base==='cond'?'condus':base;
     const depthKey=depth==='surf'?'surface':depth==='inter'?'intermediaire':'fond';
     const v=ins.params?.[key]?.[depthKey];
@@ -1577,7 +1577,7 @@ function suiviValueFor(record,param){
 function suiviParamsFor(network,station){
   const set=new Set();
   records.filter(r=>r.network===network&&r.station===station).forEach(r=>{
-    Object.keys(SUIVI_PARAMS).forEach(k=>{if(Number.isFinite(Number(suiviValueFor(r,k))))set.add(k)})
+    Object.keys(SUIVI_PARAMS).forEach(k=>{if(numOrNull(suiviValueFor(r,k))!==null)set.add(k)})
   });
   return [...set];
 }
@@ -1589,12 +1589,12 @@ function suiviSortKey(k,network){
   const a=SUIVI_SESSION_ORDER[network]||[];const i=a.indexOf(k);return i>=0?String(i).padStart(3,'0')+'|'+k:k;
 }
 function suiviSeries(network,station,param){
-  const rows=records.filter(r=>r.network===network&&r.station===station&&Number.isFinite(Number(suiviValueFor(r,param))));
+  const rows=records.filter(r=>r.network===network&&r.station===station&&numOrNull(suiviValueFor(r,param))!==null);
   if(!rows.length)return [];
   const buckets=new Map();
   rows.forEach(r=>{
     const key=suiviDateKey(r); if(!key)return;
-    const v=Number(suiviValueFor(r,param)); if(!Number.isFinite(v))return;
+    const v=numOrNull(suiviValueFor(r,param)); if(v===null)return;
     if(!buckets.has(key))buckets.set(key,[]); buckets.get(key).push(v);
   });
   return [...buckets.entries()].map(([period,vals])=>({period,values:vals,mean:vals.reduce((a,b)=>a+b,0)/vals.length,min:Math.min(...vals),max:Math.max(...vals),n:vals.length}))
