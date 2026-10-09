@@ -1588,22 +1588,6 @@ const SUIVI_PARAMS={
     SUIVI_PARAMS[base+'_'+suffix]={label:SUIVI_PARAMS[base].label+' ('+depthLabel+')',unit:SUIVI_PARAMS[base].unit};
   });
 });
-// Suivi EL : un graphe par paramètre, les trois profondeurs superposées, chacune avec sa
-// couleur ET sa forme de point (lisible par les daltoniens et en impression noir et blanc).
-// Palette vérifiée : écart de couleur suffisant entre chaque paire, y compris en daltonisme.
-// Partagée avec le CRT (crt-access.js).
-const EL_DEPTHS=[
-  {key:'surf',field:'surface',label:'Surface',short:'Surf.',color:'#eb6834',shape:'circle'},
-  {key:'inter',field:'intermediaire',label:'Intermédiaire',short:'Interm.',color:'#1baf7a',shape:'square'},
-  {key:'fond',field:'fond',label:'Fond',short:'Fond',color:'#2a78d6',shape:'triangle'}
-];
-const EL_SUIVI_DEFS=[['temp','Température de l’eau','°C'],['ph','pH','u.pH'],['sal','Salinité',''],['cond','Conductivité','µS/cm'],['condms','Conductivité','mS/cm'],['o2mg','Oxygène dissous','mg O₂/L'],['o2pc','Saturation O₂','%'],['turb','Turbidité','NTU']];
-// Point de légende / de tableau (forme + couleur de la profondeur), en SVG
-function depthMarkerSvg(d,size){
-  const z=size||11,h=z/2,ring='stroke="#fff" stroke-width="1.5"';
-  const m=d.shape==='square'?'<rect x="1.5" y="1.5" width="'+(z-3)+'" height="'+(z-3)+'" fill="'+d.color+'" '+ring+'/>':d.shape==='triangle'?'<path d="M'+h+' 1 L'+(z-1)+' '+(z-1.5)+' L1 '+(z-1.5)+' Z" fill="'+d.color+'" '+ring+'/>':'<circle cx="'+h+'" cy="'+h+'" r="'+(h-1)+'" fill="'+d.color+'" '+ring+'/>';
-  return '<svg class="depthMarker" width="'+z+'" height="'+z+'" viewBox="0 0 '+z+' '+z+'" aria-hidden="true">'+m+'</svg>';
-}
 const SUIVI_SESSION_ORDER={
   RCO:['S1 - Octobre 2026','S2 - Décembre 2026','S3 - Février 2027','S4 - Avril 2027'],
   Chimie:['S1 - Sept.26','S2 - Déc.26','S3 - Fév.27','S4 - Juin.27'],
@@ -1678,88 +1662,6 @@ function drawMiniSuiviChart(canvas,series,label,unit){
   series.forEach((p,i)=>{const x=xAt(i),y=yAt(p.mean);c.fillStyle='#00ac97';c.beginPath();c.arc(x,y,3.5,0,Math.PI*2);c.fill();c.fillStyle='#003d7a';c.font='8.5px Arial';c.textAlign='center';const lab=p.period.length>11?p.period.slice(0,10)+'…':p.period;c.fillText(lab,x,h-13)});
   c.fillStyle='#6e7b82';c.font='9px Arial';c.textAlign='left';c.fillText(unit,pad.l,10);
 }
-// Données EL d'un paramètre : périodes (sessions, dans l'ordre) et, par profondeur, la valeur de
-// chaque période (moyenne si plusieurs visites dans la même session).
-function suiviDepthData(network,station,base){
-  const depths=EL_DEPTHS.map(d=>({d,byPeriod:new Map(suiviSeries(network,station,base+'_'+d.key).map(x=>[x.period,x]))})).filter(x=>x.byPeriod.size);
-  const periods=[...new Set(depths.flatMap(x=>[...x.byPeriod.keys()]))].sort((a,b)=>suiviSortKey(a,network).localeCompare(suiviSortKey(b,network),'fr'));
-  return {periods,depths};
-}
-// Marqueur de profondeur sur le canevas (forme + couleur, liseré blanc pour les points superposés)
-function drawDepthMarker(c,shape,x,y,color){
-  c.beginPath();
-  if(shape==='square')c.rect(x-4,y-4,8,8);
-  else if(shape==='triangle'){c.moveTo(x,y-5.2);c.lineTo(x+5,y+3.6);c.lineTo(x-5,y+3.6);c.closePath()}
-  else c.arc(x,y,4.4,0,Math.PI*2);
-  c.fillStyle=color;c.fill();c.lineWidth=2;c.strokeStyle='#fff';c.stroke();
-}
-// Graphe EL : une courbe par profondeur, interrompue quand une session n'a pas de mesure à cette
-// profondeur (pas de trait trompeur entre deux sessions non consécutives).
-function drawDepthSuiviChart(canvas,data,unit){
-  if(!canvas||!data.periods.length)return null;
-  const rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1,w=Math.max(280,rect.width||420),h=180;
-  canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);canvas.style.height=h+'px';
-  const c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
-  const pad={l:40,r:48,t:16,b:30},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,P=data.periods,n=P.length;
-  const all=data.depths.flatMap(x=>[...x.byPeriod.values()].map(v=>v.mean));
-  let min=Math.min(...all),max=Math.max(...all);if(min===max){min-=1;max+=1}else{const e=(max-min)*0.15;min-=e;max+=e}
-  const xAt=i=>pad.l+(n===1?pw/2:i*(pw/(n-1))),yAt=v=>pad.t+(max-v)*(ph/(max-min));
-  // Légère séparation horizontale des trois profondeurs pour que des valeurs égales restent visibles
-  const dodge=data.depths.length>1?{surf:-4,inter:0,fond:4}:{surf:0,inter:0,fond:0};
-  c.font='9px Arial';
-  for(let i=0;i<4;i++){const v=min+i*(max-min)/3,y=yAt(v);c.strokeStyle='#e5ebee';c.lineWidth=1;c.beginPath();c.moveTo(pad.l,y);c.lineTo(w-pad.r,y);c.stroke();c.fillStyle='#6e7b82';c.textAlign='right';c.fillText(Number(v.toFixed(2)).toString(),pad.l-5,y+3)}
-  c.strokeStyle='#c3cdd2';c.beginPath();c.moveTo(pad.l,pad.t+ph);c.lineTo(w-pad.r,pad.t+ph);c.stroke();
-  c.fillStyle='#6e7b82';c.textAlign='left';c.fillText(unit,pad.l,10);
-  // Axe : code court de la session (« S1 ») ; le nom complet est dans l'info-bulle et le tableau
-  P.forEach((p,i)=>{const sh=(/^(S\d+)\s*-/.exec(p)||[])[1]||(p.length>11?p.slice(0,10)+'…':p);c.fillStyle='#52626e';c.font='9px Arial';c.textAlign='center';c.fillText(sh,xAt(i),h-12)});
-  const ends=[];
-  data.depths.forEach(({d,byPeriod})=>{
-    const dx=dodge[d.key]||0;
-    c.strokeStyle=d.color;c.lineWidth=2;c.lineJoin='round';c.beginPath();let open=false;
-    P.forEach((p,i)=>{const v=byPeriod.get(p);if(!v){open=false;return}const x=xAt(i)+dx,y=yAt(v.mean);if(open)c.lineTo(x,y);else{c.moveTo(x,y);open=true}});
-    c.stroke();
-    let last=null;P.forEach((p,i)=>{const v=byPeriod.get(p);if(v){drawDepthMarker(c,d.shape,xAt(i)+dx,yAt(v.mean),d.color);last={i,y:yAt(v.mean)}}});
-    if(last&&last.i===n-1)ends.push({d,y:last.y});
-  });
-  // Étiquettes directes en bout de courbe (écartées si les courbes finissent au même niveau)
-  ends.sort((a,b)=>a.y-b.y);for(let k=1;k<ends.length;k++)if(ends[k].y-ends[k-1].y<11)ends[k].y=ends[k-1].y+11;
-  c.font='9px Arial';c.textAlign='left';c.fillStyle='#52626e';ends.forEach(e=>c.fillText(e.d.short,xAt(n-1)+9,Math.min(h-pad.b,e.y+3)));
-  return {xAt,n};
-}
-// Info-bulle au toucher / survol : valeurs des trois profondeurs pour la session pointée
-function bindDepthTooltip(wrap,canvas,data,geo,unit){
-  if(!geo)return;
-  const tip=wrap.querySelector('.suiviTip'),line=wrap.querySelector('.suiviCross');
-  const show=ev=>{
-    const r=canvas.getBoundingClientRect(),x=ev.clientX-r.left;
-    let i=0,best=Infinity;for(let k=0;k<geo.n;k++){const dd=Math.abs(geo.xAt(k)-x);if(dd<best){best=dd;i=k}}
-    const p=data.periods[i];
-    tip.innerHTML='<b>'+escapeHTML(p)+'</b>'+data.depths.map(({d,byPeriod})=>{const v=byPeriod.get(p);return '<div>'+depthMarkerSvg(d,10)+' '+escapeHTML(d.label)+' : <b>'+(v?v.mean.toFixed(2)+(unit?' '+escapeHTML(unit):''):'—')+'</b>'+(v&&v.n>1?' <span class="suiviTipN">(moyenne de '+v.n+' visites)</span>':'')+'</div>'}).join('');
-    tip.classList.remove('hide');line.classList.remove('hide');
-    const px=geo.xAt(i);line.style.left=px+'px';
-    const tw=tip.offsetWidth;tip.style.left=Math.max(0,Math.min(r.width-tw,px+10>r.width-tw?px-tw-10:px+10))+'px';
-  };
-  const hide=()=>{tip.classList.add('hide');line.classList.add('hide')};
-  canvas.addEventListener('pointermove',show);canvas.addEventListener('pointerdown',show);canvas.addEventListener('pointerleave',hide);
-}
-function renderSuiviEL(n,s,grid){
-  grid.innerHTML='';let count=0;
-  EL_SUIVI_DEFS.forEach(([base,label,unit])=>{
-    const data=suiviDepthData(n,s,base);if(!data.periods.length)return;count++;
-    const lastOf=x=>{const ps=data.periods.filter(p=>x.byPeriod.has(p));return x.byPeriod.get(ps[ps.length-1])};
-    const card=document.createElement('div');card.className='suiviParamCard';card.dataset.param=base;
-    card.innerHTML='<div class="suiviParamHead"><div><div class="suiviParamName">'+escapeHTML(label)+'</div><div class="suiviParamUnit">'+escapeHTML(unit)+'</div></div><div class="suiviDepthLast" title="Dernière valeur mesurée à chaque profondeur">'+data.depths.map(x=>'<span>'+depthMarkerSvg(x.d,11)+' '+lastOf(x).mean.toFixed(2)+'</span>').join('')+'</div></div>'+
-      '<div class="suiviParamBody"><div class="suiviDepthLegend">'+data.depths.map(x=>'<span>'+depthMarkerSvg(x.d,11)+' '+escapeHTML(x.d.label)+'</span>').join('')+'</div>'+
-      '<div class="suiviDepthWrap"><canvas class="suiviMiniChart" role="img" aria-label="'+escapeHTML(label)+' : évolution par session en surface, intermédiaire et fond"></canvas><div class="suiviCross hide"></div><div class="suiviTip hide"></div></div>'+
-      '<div style="overflow:auto"><table class="suiviTrendTable"><thead><tr><th>Période</th>'+EL_DEPTHS.map(d=>'<th>'+depthMarkerSvg(d,10)+' '+escapeHTML(d.label)+'</th>').join('')+'</tr></thead><tbody>'+
-      data.periods.map(p=>'<tr><td>'+escapeHTML(p)+'</td>'+EL_DEPTHS.map(d=>{const v=data.depths.find(x=>x.d===d)?.byPeriod.get(p);return '<td>'+(v?v.mean.toFixed(2)+(v.n>1?' <small>(n='+v.n+')</small>':''):'—')+'</td>'}).join('')+'</tr>').join('')+
-      '</tbody></table></div></div>';
-    grid.appendChild(card);
-    const canvas=card.querySelector('canvas'),geo=drawDepthSuiviChart(canvas,data,unit);
-    bindDepthTooltip(card.querySelector('.suiviDepthWrap'),canvas,data,geo,unit);
-  });
-  return count;
-}
 function renderSuiviControls(){
   const networks=[...new Set(records.map(r=>r.network).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
   const currentN=val('suiviNetwork'),currentS=val('suiviStation');
@@ -1777,13 +1679,15 @@ function renderSuivi(){
   const params=suiviParamsFor(n,s);
   if(!params.length){dash.classList.add('hide');empty.classList.remove('hide');msg.textContent='';return}
   empty.classList.add('hide');dash.classList.remove('hide');
-  const nParams=n==='EL'?EL_SUIVI_DEFS.filter(([b])=>EL_DEPTHS.some(d=>params.includes(b+'_'+d.key))).length:params.length;
-  msg.textContent=nParams+' paramètre(s) in situ disponible(s) pour cette station.'+(n==='EL'?' Surface, intermédiaire et fond sur le même graphe.':'');
+  const nParams=n==='EL'&&typeof EL_SUIVI_DEFS!=='undefined'?EL_SUIVI_DEFS.filter(([b])=>EL_DEPTHS.some(d=>params.includes(b+'_'+d.key))).length:params.length;
+  msg.textContent=nParams+' paramètre(s) in situ disponible(s) pour cette station.';
   const sample=records.find(r=>r.network===n&&r.station===s);
   $('suiviStationTitle').textContent=s;
   $('suiviStationMeta').textContent=[sample?.stationInfo?.code_me?'Masse d’eau '+sample.stationInfo.code_me:'',sample?.stationInfo?.bassin||'',sample?.stationInfo?.pressions||''].filter(Boolean).join(' · ')||'Aperçu de la station';
   $('suiviStationBadge').textContent=(sample?.stationInfo?.code||'Station');
-  if(n==='EL'){renderSuiviEL(n,s,grid);return}
+  // EL : trois vues (évolution par profondeur, profil de profondeur, profil de l'estuaire), js/suivi-el.js
+  if(n==='EL'&&typeof renderSuiviEL==='function'){renderSuiviEL(n,s,grid);return}
+  if(typeof clearSuiviEL==='function')clearSuiviEL();
   grid.innerHTML='';
   params.forEach(p=>{
     const series=suiviSeries(n,s,p),all=series.flatMap(x=>x.values); if(!all.length)return;

@@ -833,6 +833,47 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e16.length===0,'aucune erreur JavaScript (suivi EL) '+JSON.stringify(e16));
     await c16.close();
   }
+  // --- T : suivi EL — profil de profondeur et profil longitudinal de l'estuaire ---
+  {
+    const c17=await browser.newContext({serviceWorkers:'block'});await c17.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c17.newPage();const e17=[];p.on('pageerror',e=>e17.push(e.message));
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const ses=DATA.EL_SESSIONS.map(x=>x.label),by=n=>DATA.EL_STATIONS.find(s=>s.nom===n);
+      const names=['Ile du salut','Kourou bourg','Singe rouge','Kourou côte','Kourou fleuve']; // volontairement dans le désordre
+      let k=0;
+      [[0,'2026-09-10'],[4,'2027-01-20']].forEach(([si,date])=>names.forEach((n,i)=>records.push({id:'T'+(k++),network:'EL',station:n,stationInfo:by(n),session:ses[si],date,savedAt:date+'T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],
+        insitu:{profondeurs:{surface:'0.5',intermediaire:'3',fond:'6'},params:{sal:{surface:String(10*i+si),intermediaire:String(10*i+si+1),fond:String(10*i+si+2)}},turbidite:{}}})));
+      records.push({id:'TNZ',network:'EL',station:'Kourou bourg',stationInfo:by('Kourou bourg'),session:ses[1],date:'2026-10-05',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{profondeurs:{},params:{sal:{surface:'12'}},turbidite:{}}});
+      saveLS(LS,records);
+    });
+    await p.click('.tab[data-tab="suivi"]');await p.waitForTimeout(300);
+    await p.evaluate(()=>{const n=$('suiviNetwork');n.value='EL';n.dispatchEvent(new Event('change'));const s=$('suiviStation');s.value='Kourou bourg';s.dispatchEvent(new Event('change'))});await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>[...document.querySelectorAll('#suiviElBar .suiviElTab')].map(b=>b.dataset.v).join(',')==='evolution,profondeur,estuaire'&&document.querySelector('#suiviElBar .suiviElTab.on').dataset.v==='evolution'),'suivi EL : choix Évolution / Profil de profondeur / Profil longitudinal');
+    // Profil de profondeur
+    await p.click('.suiviElTab[data-v="profondeur"]');await p.waitForTimeout(300);
+    const dp=await p.evaluate(()=>{const c=document.querySelector('.suiviParamCard[data-param="sal"]');const cv=c.querySelector('canvas'),d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;const has=([r,g,b])=>{for(let i=0;i<d.length;i+=4)if(Math.abs(d[i]-r)<12&&Math.abs(d[i+1]-g)<12&&Math.abs(d[i+2]-b)<12)return true;return false};
+      return {s1:has([0x62,0x50,0xd6]),s5:has([0xe8,0x7b,0xa4]),rows:[...c.querySelectorAll('tbody tr')].map(tr=>[...tr.children].map(td=>td.textContent.trim()).join(' | ')),note:c.querySelector('.suiviElCardNote')?.textContent||''}});
+    ok(dp.s1&&dp.s5&&dp.rows.length===3&&/^S1 - Septembre[^|]* \| 10\.00 à 0\.5 m \| 11\.00 à 3 m \| 12\.00 à 6 m$/.test(dp.rows[0]),'profil de profondeur : une courbe par session (S1 violet, S5 rose), profondeurs en mètres '+JSON.stringify(dp.rows[0]));
+    ok(/1 mesure\(s\) sans profondeur saisie/.test(dp.note)&&/profondeur non saisie/.test(dp.rows[1]),'profil de profondeur : mesure sans profondeur signalée (non placée au hasard)');
+    // Profil longitudinal de l'estuaire
+    await p.click('.suiviElTab[data-v="estuaire"]');await p.waitForTimeout(300);
+    const est=()=>p.evaluate(()=>{const c=document.querySelector('.suiviParamCard[data-param="sal"]');return {estuary:$('suiviElEstuary').value,cols:[...c.querySelectorAll('thead th')].slice(1).map(t=>t.textContent),hi:[...c.querySelectorAll('thead th.suiviElHi')].map(t=>t.textContent),row1:[...[...c.querySelectorAll('tbody tr')][0].children].slice(1).map(td=>td.textContent.trim()).join(' ')}});
+    let e=await est();
+    ok(e.estuary==='Kourou'&&e.cols.join(' > ')==='Singe rouge > Kourou fleuve > Kourou bourg > Kourou côte > Ile du salut'&&e.hi.join()==='Kourou bourg','profil de l’estuaire : estuaire de la station, stations de l’amont vers la mer, station choisie surlignée '+e.cols.join(' > '));
+    ok(e.row1==='20.00 40.00 10.00 30.00 0.00','profil de l’estuaire : valeurs de surface par station '+e.row1);
+    await p.selectOption('#suiviElDepth','fond');await p.waitForTimeout(250);e=await est();
+    ok(e.row1==='22.00 42.00 12.00 32.00 2.00'&&await p.evaluate(()=>/Fond/.test(document.querySelector('.suiviParamCard[data-param="sal"] .suiviParamUnit').textContent)),'profil de l’estuaire : choix de la profondeur (fond)');
+    await p.selectOption('#suiviElEstuary','Mahury');await p.waitForTimeout(250);
+    ok(await p.evaluate(()=>/Aucune mesure fond/.test($('suiviParamGrid').textContent)),'profil de l’estuaire : autre estuaire sans mesure, message clair');
+    ok(await p.evaluate(()=>elEstuaryStations('Mahury').map(s=>s.nom).join(' > ')==='Orapu > Mahury > Dégrad des Cannes > Cayenne côte > Ilet La mère'),'profil de l’estuaire : Mahury classé de l’amont vers la mer');
+    ok(await p.evaluate(()=>elRange([0,10])[0]===0&&elRange([5,10])[0]>0),'graphes EL : axe jamais négatif pour des valeurs positives');
+    // Autre réseau : pas de barre EL
+    await p.evaluate(()=>{records.push({id:'TR',network:'RCO',station:'RCO T',date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{ph:{value:'7'}}});saveLS(LS,records);renderSuivi();const n=$('suiviNetwork');n.value='RCO';n.dispatchEvent(new Event('change'));const s=$('suiviStation');s.value='RCO T';s.dispatchEvent(new Event('change'))});await p.waitForTimeout(200);
+    ok(await p.evaluate(()=>!$('suiviElBar')),'suivi RCO : pas de choix de vue EL');
+    ok(e17.length===0,'aucune erreur JavaScript (profils EL) '+JSON.stringify(e17));
+    await c17.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

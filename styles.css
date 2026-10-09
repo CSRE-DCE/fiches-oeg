@@ -224,3 +224,14 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
 .suiviTrendTable td small{color:var(--muted)}
 .suiviTrendTable th .depthMarker{margin-right:2px}
 .crtDepthKey{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;color:#17212b;font-weight:700}
+/* Suivi EL : choix de la vue (évolution / profil de profondeur / profil de l'estuaire) */
+.suiviElBar{margin:0 0 10px}
+.suiviElSeg{display:flex;flex-wrap:wrap;gap:6px}
+.suiviElTab{border:1px solid var(--line);background:#fff;color:var(--brand2);border-radius:999px;padding:7px 12px;font-weight:800;font-size:12px;cursor:pointer}
+.suiviElTab.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.suiviElOpts{display:grid;grid-template-columns:repeat(2,minmax(0,220px));gap:8px;margin-top:8px}
+.suiviElHelp{font-size:11px;color:var(--muted);margin-top:6px}
+.suiviElCardNote{font-size:10px;color:#8a6100;background:#fff6df;border-radius:6px;padding:4px 6px;margin-top:6px}
+.suiviElEmpty{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;padding:14px;text-align:center;grid-column:1/-1}
+.suiviTrendTable .suiviElHi{background:#eef4fb;font-weight:800}
+@media(max-width:520px){.suiviElOpts{grid-template-columns:1fr}}
