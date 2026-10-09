@@ -168,6 +168,11 @@
     await (window.OEGRecordsReady||Promise.resolve()); // jamais sur une liste de fiches incomplète
     const items = [];
     for(const r of records){
+      // Fiche « allégée » (photos retirées de la tablette par une ancienne version de l'appli) :
+      // elle n'est JAMAIS réécrite dans le dossier ni sur Drive, où se trouve la seule copie de ses
+      // photos (auparavant toute modification écrasait le fichier par une version sans photos).
+      // « Récupérer l'historique » lui rend ses photos, puis elle est de nouveau sauvegardée.
+      if(r._archived) continue;
       items.push({id: r.id, filename: filenameForRecord(r), content: r, hash: await hashOf(r)});
     }
     const ref = referentielPayload();
@@ -196,6 +201,10 @@
     try{
       const handle = await window.showDirectoryPicker({mode:'readwrite'});
       localFolderHandle = handle;
+      // Nouveau dossier : il faut y écrire TOUTES les fiches. Auparavant les empreintes du dossier
+      // précédent étaient conservées : le nouveau dossier restait vide alors que l'appli affichait
+      // « N fiches sauvegardées ».
+      localHashes = {}; localNames = {}; saveLocalHashes(); saveLocalNames();
       await idbSet('localFolderHandle', handle);
       renderLocalStatus('Écriture des fiches en cours...');
       await syncLocalFolder(await collectItems());
@@ -207,6 +216,7 @@
 
   async function forgetLocalFolder(){
     localFolderHandle = null;
+    localHashes = {}; localNames = {}; saveLocalHashes(); saveLocalNames();
     await idbDelete('localFolderHandle');
     renderLocalStatus();
   }
@@ -336,8 +346,26 @@
     return resp;
   }
 
+  // Le dossier Drive mémorisé est vérifié une fois par session : s'il n'existe plus (supprimé, ou
+  // autre compte Google connecté), on oublie tout ce qui concernait l'ancien dossier et les fiches
+  // sont réenvoyées. Auparavant la sauvegarde Drive ne reprenait jamais, tout en restant affichée
+  // comme « à jour ».
+  let folderVerified = false;
+  function resetDriveTables(){
+    driveCfg.folderId = ''; saveDriveCfg();
+    driveHashes = {}; driveFileIds = {}; driveNames = {}; driveVersions = {};
+    saveDriveHashes(); saveDriveFileIds(); saveDriveNames(); saveDriveVersions();
+  }
   async function ensureDriveFolder(){
+    if(driveCfg.folderId && !folderVerified){
+      try{
+        const r = await fetch(`https://www.googleapis.com/drive/v3/files/${driveCfg.folderId}?fields=id,trashed`, {headers:{'Authorization':'Bearer ' + driveAccessToken}});
+        if(r.status === 404) resetDriveTables();
+        else if(r.ok){ const j = await r.json().catch(()=>({})); if(j.trashed) resetDriveTables(); else folderVerified = true; }
+      }catch(e){ /* réseau : on garde le dossier, nouvelle vérification au prochain passage */ }
+    }
     if(driveCfg.folderId) return driveCfg.folderId;
+    folderVerified = true;
     const q = encodeURIComponent(`name='${DRIVE_FOLDER_NAME.replace(/'/g,"\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
     const listResp = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
       headers:{'Authorization':'Bearer ' + driveAccessToken}
@@ -425,8 +453,11 @@
       if(driveHashes[item.id] === item.hash) continue; // déjà à jour sur Drive
       const text = itemText(item);
       try{
-        const sameNameAsBefore = driveFileIds[item.id] && driveNames[item.id] === item.filename;
-        if(sameNameAsBefore){
+        // Fichier déjà connu : mis à jour EN PLACE, et renommé si la date ou la station a changé.
+        // (Auparavant un changement de nom créait un second fichier : une autre tablette pouvait
+        // alors modifier l'ancien sans que personne ne détecte le conflit, et l'une des deux
+        // versions était perdue. Drive conserve de toute façon l'historique des versions.)
+        if(driveFileIds[item.id]){
           // Fiche : avant d'écraser le fichier Drive, on vérifie qu'aucune autre tablette ne
           // l'a modifié depuis notre dernier passage. Si c'est le cas, on ne l'écrase pas : on
           // télécharge sa version et on la fusionne (même règle que "Récupérer l'historique"),
@@ -448,6 +479,12 @@
         driveNames[item.id] = item.filename;
         written++;
       }catch(e){
+        // Fichier supprimé sur Drive : on l'oublie pour le recréer au prochain passage
+        // (auparavant la fiche échouait indéfiniment).
+        if(String(e && e.message) === 'drive-http-404'){
+          delete driveFileIds[item.id]; delete driveNames[item.id]; delete driveVersions[item.id]; delete driveHashes[item.id];
+          saveDriveFileIds(); saveDriveNames(); saveDriveVersions(); saveDriveHashes();
+        }
         failed++; // sera retenté au prochain passage
       }
     }
@@ -483,6 +520,7 @@
       tokenClient = null;
       await requestTokenAsync('consent');
       driveCfg.connected = true;
+      folderVerified = false; // autre compte possible : le dossier mémorisé sera vérifié
       saveDriveCfg();
       renderDriveStatus('Envoi des fiches en cours...');
       await syncDrive(await collectItems());
@@ -549,7 +587,7 @@
     await (window.OEGRecordsReady||Promise.resolve());
     const stats={imported:0,updated:0,kept:0,conflicts:0};
     for(const {rec,fileId,name,version} of remoteById.values())await mergeRemoteRecord(rec,fileId,name,version,stats);
-    const {imported,updated,kept,conflicts}=stats;
+    const {imported,updated,kept,conflicts}=stats,restored=stats.restoredPhotos||0;
     saveDriveFileIds();saveDriveHashes();saveDriveNames();saveDriveVersions();
     if(imported||updated||conflicts){
       saveLS(LS,records);
@@ -558,7 +596,7 @@
     }
     renderDriveStatus();
     window.dispatchEvent(new Event('oeg:sync-done'));
-    if(typeof toast==='function')toast(`Historique récupéré : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(kept?`, ${kept} version(s) locale(s) plus récente(s) conservée(s)`:'')+(failed?`, ${failed} échec(s)`:'')+' ✓'+(conflicts?` — ⚠ ${conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
+    if(typeof toast==='function')toast(`Historique récupéré : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(kept?`, ${kept} version(s) locale(s) plus récente(s) conservée(s)`:'')+(restored?`, photos rendues à ${restored} fiche(s) allégée(s)`:'')+(failed?`, ${failed} échec(s)`:'')+' ✓'+(conflicts?` — ⚠ ${conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
     return {ok:true,imported,updated,kept,conflicts,failed};
   }
 
@@ -574,6 +612,13 @@
     const idx=records.findIndex(r=>r.id===id);
     if(idx===-1){records.push(rec);adoptRemote();stats.imported=(stats.imported||0)+1;return}
     const local=records[idx];
+    // Fiche allégée ici, complète sur Drive : on lui rend ses photos avant de comparer
+    // (auparavant chaque récupération créait une fausse copie de conflit).
+    if(local._archived&&!rec._archived&&Array.isArray(rec.photos)){
+      local.photos=rec.photos.map(p=>p&&typeof p==='object'?{...p}:p);
+      delete local._archived;delete local._archivedAt;delete local._archivedPhotoCount;
+      stats.restoredPhotos=(stats.restoredPhotos||0)+1;
+    }
     const localHash=await hashOf(local);
     if(localHash===remoteHash){adoptRemote();return}
     const localDirty=driveHashes[id]!==localHash;   // modifications locales pas encore envoyées sur Drive
@@ -587,12 +632,19 @@
       // Version locale plus récente (ou fiche ouverte en cours de modification) : elle est
       // conservée et sera envoyée sur Drive. Si la version Drive contient des modifications
       // inconnues ici (autre tablette), elle est d'abord gardée en copie de conflit.
-      if(!remoteSeen){records.push(await conflictCopy(rec,'Google Drive'));stats.conflicts=(stats.conflicts||0)+1}
+      if(!remoteSeen&&!conflictAlreadyCopied(id,remoteHash)){records.push(await conflictCopy(rec,'Google Drive'));markConflictCopied(id,remoteHash);stats.conflicts=(stats.conflicts||0)+1}
       // La version Drive est désormais connue : le prochain envoi pourra la remplacer.
       if(fileId===driveFileIds[id]&&version!==undefined)driveVersions[id]=version;
       stats.kept=(stats.kept||0)+1;
     }
   }
+
+  // Une même version distante n'est copiée qu'une fois (auparavant, « Récupérer l'historique »
+  // pendant la modification d'une fiche créait une copie de conflit de plus à chaque appui).
+  const CONFLICTS_SEEN_KEY = 'oeg_sync_conflicts_seen_v1';
+  let conflictsSeen = loadJson(CONFLICTS_SEEN_KEY, {});
+  function conflictAlreadyCopied(id, hash){ return !!conflictsSeen[id + ':' + hash] }
+  function markConflictCopied(id, hash){ conflictsSeen[id + ':' + hash] = 1; saveJson(CONFLICTS_SEEN_KEY, conflictsSeen) }
 
   // Le fichier Drive de cette fiche a-t-il été modifié ailleurs depuis notre dernier passage ?
   async function remoteChangedElsewhere(id){

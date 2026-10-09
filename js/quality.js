@@ -188,7 +188,7 @@ $('qualityReject').onclick=async()=>{const id=val('qualityRecord');const r=recor
 $('addNC').onclick=async()=>{const recordId=val('ncRecord');const desc=val('ncDescription').trim();if(!recordId||!desc)return toast('Fiche et description de l’écart requis');const n={id:Date.now()+'_'+Math.random().toString(36).slice(2,6),recordId,category:val('ncCategory'),severity:val('ncSeverity'),status:val('ncStatus'),responsible:val('ncResponsible'),dueDate:val('ncDueDate'),description:desc,immediate:val('ncImmediate'),corrective:val('ncCorrective'),createdAt:new Date().toISOString(),createdBy:qActor()};custom.nonConformites.push(n);saveLS(LSC,custom);await audit('CREATION_NON_CONFORMITE',recordId,{id:n.id,severity:n.severity,category:n.category});['ncResponsible','ncDueDate','ncDescription','ncImmediate','ncCorrective'].forEach(id=>setField(id,''));renderQuality();toast('Non-conformité enregistrée');};
 function renderNCList(){const h=$('ncList');if(!h)return;const arr=(custom.nonConformites||[]).slice().sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));h.innerHTML=arr.length?arr.map(n=>{const r=records.find(x=>x.id===n.recordId);return `<div class="listcard"><div class="listtop"><div><b>${qEscape(n.severity)} — ${qEscape(n.category)}</b><div class="meta">${qEscape(r?.station||'Fiche supprimée')} · ${qEscape(n.status)} · ${qEscape(n.createdAt?.slice(0,16).replace('T',' '))}</div></div><button class="btn ${n.status==='Clôturée'?'ghost':'primary'} small" data-nc="${qEscape(n.id)}">${n.status==='Clôturée'?'Réouvrir':'Clôturer'}</button></div><div style="margin-top:6px;font-size:12px">${qEscape(n.description)}</div><div class="meta" style="margin-top:4px">Responsable : ${qEscape(n.responsible||'—')} · Échéance : ${qEscape(n.dueDate||'—')}</div></div>`}).join(''):'<div class="suiviEmpty">Aucune non-conformité enregistrée.</div>';h.querySelectorAll('[data-nc]').forEach(b=>b.onclick=async()=>{const n=custom.nonConformites.find(x=>x.id===b.dataset.nc);if(!n)return;n.status=n.status==='Clôturée'?'Ouverte':'Clôturée';n.closedAt=n.status==='Clôturée'?new Date().toISOString():'';n.closedBy=qActor();saveLS(LSC,custom);await audit(n.status==='Clôturée'?'CLOTURE_NON_CONFORMITE':'REOUVERTURE_NON_CONFORMITE',n.recordId,{id:n.id});renderQuality()})}
 
-async function verifyAllIntegrity(){let ok=0,bad=0;for(const r of records){const expected=await sha256(integrityPayload(r));if(r.lifecycle?.integrityHash===expected)ok++;else bad++}$('integrityResult').innerHTML=`<div class="banner ${bad?'danger':''}" style="margin:0">Empreintes vérifiées : <b>${ok}</b> OK · <b>${bad}</b> à contrôler.</div>`;await audit('VERIFICATION_INTEGRITE','',{ok,bad});renderAudit()}
+async function verifyAllIntegrity(){let ok=0,bad=0,light=0;for(const r of records){if(r._archived){light++;continue}const expected=await sha256(integrityPayload(r));if(r.lifecycle?.integrityHash===expected)ok++;else bad++}$('integrityResult').innerHTML=`<div class="banner ${bad?'danger':''}" style="margin:0">Empreintes vérifiées : <b>${ok}</b> OK · <b>${bad}</b> à contrôler`+(light?` · <b>${light}</b> fiche(s) allégée(s), non vérifiable(s) sans leurs photos (« Récupérer l’historique » les leur rend)`:'')+`.</div>`;await audit('VERIFICATION_INTEGRITE','',{ok,bad,allegees:light});renderAudit()}
 $('runIntegrity').onclick=verifyAllIntegrity;
 $('clearAuditView').onclick=renderQuality;
 function renderAudit(){const h=$('auditBody');if(!h)return;const arr=(custom.auditTrail||[]).slice().reverse().slice(0,250);h.innerHTML=arr.length?arr.map(a=>`<tr><td>${qEscape((a.timestamp||'').replace('T',' ').slice(0,19))}</td><td>${qEscape(a.action)}</td><td>${qEscape((records.find(r=>r.id===a.recordId)?.station)||a.recordId||'—')}</td><td>${qEscape(a.actor)}</td><td>${qEscape(JSON.stringify(a.details||{}).slice(0,220))}</td></tr>`).join(''):'<tr><td colspan="5">Aucun évènement d’audit.</td></tr>'}
@@ -214,14 +214,25 @@ function ensureLifecycle(r){
 $('importJSON').onchange=e=>{
   const files=[...e.target.files];
   if(!files.length)return;
-  let imported=0,updated=0,fail=0,pending=files.length;
+  let imported=0,updated=0,older=0,same=0,fail=0,pending=files.length;
+  // Une fiche déjà présente n'est remplacée que par une version PLUS RÉCENTE (date de dernière
+  // modification). Auparavant le dernier fichier lu l'emportait : restaurer un dossier contenant
+  // plusieurs versions, ou importer une ancienne sauvegarde, écrasait la bonne version.
+  const importOne=r=>{
+    ensureLifecycle(r);
+    const idx=records.findIndex(x=>x.id===r.id);
+    if(idx===-1){records.push(r);imported++;return}
+    const cur=records[idx];
+    if(JSON.stringify(stableObj(cur))===JSON.stringify(stableObj(r))){same++;return}
+    if(recordStamp(r)>recordStamp(cur)){records[idx]=r;updated++}else older++;
+  };
   const finish=async()=>{
     saveLS(LS,records);saveLS(LSC,custom);
     await audit('IMPORT_JSON','',{nouvelles:imported,misesAJour:updated,echecs:fail});
     renderOperators();renderEquipment();renderOrgOptions();renderPre();updateCount();renderList();renderQuality();
     if($('suivi')?.classList.contains('active'))renderSuivi();
     e.target.value='';
-    toast(`Import terminé : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(fail?`, ${fail} fichier(s) invalide(s)`:'')+' ✓');
+    toast(`Import terminé : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(older?`, ${older} version(s) plus ancienne(s) ignorée(s) (la tablette a plus récent)`:'')+(fail?`, ${fail} fichier(s) non reconnu(s)`:'')+' ✓');
   };
   files.forEach(f=>{
     const fr=new FileReader();
@@ -229,16 +240,13 @@ $('importJSON').onchange=e=>{
       try{
         const d=JSON.parse(fr.result);
         if(Array.isArray(d.records)){
-          d.records.forEach(r=>{
-            ensureLifecycle(r);
-            const idx=records.findIndex(x=>x.id===r.id);
-            if(idx>-1){records[idx]=r;updated++}else{records.push(r);imported++}
-          });
+          d.records.forEach(importOne);
           if(d.custom)mergeCustomInto(custom,d.custom);
         }else if(d&&d.id&&d.network){
-          ensureLifecycle(d);
-          const idx=records.findIndex(x=>x.id===d.id);
-          if(idx>-1){records[idx]=d;updated++}else{records.push(d);imported++}
+          importOne(d);
+        }else if(d&&(d.type==='referentiel_operateurs_equipements_stations'||d.type==='qualite_audit_non_conformites')){
+          // fichiers « _referentiel… » et « _qualite… » du dossier de sauvegarde / de Drive
+          mergeCustomInto(custom,d);
         }else{fail++}
       }catch(err){fail++}
       if(--pending===0)finish();

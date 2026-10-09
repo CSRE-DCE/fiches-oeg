@@ -1675,8 +1675,18 @@ function mergeCustomInto(target,incoming){
   });
   if(incoming.stationAccess)target.stationAccess=Object.assign({},target.stationAccess||{},incoming.stationAccess);
   if(Array.isArray(incoming.receiverOrgs))target.receiverOrgs=[...new Set([...(target.receiverOrgs||[]),...incoming.receiverOrgs])];
+  // Non-conformités et journal d'audit : réunis (par identifiant). Auparavant ils étaient ignorés
+  // (tableaux déjà créés au démarrage) : une NC critique ouverte importée ne bloquait plus la validation.
+  ['nonConformites','auditTrail'].forEach(k=>{
+    if(!Array.isArray(incoming[k]))return;
+    target[k]=Array.isArray(target[k])?target[k]:[];
+    const seen=new Set(target[k].map(x=>x&&x.id!=null?'id:'+x.id:JSON.stringify(x)));
+    incoming[k].forEach(x=>{const key=x&&x.id!=null?'id:'+x.id:JSON.stringify(x);if(!seen.has(key)){target[k].push(x);seen.add(key)}});
+  });
+  if(incoming.qualityConfig&&typeof incoming.qualityConfig==='object'){const appVersion=target.qualityConfig?.appVersion;target.qualityConfig=Object.assign({},target.qualityConfig||{},incoming.qualityConfig);if(appVersion)target.qualityConfig.appVersion=appVersion}
+  if(incoming.crtMeta&&typeof incoming.crtMeta==='object')target.crtMeta=Object.assign({},incoming.crtMeta,target.crtMeta||{});
   Object.keys(incoming).forEach(k=>{
-    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs'].includes(k))return;
+    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs','nonConformites','auditTrail','qualityConfig','crtMeta'].includes(k))return;
     if(target[k]===undefined)target[k]=incoming[k];
   });
 }
@@ -1685,7 +1695,18 @@ function mergeCustomInto(target,incoming){
 // l'ordre de chargement des scripts. mergeCustomInto() ci-dessus est réutilisée par ce
 // gestionnaire pour fusionner intelligemment le référentiel (équipements/opérateurs/stations)
 // de plusieurs fichiers importés sans rien écraser par erreur.
-$('reset').onclick=()=>{if(confirm('Effacer toutes les fiches et données personnalisées ?')){localStorage.removeItem(LS);OEGStore.del(LS).catch(()=>{});localStorage.removeItem(LSC);localStorage.removeItem('oeg_field_v3');localStorage.removeItem('oeg_custom_v3');records=[];custom={preleveurs:[],stations:[],equipements:[]};updateCount();renderList();renderAdmin()}};
+// Réinitialisation : efface tout sur CET appareil puis recharge l'appli. Auparavant l'appli restait
+// dans un état incomplet (enregistrer une fiche plantait, la fiche n'était pas sauvegardée) et le
+// référentiel vide était ensuite envoyé sur Drive / dans le dossier, écrasant celui de l'équipe :
+// la connexion Drive et le dossier de sauvegarde sont donc aussi oubliés (rien n'y est effacé).
+$('reset').onclick=async()=>{
+  if(!confirm('Effacer toutes les fiches et données de CET appareil ?\n\nLes sauvegardes déjà faites (dossier, Google Drive, exports) ne sont pas touchées. La connexion Google Drive et le dossier de sauvegarde devront être reconfigurés.'))return;
+  try{
+    Object.keys(localStorage).filter(k=>k.startsWith('oeg_')).forEach(k=>localStorage.removeItem(k));
+    await OEGStore.del(LS).catch(()=>{});await OEGStore.del('oeg_draft_v1').catch(()=>{});
+    await new Promise(res=>{try{const rq=indexedDB.deleteDatabase('oeg-sync-db');rq.onsuccess=rq.onerror=rq.onblocked=()=>res()}catch(e){res()}});
+  }finally{location.reload()}
+};
 
 // Retire les photos (le contenu le plus volumineux ; le schéma et la signature sont toujours conservés) des fiches déjà
 // confirmées sauvegardées dans le dossier local et/ou sur Google Drive, pour libérer de la

@@ -27,7 +27,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     const part=()=>{const parts=body.split(/--oegboundary[^\r\n]*/);const meta=JSON.parse(parts[1].split('\r\n\r\n')[1]);const txt=parts[2].split('\r\n\r\n').slice(1).join('\r\n\r\n').replace(/\r\n$/,'');return {meta,txt}};
     if(m==='GET'&&u.pathname==='/drive/v3/files')return r.fulfill({json:{files:[...drive].map(([id,f])=>({id,name:f.name,version:String(f.v)}))}});
     let mm;
-    if(m==='GET'&&(mm=u.pathname.match(/^\/drive\/v3\/files\/(.+)$/))){const f=drive.get(mm[1]);if(u.searchParams.get('alt')==='media')return r.fulfill({body:f.text,contentType:'application/json'});return r.fulfill({json:{version:String(f.v)}})}
+    if(m==='GET'&&(mm=u.pathname.match(/^\/drive\/v3\/files\/(.+)$/))){const f=drive.get(mm[1]);if(!f)return mm[1]==='F'?r.fulfill({json:{id:'F',trashed:false}}):r.fulfill({status:404,json:{}});if(u.searchParams.get('alt')==='media')return r.fulfill({body:f.text,contentType:'application/json'});return r.fulfill({json:{version:String(f.v)}})}
     if(m==='POST'&&u.pathname.startsWith('/upload')){const {meta,txt}=part();const id='f'+(nid++);drive.set(id,{name:meta.name,text:txt,v:1});return r.fulfill({json:{id,version:'1'}})}
     if(m==='PATCH'&&(mm=u.pathname.match(/files\/(.+)$/))){const {meta,txt}=part();const f=drive.get(mm[1]);f.name=meta.name;f.text=txt;f.v++;return r.fulfill({json:{id:mm[1],version:String(f.v)}})}
     r.fulfill({status:500});
@@ -443,6 +443,99 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.inputValue('#elDepth')==='14','fiche EL rouverte : profondeur totale 14 m conservée (plus remise à 10)');
     ok(e8.length===0,'aucune erreur JavaScript (scénarios audit) '+JSON.stringify(e8));
     await c8.close();
+  }
+  // --- M : sauvegarde et synchronisation (constats de l'audit) ---
+  {
+    const c9=await browser.newContext({serviceWorkers:'block'});
+    await c9.route('https://unpkg.com/**',r=>r.abort());
+    await c9.route('https://accounts.google.com/**',r=>r.fulfill({contentType:'text/javascript',body:'window.google={accounts:{oauth2:{initTokenClient:o=>({requestAccessToken(){this.callback({access_token:"tok",expires_in:3600})}})}}}'}));
+    // Faux Google Drive avec dossiers : un « compte » = un ensemble de dossiers et de fichiers
+    let acct={folders:new Map(),files:new Map()},nid=1;
+    const part=body=>{const parts=body.split(/--oegboundary[^\r\n]*/);return {meta:JSON.parse(parts[1].split('\r\n\r\n')[1]),txt:parts[2].split('\r\n\r\n').slice(1).join('\r\n\r\n').replace(/\r\n$/,'')}};
+    await c9.route('https://www.googleapis.com/**',async r=>{
+      const u=new URL(r.request().url()),m=r.request().method(),body=r.request().postData()||'';let mm;
+      if(m==='GET'&&u.pathname==='/drive/v3/files'){const q=u.searchParams.get('q')||'';
+        if(q.includes('vnd.google-apps.folder'))return r.fulfill({json:{files:[...acct.folders.values()].map(f=>({id:f.id,name:f.name}))}});
+        const pm=q.match(/'([^']+)' in parents/);return r.fulfill({json:{files:[...acct.files].filter(([id,f])=>!pm||f.parent===pm[1]).map(([id,f])=>({id,name:f.name,version:String(f.v)}))}})}
+      if(m==='POST'&&u.pathname==='/drive/v3/files'){const j=JSON.parse(body);const id='D'+(nid++);acct.folders.set(id,{id,name:j.name});return r.fulfill({json:{id}})}
+      if(m==='GET'&&(mm=u.pathname.match(/^\/drive\/v3\/files\/(.+)$/))){const id=mm[1];
+        if(acct.folders.has(id))return r.fulfill({json:{id,trashed:false}});
+        const f=acct.files.get(id);if(!f)return r.fulfill({status:404,json:{}});
+        if(u.searchParams.get('alt')==='media')return r.fulfill({body:f.text,contentType:'application/json'});return r.fulfill({json:{version:String(f.v)}})}
+      if(m==='POST'&&u.pathname.startsWith('/upload')){const {meta,txt}=part(body);if(!acct.folders.has(meta.parents?.[0]))return r.fulfill({status:404,json:{}});const id='f'+(nid++);acct.files.set(id,{name:meta.name,text:txt,v:1,parent:meta.parents[0]});return r.fulfill({json:{id,version:'1'}})}
+      if(m==='PATCH'&&(mm=u.pathname.match(/files\/(.+)$/))){const f=acct.files.get(mm[1]);if(!f)return r.fulfill({status:404,json:{}});const {meta,txt}=part(body);f.name=meta.name;f.text=txt;f.v++;return r.fulfill({json:{id:mm[1],version:String(f.v)}})}
+      r.fulfill({status:500});
+    });
+    // Faux sélecteur de dossier local (File System Access)
+    await c9.addInitScript(()=>{window.__folders={};let n=0;window.showDirectoryPicker=async()=>{const name='dossier'+(++n),files={};window.__folders[name]=files;
+      return {name,queryPermission:async()=>'granted',requestPermission:async()=>'granted',getFileHandle:async fn=>({createWritable:async()=>{let b='';return {write:async t=>{b+=t},close:async()=>{files[fn]=b}}}})}}});
+    const p=await c9.newPage();const e9=[];p.on('pageerror',e=>e9.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const mk=(id,extra={})=>Object.assign({id,network:'RCO',station:'ST'+id,date:'2026-10-01',savedAt:'2026-10-01T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-01T08:00:00.000Z'},auditRefs:[],photos:[]},extra);
+    await p.evaluate(r=>{records.push(r);saveLS(LS,records)},mk('M1',{comment:'v1'}));
+    // 1) Nouveau dossier de sauvegarde : il reçoit toutes les fiches
+    await p.evaluate(()=>OEGSync.chooseLocalFolder());await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier1).some(f=>f.startsWith('fiche_'))),'dossier de sauvegarde 1 : fiche écrite');
+    await p.evaluate(()=>OEGSync.forgetLocalFolder());await p.evaluate(()=>OEGSync.chooseLocalFolder());await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier2).some(f=>f.startsWith('fiche_'))),'nouveau dossier de sauvegarde : toutes les fiches y sont réécrites (auparavant vide)');
+    await p.evaluate(()=>OEGSync.forgetLocalFolder());
+    // 2) Drive : changement de compte / dossier supprimé / fichier supprimé
+    await p.evaluate(()=>{localStorage.setItem('oeg_sync_drive_cfg_v1',JSON.stringify({clientId:'x',folderId:'',connected:true}))});
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>OEGSync.manualSyncNow());
+    const count=()=>[...acct.files.values()].filter(f=>f.name.startsWith('fiche_')).length;
+    ok(count()===1,'Drive : fiche envoyée');
+    acct={folders:new Map(),files:new Map()}; // autre compte Google (ou dossier supprimé)
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>OEGSync.manualSyncNow());
+    ok(count()===1&&acct.folders.size===1,'Drive : autre compte / dossier supprimé → dossier recréé et fiches réenvoyées (auparavant jamais)');
+    const fid=[...acct.files].find(([id,f])=>f.name.startsWith('fiche_'))[0];acct.files.delete(fid); // fichier supprimé sur Drive
+    await p.evaluate(()=>{records.find(r=>r.id==='M1').comment='v2';records.find(r=>r.id==='M1').lifecycle.updatedAt='2026-10-02T08:00:00.000Z';saveLS(LS,records)});
+    await p.evaluate(()=>OEGSync.manualSyncNow());await p.evaluate(()=>OEGSync.manualSyncNow());
+    ok(count()===1&&[...acct.files.values()].some(f=>f.text.includes('"v2"')),'Drive : fichier supprimé → recréé avec la dernière version');
+    // 3) Changement de date : le fichier Drive est renommé en place (un seul fichier par fiche)
+    await p.evaluate(()=>{const r=records.find(r=>r.id==='M1');r.date='2026-09-30';r.lifecycle.updatedAt='2026-10-03T08:00:00.000Z';saveLS(LS,records)});
+    await p.evaluate(()=>OEGSync.manualSyncNow());
+    ok(count()===1&&[...acct.files.values()].some(f=>f.name.includes('2026-09-30')),'Drive : date corrigée → même fichier renommé (plus de second fichier)');
+    // 4) Fiche allégée : jamais réécrite sans ses photos ; la récupération lui rend ses photos
+    const full=mk('M2',{photos:[{data:'data:image/png;base64,AAAA',group:'Amont'},{data:'data:image/png;base64,BBBB',group:'Aval'}]});
+    await p.evaluate(r=>{records.push(r);saveLS(LS,records)},full);await p.evaluate(()=>OEGSync.manualSyncNow());
+    await p.evaluate(()=>{const r=records.find(r=>r.id==='M2');r._archivedPhotoCount=2;r.photos=[];r._archived=true;r.lifecycle.status='Validée';r.lifecycle.updatedAt='2026-10-01T08:00:00.000Z';saveLS(LS,records)});
+    await p.evaluate(()=>OEGSync.manualSyncNow());
+    const m2=()=>JSON.parse([...acct.files.values()].find(f=>f.text.includes('"M2"')).text);
+    ok(m2().photos.length===2,'fiche allégée modifiée : le fichier Drive garde ses 2 photos (auparavant écrasé sans photos)');
+    const pull=await p.evaluate(()=>OEGSync.pullFromDrive());
+    ok(await p.evaluate(()=>{const r=records.find(r=>r.id==='M2');return r.photos.length===2&&!r._archived})&&pull.conflicts===0,'« Récupérer l’historique » rend ses photos à la fiche allégée, sans fausse copie de conflit '+JSON.stringify(pull));
+    const pull2=await p.evaluate(()=>OEGSync.pullFromDrive());
+    ok(pull2.conflicts===0,'seconde récupération : aucune copie de conflit');
+    // 5) Import : une version plus ancienne ne remplace pas la plus récente ; NC et qualité importées
+    const old=mk('M1',{comment:'ancienne',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-09-01T08:00:00.000Z'}});
+    await p.click('.tab[data-tab="data"]');
+    await p.setInputFiles('#importJSON',[{name:'sauvegarde.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({records:[old],custom:{nonConformites:[{id:'nc1',recordId:'M1',severity:'Critique',status:'Ouverte',createdAt:'2026-09-02'}],qualityConfig:{qualityMethodRef:'REF-X'}}}))}]);
+    await p.waitForTimeout(800);
+    ok(await p.evaluate(()=>records.find(r=>r.id==='M1').comment==='v2'),'import d’une sauvegarde plus ancienne : la fiche plus récente est conservée');
+    ok(await p.evaluate(()=>custom.nonConformites.some(n=>n.id==='nc1')&&custom.qualityConfig.qualityMethodRef==='REF-X'),'import : non-conformités et configuration qualité récupérées');
+    await p.setInputFiles('#importJSON',[{name:'_qualite_audit_non-conformites.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({type:'qualite_audit_non_conformites',nonConformites:[{id:'nc2',recordId:'M1',status:'Ouverte'}],auditTrail:[],qualityConfig:{}}))}]);
+    await p.waitForTimeout(800);
+    ok(await p.evaluate(()=>custom.nonConformites.some(n=>n.id==='nc2')),'import du fichier « _qualite » du dossier de sauvegarde reconnu');
+    // 6) Onglet Qualité : rejeter / remettre à contrôler sans erreur
+    const before=e9.length;
+    await p.click('.tab[data-tab="quality"]');
+    await p.evaluate(()=>{const s=$('qualityRecord');s.value='M1';s.dispatchEvent(new Event('change',{bubbles:true}));const v=$('qualityValidator');if(v.tagName==='SELECT'){const o=[...v.options].find(o=>o.value);if(o)v.value=o.value}else v.value='PF'});
+    await p.click('#qualityReject');await p.waitForTimeout(500);await p.click('#qualityControl');await p.waitForTimeout(500);
+    ok(e9.length===before&&await p.evaluate(()=>records.find(r=>r.id==='M1').lifecycle.status==='À contrôler'),'onglet Qualité : rejeter puis remettre à contrôler sans erreur '+JSON.stringify(e9.slice(before)));
+    // 7) Réinitialisation : l'appli redémarre proprement et une nouvelle fiche s'enregistre
+    await p.click('.tab[data-tab="data"]');
+    await Promise.all([p.waitForNavigation(),p.click('#reset')]);await p.evaluate(()=>window.OEGRecordsReady);
+    ok(await p.evaluate(()=>records.length===0&&!JSON.parse(localStorage.getItem('oeg_sync_drive_cfg_v1')||'{}').connected),'réinitialisation : appareil vidé, Drive déconnecté');
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+    await p.click('#save');await p.waitForTimeout(1200);
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
+    ok(await p.evaluate(()=>records.length===1),'après réinitialisation : nouvelle fiche enregistrée et conservée');
+    ok(e9.length===0,'aucune erreur JavaScript (sauvegarde / synchronisation) '+JSON.stringify(e9));
+    await c9.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

@@ -143,7 +143,7 @@
   }
   function statusFromChecks(c){return c.some(x=>!x.ok&&(x.level||'critical')==='critical')?'critical':c.some(x=>!x.ok)?'warning':'ok'}
   function renderChecksV19(r){
-    const h=$('qualityChecks');if(!h)return;const c=qualityChecksV19(r);h.innerHTML=c.map(x=>{const cls=x.ok?'ok':(x.level==='warning'?'warn':'bad');return `<div class="qualityCheck ${cls}">${x.ok?'✓':'✕'} ${qEscape(x.label)}${x.detail?` <span class="meta">${qEscape(x.detail)}</span>`:''}</div>`}).join('');
+    const h=$('qualityChecks');if(!h)return;if(!r){h.innerHTML='';return}const c=qualityChecksV19(r);h.innerHTML=c.map(x=>{const cls=x.ok?'ok':(x.level==='warning'?'warn':'bad');return `<div class="qualityCheck ${cls}">${x.ok?'✓':'✕'} ${qEscape(x.label)}${x.detail?` <span class="meta">${qEscape(x.detail)}</span>`:''}</div>`}).join('');
   }
   window.OEGQualityV19={qualityChecksFor:qualityChecksV19,statusFromChecks};
 
@@ -210,7 +210,9 @@
 
   /* Replace quality validation check function and display. */
   qualityChecksFor=qualityChecksV19;
-  if(typeof renderQualityChecks==='function')renderQualityChecks=renderChecksV19;
+  // quality.js appelle renderQualityChecks() sans argument (après Valider / Rejeter / Remettre à
+  // contrôler) : on retrouve la fiche sélectionnée, sinon une erreur s'affichait à chaque fois.
+  if(typeof renderQualityChecks==='function')renderQualityChecks=r=>renderChecksV19(r||records.find(x=>x.id===val('qualityRecord')));
   $('qualityRecord')?.addEventListener('change',()=>renderChecksV19(records.find(x=>x.id===val('qualityRecord'))));
 
   /* Add configurable OEG control thresholds to the quality page. */
