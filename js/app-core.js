@@ -227,6 +227,7 @@ const recordsReady=(async()=>{
   });
   const all=[...merged.values()];
   all.forEach(r=>{
+    if(r.session==='S6 - Mars 2027 (saison des pluies)')r.session='S6 - Mars 2027 (petit été de mars)';
     if(!r.lifecycle)r.lifecycle={status:'À contrôler',version:1,createdAt:r.savedAt||new Date().toISOString(),updatedAt:r.savedAt||new Date().toISOString()};
     if(!r.lifecycle.status)r.lifecycle.status='À contrôler';
     if(!Array.isArray(r.auditRefs))r.auditRefs=[];
@@ -594,7 +595,7 @@ function renderAuto(){
     d.innerHTML=`<label>${escapeHTML(lab)}</label><input class="readonly" readonly value="${escapeHTML(v)}">`;
     $('auto').appendChild(d);
   });
-  $('xTheo').value=Number.isFinite(Number(s.x))?s.x:'';
+  const s22=stationXY22(s);$('xTheo').value=s22?String(Math.round(s22[0]*10)/10):'';
   $('yTheo').value=Number.isFinite(Number(s.y))?s.y:'';
   updateDistance();
 }
@@ -757,8 +758,8 @@ function buildELInsitu(){
   $('elDepth').addEventListener('input',refreshELDepthLevels);
 }
 function refreshELTurb(d){
-  const vals=[1,2,3].map(n=>Number(val(`el_turb_${d}_${n}`)));
-  const a=$(`el_turb_avg_${d}`); const all=vals.every(Number.isFinite);
+  const vals=[1,2,3].map(n=>numOrNull(val(`el_turb_${d}_${n}`)));
+  const a=$(`el_turb_avg_${d}`); const all=vals.every(v=>v!==null);
   if(a)a.textContent='Moyenne des 3 mesures : '+(all?(vals.reduce((x,y)=>x+y,0)/3).toFixed(2)+' NTU':'—');
 }
 function refreshELDepthLevels(){
@@ -880,7 +881,7 @@ function buildInsitu(){
     const avg=document.createElement('div');avg.id='iv_turb_moyenne';avg.className='turbAvg';avg.style.marginTop='4px';avg.textContent='Moyenne des 3 mesures : —';
     cell.insertBefore(avg,base);
     function refreshTurbAverage(){
-      const vals=[1,2,3].map(n=>Number(val('iv_turb_'+n))).filter(Number.isFinite);
+      const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n))).filter(v=>v!==null);
       avg.textContent='Moyenne des 3 mesures : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');
     }
     ['1','2','3'].forEach(n=>$('iv_turb_'+n).addEventListener('input',refreshTurbAverage));
@@ -1127,8 +1128,8 @@ function collectInsitu(){
     });
     o.turbidite={};
     ['surf','inter','fond'].forEach(d=>{
-      const a=[1,2,3].map(n=>Number(val(`el_turb_${d}_${n}`)));
-      o.turbidite[d]={mesures:a.map(v=>Number.isFinite(v)?v:null),moyenne:a.every(Number.isFinite)?a.reduce((x,y)=>x+y,0)/3:null,sonde:val('el_probe_turb')};
+      const a=[1,2,3].map(n=>numOrNull(val(`el_turb_${d}_${n}`)));
+      o.turbidite[d]={mesures:a,moyenne:a.every(v=>v!==null)?a.reduce((x,y)=>x+y,0)/3:null,sonde:val('el_probe_turb')};
     });
     return o;
   }
@@ -1142,9 +1143,9 @@ function collectInsitu(){
   o.mode='par appareil';
   /* Turbidité : mesures, nombre valide et moyenne (ancien correctif) */
   if(o.turb){
-    const vals=[1,2,3].map(n=>val('iv_turb_'+n)).map(Number);
-    o.turb.mesures=vals.map(v=>Number.isFinite(v)?v:null);
-    const valid=vals.filter(Number.isFinite);
+    const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n)));
+    o.turb.mesures=vals;
+    const valid=vals.filter(v=>v!==null);
     o.turb.nbMesures=valid.length;
     o.turb.value=valid.length===3?(valid[0]+valid[1]+valid[2])/3:'';
     o.turb.moyenne=o.turb.value;
@@ -1214,6 +1215,12 @@ function collectConditions(){
 // la projection de référence utilisée pour les coordonnées théoriques des stations — afin que
 // l'écart GPS théorique/terrain reste correct même si le relevé terrain a été fait en UTM 21N
 // (cas fréquent dans l'ouest de la Guyane, à cheval sur les deux fuseaux).
+// Valeur numérique d'un champ, ou null s'il est vide (Number('') vaut 0 : une mesure non faite
+// était enregistrée / tracée comme 0 mg/L, 0 NTU…).
+function numOrNull(v){if(v===''||v==null)return null;const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:null}
+// Coordonnées théoriques d'une station ramenées en UTM 22N (une station personnalisée saisie en
+// UTM 21N donnait un écart GPS d'environ 665 km).
+function stationXY22(s){return s?terrainToZone22(s.x,s.y,s.projection):null}
 function terrainToZone22(xRaw,yRaw,projLabel){
   const x=Number(xRaw),y=Number(yRaw);
   if(!Number.isFinite(x)||!Number.isFinite(y))return null;
@@ -1225,11 +1232,11 @@ function terrainToZone22(xRaw,yRaw,projLabel){
   return [x,y];
 }
 function updateDistance(){
-  const s=getStation();
+  const s=getStation(),s22=stationXY22(s);
   const proj=val('projection'),conv=terrainToZone22(val('xT'),val('yT'),proj);
   const convEl=$('xyTConverted');
-  if(s&&conv&&Number.isFinite(Number(s.x))&&Number.isFinite(Number(s.y))&&typeof ecartGPS==='function'){
-    const d=ecartGPS(Number(s.x),Number(s.y),conv[0],conv[1]);
+  if(s22&&conv&&typeof ecartGPS==='function'){
+    const d=ecartGPS(s22[0],s22[1],conv[0],conv[1]);
     $('distance').textContent=d.toFixed(1)+' m';
     if(convEl){
       if(/21/.test(proj))convEl.textContent='Converti en RGFG95 / UTM22N pour le calcul : X='+conv[0].toFixed(2)+' · Y='+conv[1].toFixed(2);
@@ -1376,7 +1383,7 @@ function collectRecord(){
     id:state.editing||Date.now()+'_'+Math.random().toString(36).slice(2,7),
     network:state.network,activity:state.activity,bioOperation:state.bioOperation,session:state.session,station:state.station,stationInfo:s,
     date:val('date'),heureDebut:val('start'),heureFin:val('end'),organisme:val('org'),preleveurs:state.preleveurs,
-    xTheorique:s?.x??'',yTheorique:s?.y??'',xTerrain:val('xT'),yTerrain:val('yT'),ecartM:$('distance').textContent,
+    xTheorique:(stationXY22(s)?.[0]??s?.x)??'',yTheorique:(stationXY22(s)?.[1]??s?.y)??'',xTerrain:val('xT'),yTerrain:val('yT'),ecartM:$('distance').textContent,
     conditions:collectConditions(),insitu:collectInsitu(),sample:collectSample(),specific:collectSpecific(),
     photos:(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p),projection:val('projection'),schemaLegend:{ecoulement:!!$('legendeEcoulement')?.checked,prelevement:!!$('legendePrelevement')?.checked,berges:!!$('legendeBerges')?.checked,acces:!!$('legendeAcces')?.checked,autre:val('legendeAutre')},dessin:canvasData('draw'),signature:canvasData('signature'),signName:val('signName'),
     qc:radioValue('qc'),qcType:val('qcType'),obs:val('obs'),comment:val('comment'),insituBoitier:val('insituBoitier'),formValues:snapshotForm(),savedAt:new Date().toISOString(),
@@ -1444,7 +1451,7 @@ function loadRecord(id){
     const tm=f.insitu.turb.mesures||[];
     [1,2,3].forEach((n,i)=>{if($('iv_turb_'+n))$('iv_turb_'+n).value=(tm[i]!=null?tm[i]:'')});
     const avg=$('iv_turb_moyenne');
-    if(avg){const vals=[1,2,3].map(n=>Number(val('iv_turb_'+n))).filter(Number.isFinite);avg.textContent='Moyenne des 3 mesures : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');}
+    if(avg){const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n))).filter(v=>v!==null);avg.textContent='Moyenne des 3 mesures : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');}
   }
   if(f.network==='EL' && f.insitu?.params){
     const d=f.insitu;
@@ -1564,7 +1571,8 @@ function suiviValueFor(record,param){
     const v=ins.params?.[key]?.[depthKey];
     return (v===undefined||v===null||v==='')?undefined:Number(v);
   }
-  return ins[param]?.value;
+  const v=ins[param]?.value;
+  return (v===undefined||v===null||v==='')?undefined:v; // mesure non faite : absente (et non 0)
 }
 function suiviParamsFor(network,station){
   const set=new Set();

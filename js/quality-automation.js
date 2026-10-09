@@ -1,7 +1,8 @@
 /* ========== V19 : CONTRÔLES QUALITE AUTOMATISES + TABLEAU DE BORD ========== */
 (function(){
   const V19_VERSION='20.0';
-  const UNITS={ph:'u.pH',temp:'°C',cond:'µS/cm',sal:'µS/cm',o2mg:'mg/L',o2pc:'%',turb:'NTU',air:'°C'};
+  // (redox ajouté : une fiche ESO avec potentiel redox était bloquée ; salinité sans unité, comme à la saisie)
+  const UNITS={ph:'u.pH',temp:'°C',cond:'µS/cm',sal:'',o2mg:'mg/L',o2pc:'%',turb:'NTU',air:'°C',redox:'mV/ENH'};
   window.UNITS=UNITS;
   const LABELS={ph:'pH',temp:"Température de l'eau",cond:'Conductivité',sal:'Salinité',o2mg:'Oxygène dissous',o2pc:'Saturation O₂',turb:'Turbidité',air:"Température de l'air"};
   // Pas de plage de référence pour le pH ni la température (retirées à la demande de l'OEG) :
@@ -31,7 +32,9 @@
   function operatorStatus(name){
     const target=String(name||'').trim().toLowerCase();
     const all=custom.preleveurs||[];
-    const match=all.find(o=>String(operatorDisplay(o)).trim().toLowerCase()===target);
+    // Les préleveurs des prestataires (HYDRECO, NBC, DGTM) sont cochés par leurs initiales : on
+    // cherche aussi par initiales, sinon leur habilitation enregistrée n'était jamais reconnue.
+    const match=all.find(o=>String(operatorDisplay(o)).trim().toLowerCase()===target)||all.find(o=>String(o.initiales||'').trim().toLowerCase()===target);
     if(match){
       const due=match.habilitationEcheance||match.habEch||'';
       const d=due?new Date(due+'T23:59:59'):null;
@@ -39,10 +42,11 @@
       return due?{state:'valid',label:'Habilitation enregistrée'}:{state:'unknown',label:'Habilitation à documenter'};
     }
     if((OEG_PRELEVEURS||[]).map(String).some(x=>x.toLowerCase()===target)) return {state:'unknown',label:'Préleveur historique OEG — habilitation à documenter'};
+    if(Object.values(typeof PRELEVEURS_BY_ORG!=='undefined'?PRELEVEURS_BY_ORG:{}).flat().map(String).some(x=>x.toLowerCase()===target)) return {state:'unknown',label:'Préleveur prestataire — habilitation à documenter'};
     return {state:'missing',label:'Opérateur non référencé dans les habilitations'};
   }
   function eqStatusFor(gmao){return equipStatus(equipmentByGmao(gmao))}
-  function stationCoords(r){const s=r?.stationInfo||getStation();return s||null}
+  function stationCoords(r){const s=r?.stationInfo||getStation();if(!s)return null;const z=(typeof stationXY22==='function')?stationXY22(s):null;return z?{...s,x:z[0],y:z[1]}:s}
   function dateTimeOfRecord(r){return dtLocal(r?.date,r?.heureDebut)}
   function custodyDateOfRecord(r){return asDate(r?.sampleTrace?.custodyDate||r?.sample?.remise||r?.sample?.esoRemise||r?.custodyDate||'')}
   function filtrationCheck(r){
@@ -94,6 +98,13 @@
     });return out;
   }
   function insituChecks(r){
+    if(r?.network==='EL'){
+      // EL : mesures par profondeur (params.*.surface/intermediaire/fond, turbidité moyenne) ;
+      // auparavant non reconnues → « aucune mesure » et validation impossible.
+      const ins=r.insitu||{},has=v=>v!==''&&v!=null;
+      const any=Object.values(ins.params||{}).some(p=>p&&(has(p.surface)||has(p.intermediaire)||has(p.fond)))||Object.values(ins.turbidite||{}).some(t=>t&&has(t.moyenne));
+      return [{label:'Mesures in situ : au moins une mesure enregistrée',ok:any,level:'warning'}];
+    }
     // seules les vraies mesures (objets) : « mode » (texte) produisait un faux « mesure manquante »
     const out=[]; const entries=Object.entries(r?.insitu||{}).filter(([k,d])=>d&&typeof d==='object'); const withVal=entries.filter(([k,d])=>d&&String(d.value??'').trim()!=='');
     out.push({label:'Mesures in situ : au moins une mesure enregistrée',ok:withVal.length>0,level:'warning'});
@@ -138,7 +149,7 @@
     checks.push(...delayCheck(r));
     const ncs=openNCsFor(r?.id);checks.push({label:'Aucune NC critique ouverte',ok:ncs.every(n=>n.severity!=='Critique'),level:'critical'});
     checks.push({label:'Empreinte d’intégrité présente',ok:!!r?.lifecycle?.integrityHash,level:'critical'});
-    const missing=(!r?.sampleTrace?.sampleId && r?.sample && r?.network!=='BIO');checks.push({label:'Identifiant échantillon / traçabilité',ok:!missing,level:'warning'});
+    const missing=(!r?.sampleTrace?.sampleId && r?.sample && r?.network!=='BIO' && r?.network!=='EL'); // pas de champ identifiant sur la fiche ELchecks.push({label:'Identifiant échantillon / traçabilité',ok:!missing,level:'warning'});
     return checks;
   }
   function statusFromChecks(c){return c.some(x=>!x.ok&&(x.level||'critical')==='critical')?'critical':c.some(x=>!x.ok)?'warning':'ok'}

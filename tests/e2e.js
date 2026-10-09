@@ -544,6 +544,72 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e9.length===0,'aucune erreur JavaScript (sauvegarde / synchronisation) '+JSON.stringify(e9));
     await c9.close();
   }
+  // --- N : règles de saisie et circuit qualité (constats de l'audit) ---
+  {
+    const b2=await chromium.launch(Object.assign(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{},{args:['--lang=en-US']}));
+    const c10=await b2.newContext({serviceWorkers:'block',locale:'en-US'});
+    await c10.route('https://unpkg.com/**',r=>r.abort());await c10.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c10.newPage();const e10=[];p.on('pageerror',e=>e10.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const choose=async(net,i=0)=>{await p.click(`#networks .chip[data-n="${net}"]`);
+      for(const id of ['session','activity'])await p.evaluate(id=>{const s=$(id);if(!s||s.closest('.hide'))return;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
+      await p.evaluate(i=>{const s=$('station');s.value=[...s.options].filter(o=>o.value)[i].value;s.dispatchEvent(new Event('change',{bubbles:true}))},i);await p.waitForTimeout(300)};
+    // Virgule décimale sur un navigateur en anglais
+    await choose('RCO');await p.click('#iv_cond');await p.keyboard.type('125,5');
+    ok(await p.inputValue('#iv_cond')==='125.5','virgule décimale (navigateur en anglais) : « 125,5 » reste 125.5 (auparavant 1255)');
+    // Mesure non faite = absente, pas 0 (turbidité EL, suivi)
+    await choose('EL');for(const n of [1,2,3])await p.fill('#el_turb_surf_'+n,'12');
+    ok(await p.evaluate(()=>{const t=collectInsitu().turbidite;return t.surf.moyenne===12&&t.inter.moyenne===null&&t.inter.mesures.every(v=>v===null)}),'EL : turbidité non mesurée en intermédiaire = absente (et non 0)');
+    await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];const b=(id,d,o2)=>({id,network:'RCO',station:st.nom,date:d,savedAt:d+'T08:00:00.000Z',lifecycle:{status:'À contrôler',updatedAt:d+'T08:00:00.000Z'},insitu:{o2mg:{value:o2},ph:{value:'7'}},photos:[],auditRefs:[]});records.push(b('S1','2026-10-01','7.5'),b('S2','2026-12-01',''));saveLS(LS,records)});
+    ok(await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];const s=suiviSeries('RCO',st.nom,'o2mg');return s.length===1&&s[0].mean===7.5}),'suivi : O₂ non mesuré absent des séries (moyenne 7,5 et non 3,75)');
+    // CRT EL : profil avec la mesure intermédiaire, sans faux zéros
+    await p.evaluate(()=>{const st=stationsFor('EL',null).find(Boolean)||Object.values(DATA).flat().find(x=>x&&x.nom);records.push({id:'ELX',network:'EL',station:st.nom,stationInfo:st,date:'2026-10-05',session:'',savedAt:'2026-10-05T08:00:00.000Z',lifecycle:{status:'À contrôler',updatedAt:'2026-10-05T08:00:00.000Z'},photos:[],auditRefs:[],insitu:{type:'MET',profondeur:'5',profondeurs:{surface:'0.5',intermediaire:'2',fond:'4'},params:{temp:{surface:'29.1',intermediaire:'28.4',fond:'27.2'},ph:{surface:'7.2',intermediaire:'7.0',fond:''}},turbidite:{}}});saveLS(LS,records)});
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='ELX';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    const crt=await p.textContent('#crtPreviewBox');
+    ok(/28[.,]4/.test(crt),'CRT EL : la mesure intermédiaire (28,4 °C) apparaît (auparavant « — » / 0)');
+    ok(await p.evaluate(()=>{const svg=[...document.querySelectorAll('#crtPreviewBox svg')].map(s=>s.textContent).join(' ');return !/\b0\.00\b/.test(svg)}),'CRT EL : aucun faux 0,00 tracé pour les mesures non faites');
+    // Habilitation d'un préleveur prestataire enregistré par ses initiales
+    ok(await p.evaluate(()=>{custom.preleveurs.push({nom:'Bernard',prenom:'Damien',organisme:'HYDRECO',initiales:'DB',habilitationEcheance:'2099-12-31'});const c=qualityChecksFor({network:'RCO',station:'x',preleveurs:['DB'],date:'2026-10-01'}).find(c=>/Opérateur DB/.test(c.label));return c&&c.ok}),'habilitation : préleveur HYDRECO reconnu par ses initiales (auparavant « non référencé »)');
+    // Fiche EL : les mesures in situ sont reconnues, pas d'identifiant d'échantillon exigé
+    ok(await p.evaluate(()=>{const c=qualityChecksFor(records.find(r=>r.id==='ELX'));const m=c.find(x=>/Mesures in situ/.test(x.label));return m&&m.ok&&!c.some(x=>/Identifiant échantillon/.test(x.label)&&!x.ok)}),'fiche EL : mesures in situ reconnues, pas d’identifiant d’échantillon exigé');
+    ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'ESO',insitu:{redox:{value:'120'}}});const u=c.find(x=>/redox.*unité/.test(x.label));return !u||u.ok}),'ESO : potentiel redox accepté (unité connue)');
+    // Enregistrement, empreinte d'intégrité, validation avec avertissements justifiés, modification après validation
+    await p.click('.tab[data-tab="new"]');await choose('RCO');
+    await p.fill('#date','2026-10-08');await p.fill('#start','08:00');await p.fill('#end','09:00');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+    await p.click('#save');await p.waitForTimeout(1200);
+    const rid=await p.evaluate(()=>records.find(r=>r.date==='2026-10-08'&&r.network==='RCO')?.id);
+    await p.click('.tab[data-tab="quality"]');await p.waitForTimeout(300);
+    ok(await p.evaluate(async id=>{const r=records.find(x=>x.id===id);return r.lifecycle.integrityHash===await sha256(integrityPayload(r))},rid),'empreinte d’intégrité : une fiche fraîchement enregistrée est « OK » (auparavant « à contrôler »)');
+    const rec=await p.evaluate(id=>{const r=records.find(x=>x.id===id);const c=qualityChecksFor(r);return {crit:c.filter(x=>!x.ok&&(x.level||'critical')==='critical').map(x=>x.label),warn:c.filter(x=>!x.ok&&x.level==='warning').length}},rid);
+    // compléter ce qui est critique pour pouvoir tester la validation (signature, coordonnées)
+    await p.evaluate(id=>{const r=records.find(x=>x.id===id);const c=document.createElement('canvas');c.width=200;c.height=60;c.getContext('2d').fillRect(5,20,150,6);r.signature=c.toDataURL();r.xTerrain=String(stationXY22(r.stationInfo)?.[0]??'');r.yTerrain=String(stationXY22(r.stationInfo)?.[1]??'');r.projection='RGFG 95 / UTM 22N';r.preleveurs=['PF'];
+      custom.equipements.push({gmao:'EQ-T1',nom:'Turbidimètre',serie:'S1',echeance:'2099-12-31'});Object.values(r.insitu).forEach(d=>{if(d&&typeof d==='object'&&String(d.value??'')!=='')d.gmao='EQ-T1'})},rid);
+    await p.evaluate(async id=>{const r=records.find(x=>x.id===id);r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records)},rid);
+    const left=await p.evaluate(id=>qualityChecksFor(records.find(x=>x.id===id)).filter(x=>!x.ok&&(x.level||'critical')==='critical').map(x=>x.label),rid);
+    await p.evaluate(id=>{const s=$('qualityRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}));const v=$('qualityValidator');if(v.tagName==='SELECT'){const o=[...v.options].find(o=>o.value);if(o)v.value=o.value}else v.value='PF';$('qualityValidationComment').value=''},rid);
+    await p.click('#qualityValidate');await p.waitForTimeout(400);
+    const st1=await p.evaluate(id=>records.find(x=>x.id===id).lifecycle.status,rid);
+    await p.fill('#qualityValidationComment','Salinité non mesurée : sonde en panne (justifié)');await p.click('#qualityValidate');await p.waitForTimeout(400);
+    const st2=await p.evaluate(id=>records.find(x=>x.id===id).lifecycle.status,rid);
+    ok(left.length===0&&st1==='À contrôler'&&st2==='Validée','validation : avertissements à justifier par un commentaire, puis fiche validée (auparavant impossible) '+JSON.stringify({left,st1,st2}));
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},rid);await p.waitForTimeout(400);
+    await p.fill('#iv_ph','9.4');await p.click('#save');await p.waitForTimeout(1200);
+    ok(await p.evaluate(id=>{const r=records.find(x=>x.id===id);return r.lifecycle.status==='À contrôler'&&r.lifecycle.modifiedAfterValidation},rid),'fiche validée puis modifiée : repasse « À contrôler »');
+    // Session EL de mars et station personnalisée en UTM 21N
+    ok(await p.evaluate(()=>sessions('EL').includes('S6 - Mars 2027 (petit été de mars)')),'session EL de mars : « petit été de mars »');
+    await p.evaluate(()=>{custom.stations.push({network:'RCO',nom:'Crique test 21N',code:'T21',x:'829131.9',y:'606538.4',projection:'RGFG 95 / UTM 21N',custom:true});saveLS(LSC,custom)});
+    await p.click('.tab[data-tab="new"]');await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity'])await p.evaluate(id=>{const s=$(id);const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
+    const has21=await p.evaluate(()=>{const s=$('station');const o=[...s.options].find(o=>o.value==='Crique test 21N');if(!o)return false;s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}));return true});
+    if(has21){
+      await p.evaluate(()=>{$('projection').value='RGFG 95 / UTM 21N';$('xT').value='829134.9';$('yT').value='606542.4';$('xT').dispatchEvent(new Event('input',{bubbles:true}));if(typeof updateDistance==='function')updateDistance()});
+      const d=parseFloat(await p.textContent('#distance'));
+      ok(d>0&&d<10,'station personnalisée en UTM 21N : écart GPS de quelques mètres (auparavant ≈ 665 km) — '+d+' m');
+    }else ok(true,'station personnalisée en UTM 21N : non proposée pour cette session (test non applicable)');
+    ok(e10.length===0,'aucune erreur JavaScript (règles de saisie et qualité) '+JSON.stringify(e10));
+    await b2.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

@@ -132,10 +132,14 @@ async function saveQualityRecord(){
   const life=previous?.lifecycle||{status:'À contrôler',version:0,createdAt:now,createdBy:actor};
   r.lifecycle={...life,status:'À contrôler',version:(Number(life.version)||0)+(previous?1:0),createdAt:life.createdAt||now,createdBy:life.createdBy||actor,updatedAt:now,updatedBy:actor,modifiedAfterValidation:previous?.lifecycle?.status==='Validée'};
   r.auditRefs=Array.isArray(previous?.auditRefs)?previous.auditRefs.slice():[];
-  r.lifecycle.integrityHash=await sha256(integrityPayload(r));
-  if(previous){r.lifecycle.status=previous.lifecycle.status||'À contrôler';records=records.map(x=>x.id===id?r:x)}else records.push(r);
+  // Une fiche validée ou rejetée puis modifiée repart « À contrôler » (l'historique reste dans
+  // l'audit) : auparavant des données modifiées restaient affichées comme validées.
+  if(previous){const ps=previous.lifecycle?.status||'À contrôler';r.lifecycle.status=(ps==='Validée'||ps==='Rejetée')?'À contrôler':ps;records=records.map(x=>x.id===id?r:x)}else records.push(r);
   const auditId=await audit(previous?'MODIFICATION_FICHE':'CREATION_FICHE',id,{station:r.station,network:r.network,session:r.session,changedFields:recordDiff(previous,r),version:r.lifecycle.version});
   r.auditRefs.push(auditId);
+  // Empreinte calculée en DERNIER (après l'ajout de la référence d'audit et le statut final) :
+  // sinon toute fiche fraîchement enregistrée apparaissait « à contrôler » à la vérification.
+  r.lifecycle.integrityHash=await sha256(integrityPayload(r));
   saveLS(LSC,custom);
   if(!saveLS(LS,records)){records=previous?records.map(x=>x.id===id?previous:x):records.filter(x=>x!==r);return}
   state.editing=null;$('save').textContent='💾 Enregistrer la fiche';updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi();toast(previous?'Fiche mise à jour ✓':'Fiche enregistrée ✓');
@@ -180,8 +184,14 @@ function renderQualityChecks(){
   const r=records.find(x=>x.id===val('qualityRecord'));const h=$('qualityChecks');if(!r){$('qualityStatus').value='';h.innerHTML='';return}$('qualityStatus').value=r.lifecycle?.status||'À contrôler';const checks=qualityChecksFor(r);h.innerHTML=checks.map(x=>`<div class="qualityCheck ${x.ok?'ok':(x.warn?'warn':'bad')}">${x.ok?'✓':'✕'} ${qEscape(x.label)}</div>`).join('');
 }
 $('qualityRecord').onchange=renderQualityChecks;
-$('qualityControl').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const now=new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'À contrôler',updatedAt:now,updatedBy:val('qualityValidator')||qActor(),validationComment:val('qualityValidationComment')||''};saveLS(LS,records);await audit('RETOUR_A_CONTROLER',id,{comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche remise à contrôler');};
-$('qualityValidate').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const name=val('qualityValidator').trim();const checks=qualityChecksFor(r);if(!name)return toast('Nom du validateur requis');if(checks.some(c=>!c.ok)){toast('Validation bloquée : contrôles qualité incomplets');renderQualityChecks();return}const now=val('qualityValidationDate')?new Date(val('qualityValidationDate')).toISOString():new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'Validée',validatedAt:now,validatedBy:name,validationComment:val('qualityValidationComment'),updatedAt:now,updatedBy:name};r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records);await audit('VALIDATION_FICHE',id,{validator:name,comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche validée ✓');};
+$('qualityControl').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const now=new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'À contrôler',updatedAt:now,updatedBy:val('qualityValidator')||qActor(),validationComment:val('qualityValidationComment')||''};r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records);await audit('RETOUR_A_CONTROLER',id,{comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche remise à contrôler');};
+$('qualityValidate').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const name=val('qualityValidator').trim();const checks=qualityChecksFor(r);if(!name)return toast('Nom du validateur requis');
+  // Seuls les contrôles critiques bloquent. Les avertissements (mesure non réalisée, délai, écart
+  // GPS…) doivent être justifiés dans le commentaire de validation. Auparavant tout avertissement
+  // bloquait : aucune fiche EL, par exemple, ne pouvait être validée.
+  const failed=checks.filter(c=>!c.ok),critical=failed.filter(c=>(c.level||'critical')==='critical'),warn=failed.filter(c=>c.level==='warning');
+  if(critical.length){toast('Validation bloquée : '+critical.length+' contrôle(s) critique(s) non satisfait(s)');renderQualityChecks();return}
+  if(warn.length&&!val('qualityValidationComment').trim()){toast('Justifiez dans le commentaire de validation les '+warn.length+' point(s) signalé(s) en orange');renderQualityChecks();$('qualityValidationComment')?.focus();return}const now=val('qualityValidationDate')?new Date(val('qualityValidationDate')).toISOString():new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'Validée',validatedAt:now,validatedBy:name,validationComment:val('qualityValidationComment'),updatedAt:now,updatedBy:name};r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records);await audit('VALIDATION_FICHE',id,{validator:name,comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche validée ✓');};
 $('qualityReject').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const name=val('qualityValidator').trim();if(!name)return toast('Nom du validateur requis');const now=new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'Rejetée',validatedAt:now,validatedBy:name,validationComment:val('qualityValidationComment'),updatedAt:now,updatedBy:name};r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records);await audit('REJET_FICHE',id,{validator:name,comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche rejetée');};
 
 /* --- Non-conformités --- */

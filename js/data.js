@@ -35,7 +35,7 @@ const DATA={
 {"code":"S3","label":"S3 - Novembre 2026 (saison sèche)","mois":"Novembre 2026","saison":"saison sèche"},
 {"code":"S4","label":"S4 - Décembre 2026 (saison sèche)","mois":"Décembre 2026","saison":"saison sèche"},
 {"code":"S5","label":"S5 - Janvier 2027 (saison des pluies)","mois":"Janvier 2027","saison":"saison des pluies"},
-{"code":"S6","label":"S6 - Mars 2027 (saison des pluies)","mois":"Mars 2027","saison":"saison des pluies"},
+{"code":"S6","label":"S6 - Mars 2027 (petit été de mars)","mois":"Mars 2027","saison":"petit été de mars"},
 {"code":"S7","label":"S7 - Mai 2027 (saison des pluies)","mois":"Mai 2027","saison":"saison des pluies"},
 {"code":"S8","label":"S8 - Juillet 2027 (saison des pluies)","mois":"Juillet 2027","saison":"saison des pluies"}],
 

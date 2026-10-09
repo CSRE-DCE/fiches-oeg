@@ -78,6 +78,13 @@
   function measureInputs(){return [...document.querySelectorAll('input[id^="iv_"],input[id^="el_"]')].filter(i=>paramOf(i.id)&&inForm(i))}
   function refreshAllFields(){measureInputs().forEach(refreshField)}
   document.addEventListener('input',e=>{const t=e.target;if(t&&t.id&&inForm(t)){refreshField(t);t.classList.remove('fieldMissing')}});
+  // Virgule décimale : sur une tablette dont le navigateur n'est pas en français, un champ
+  // numérique ignorait la virgule (« 125,5 » devenait 1255, accepté sans alerte). On remplace
+  // la virgule tapée par un point, compris par tous les navigateurs.
+  document.addEventListener('beforeinput',e=>{
+    const t=e.target;
+    if(e.data===','&&t&&t.tagName==='INPUT'&&t.type==='number'&&inForm(t)){e.preventDefault();document.execCommand('insertText',false,'.')}
+  },true);
   document.addEventListener('change',e=>{const t=e.target;if(inForm(t)){t.classList.remove('fieldMissing');t.closest('.fieldMissing')?.classList.remove('fieldMissing')}});
   // Les valeurs chargées par programme (modification d'une fiche, brouillon) ne déclenchent pas
   // d'événement : on rafraîchit régulièrement tant que l'onglet de saisie est affiché.
