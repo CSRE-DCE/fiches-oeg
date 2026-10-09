@@ -210,3 +210,17 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
 /* Fiche terrain imprimée : sans les outils de saisie (prise de photo, palette et gomme du
    schéma, ajout / suppression d'organisme récepteur) */
 @media print{label.btn,.drawToolbar,.swatch,#drawEraser,#clearDraw,[id^="rxAdd_"],.receiverRow button{display:none!important}}
+/* Suivi EL : surface / intermédiaire / fond sur le même graphe */
+.depthMarker{display:inline-block;vertical-align:-1px;flex:0 0 auto}
+.suiviDepthLast{display:flex;flex-direction:column;align-items:flex-end;gap:1px;font-size:12px;font-weight:850;color:var(--brand2);font-variant-numeric:tabular-nums}
+.suiviDepthLast span,.suiviDepthLegend span{display:inline-flex;align-items:center;gap:4px}
+.suiviDepthLegend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:10.5px;color:#52626e;margin-bottom:6px}
+.suiviDepthWrap{position:relative}
+.suiviDepthWrap canvas{touch-action:pan-y}
+.suiviCross{position:absolute;top:16px;bottom:30px;width:1px;background:#9aa8b0;pointer-events:none}
+.suiviTip{position:absolute;top:6px;z-index:2;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 14px rgba(16,32,43,.14);padding:6px 8px;font-size:10.5px;color:var(--ink);pointer-events:none;white-space:nowrap}
+.suiviTip div{display:flex;align-items:center;gap:4px;margin-top:2px}
+.suiviTipN{color:var(--muted);font-weight:400}
+.suiviTrendTable td small{color:var(--muted)}
+.suiviTrendTable th .depthMarker{margin-right:2px}
+.crtDepthKey{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;color:#17212b;font-weight:700}

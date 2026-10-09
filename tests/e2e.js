@@ -793,6 +793,46 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(()=>/format CSV/.test(document.body.innerText)&&!/XLSX is not defined/.test(document.body.innerText)),'import Excel hors connexion : message clair proposant le CSV');
     await c15.close();
   }
+  // --- S : suivi EL — surface, intermédiaire et fond sur le même graphe (onglet Suivi et CRT) ---
+  {
+    const c16=await browser.newContext({serviceWorkers:'block'});
+    await c16.route('https://unpkg.com/**',r=>r.abort());await c16.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c16.newPage();const e16=[];p.on('pageerror',e=>e16.push(e.message));
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const st=await p.evaluate(()=>{
+      const st=DATA.EL_STATIONS[0],ses=DATA.EL_SESSIONS.map(x=>x.label);
+      const mk=(id,session,date,v)=>({id,network:'EL',station:st.nom,stationInfo:st,session,date,savedAt:date+'T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],
+        insitu:{profondeurs:{surface:'0.5',intermediaire:'5',fond:'10'},params:{temp:{surface:v[0],intermediaire:v[1],fond:v[2]},condms:{surface:'52.1',intermediaire:'52.6',fond:'53'}},turbidite:{surf:{moyenne:12},inter:{moyenne:null},fond:{moyenne:21}}}});
+      records.push(mk('SE1',ses[0],'2026-09-10',['29.1','28.4','27.2']),mk('SE2',ses[1],'2026-10-12',['28.6','','26.9']),mk('SE3',ses[2],'2026-11-20',['27.4','27.4','27.3']),mk('SE4',ses[2],'2026-11-28',['27.8','27.2','27.1']));
+      saveLS(LS,records);return st.nom;
+    });
+    await p.click('.tab[data-tab="suivi"]');await p.waitForTimeout(300);
+    await p.evaluate(st=>{const n=$('suiviNetwork');n.value='EL';n.dispatchEvent(new Event('change'));const s=$('suiviStation');s.value=st;s.dispatchEvent(new Event('change'))},st);await p.waitForTimeout(300);
+    const cards=await p.$$eval('#suiviParamGrid .suiviParamCard',cs=>cs.map(c=>({p:c.dataset.param,name:c.querySelector('.suiviParamName').textContent,head:[...c.querySelectorAll('thead th')].map(t=>t.textContent.trim()),rows:[...c.querySelectorAll('tbody tr')].map(tr=>[...tr.children].map(td=>td.textContent.trim()))})));
+    ok(cards.map(c=>c.p).join(',')==='temp,condms,turb'&&!cards.some(c=>/surface|fond/i.test(c.name)),'suivi EL : un seul graphe par paramètre (auparavant un par profondeur) '+cards.map(c=>c.p+':'+c.name).join(' | '));
+    const t=cards.find(c=>c.p==='temp');
+    ok(t&&t.head.join('|')==='Période|Surface|Intermédiaire|Fond'&&t.rows.length===3&&t.rows[1][2]==='—'&&/27\.60 \(n=2\)/.test(t.rows[2][1]),'suivi EL : tableau Période / Surface / Intermédiaire / Fond (mesure manquante « — », moyenne de session indiquée)');
+    const px=await p.evaluate(()=>{const c=document.querySelector('.suiviParamCard[data-param="temp"] canvas'),g=c.getContext('2d'),d=g.getImageData(0,0,c.width,c.height).data;const want={surf:[0xeb,0x68,0x34],inter:[0x1b,0xaf,0x7a],fond:[0x2a,0x78,0xd6]},found={};
+      for(let i=0;i<d.length;i+=4)for(const [k,[r,gg,b]] of Object.entries(want))if(Math.abs(d[i]-r)<12&&Math.abs(d[i+1]-gg)<12&&Math.abs(d[i+2]-b)<12)found[k]=(found[k]||0)+1;return found});
+    ok(px.surf>20&&px.inter>20&&px.fond>20,'suivi EL : surface, intermédiaire et fond tracés sur le même graphe, chacun dans sa couleur '+JSON.stringify(px));
+    const box=await (await p.$('.suiviParamCard[data-param="temp"] canvas')).boundingBox();
+    await p.mouse.move(box.x+box.width/2-4,box.y+60);await p.waitForTimeout(100);
+    const tip=await p.textContent('.suiviParamCard[data-param="temp"] .suiviTip');
+    ok(/Surface : 28\.60/.test(tip)&&/Intermédiaire : —/.test(tip)&&/Fond : 26\.90/.test(tip),'suivi EL : info-bulle avec les trois profondeurs de la session pointée');
+    ok(await p.evaluate(()=>[...document.querySelectorAll('.suiviParamCard[data-param="temp"] .suiviDepthLegend .depthMarker')].length===3),'suivi EL : légende Surface / Intermédiaire / Fond avec symboles');
+    // Autres réseaux : affichage inchangé (un graphe par paramètre avec moyenne / min / max)
+    await p.evaluate(()=>{records.push({id:'SR9',network:'RCO',station:'Station RCO S',date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{ph:{value:'7.1'}}});saveLS(LS,records);renderSuivi()});
+    await p.evaluate(()=>{const n=$('suiviNetwork');n.value='RCO';n.dispatchEvent(new Event('change'));const s=$('suiviStation');s.value='Station RCO S';s.dispatchEvent(new Event('change'))});await p.waitForTimeout(200);
+    ok(await p.evaluate(()=>!!document.querySelector('#suiviParamGrid .suiviMiniStats')&&!document.querySelector('#suiviParamGrid .suiviDepthLegend')),'suivi RCO : affichage habituel conservé');
+    // CRT EL : historique à la station, trois profondeurs sur le même graphe
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='SE3';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    const h=await p.evaluate(()=>{const svgs=[...document.querySelectorAll('#crtPreviewBox .crtGraphCard svg')].filter(s=>/Historique/.test(s.getAttribute('aria-label')||''));const s=svgs[0];return s?{n:svgs.length,strokes:[...s.querySelectorAll('path[fill="none"]')].map(x=>x.getAttribute('stroke')),txt:s.textContent,band:!!s.querySelector('rect[fill-opacity]')}:null});
+    ok(h&&h.strokes.join(',')==='#eb6834,#1baf7a,#2a78d6'&&h.band&&/S1/.test(h.txt)&&/20\/11\/26/.test(h.txt),'CRT EL : historique avec surface, intermédiaire et fond sur le même graphe, visite du rapport surlignée '+JSON.stringify(h&&h.strokes));
+    ok(!(await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox svg')].some(s=>/Historique des mesures/.test(s.getAttribute('aria-label')||'')))),'CRT EL : plus d’histogramme « surface seule »');
+    ok(e16.length===0,'aucune erreur JavaScript (suivi EL) '+JSON.stringify(e16));
+    await c16.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
