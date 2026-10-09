@@ -323,7 +323,9 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.evaluate(()=>{
       const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY);
       const base=(id,s,date)=>({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:s.nom,stationInfo:s,date,heureDebut:'08:00',preleveurs:['PF'],organisme:"Office de l'Eau de Guyane",savedAt:date+'T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:date+'T08:00:00.000Z'},auditRefs:[],photos:[],insitu:{ph:{value:'6.5'}},comment:'Observation terrain'});
-      records.push(base('R1',st[0],'2026-10-05'),base('R2',st[1],'2027-02-10'),base('R3',st[2],'2026-12-14'),base('R4',st[3],'2027-03-09'));saveLS(LS,records);
+      records.push(base('R1',st[0],'2026-10-05'),base('R2',st[1],'2027-02-10'),base('R3',st[2],'2026-12-14'),base('R4',st[3],'2027-03-09'));
+      const sig=(()=>{const c=document.createElement('canvas');c.width=300;c.height=80;const g=c.getContext('2d');g.fillRect(10,30,200,8);return c.toDataURL('image/png')})();
+      records.push({...base('R5',st[4],'2026-10-06'),signName:'PF',signature:sig,lifecycle:{status:'Validée',version:2,updatedAt:'2026-10-07T08:00:00.000Z',validatedBy:'ML',validatedAt:'2026-10-07T08:00:00.000Z'}});saveLS(LS,records);
     });
     await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);
     const pick=id=>p.evaluate(id=>{const s=$('crtRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
@@ -336,6 +338,11 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok((await p.textContent('#crtPreviewBox')).includes('SAISON SÈCHE'),'CRT : visite de décembre = saison sèche (août à décembre)');
     await pick('R4');await p.waitForTimeout(300);
     ok((await p.textContent('#crtPreviewBox')).includes('PETIT ÉTÉ DE MARS'),'CRT : visite de mars = petit été de mars');
+    ok((await p.textContent('#crtPreviewBox')).includes('DOCUMENT PROVISOIRE'),'CRT d’une fiche non validée : mention « document provisoire »');
+    await pick('R5');await p.waitForTimeout(300);
+    txt=await p.textContent('#crtPreviewBox');
+    ok(!txt.includes('DOCUMENT PROVISOIRE')&&/Validée par\s*ML/.test(txt)&&txt.includes('07/10/2026'),'CRT d’une fiche validée : validateur et date de validation, sans mention provisoire');
+    ok(await p.evaluate(()=>!!document.querySelector('#crtPreviewBox img.crtSignature'))&&/Signataire de la fiche terrain\s*PF/.test(txt),'CRT : signataire et signature de la fiche terrain');
     // Saisies du CRT mémorisées par fiche
     await pick('R1');await p.fill('#crtRef','CRT-2026-001');await p.fill('#crtDate','2026-10-20');await p.fill('#crtConclusion','Conclusion R1');await p.click('#crtPreview');await p.waitForTimeout(200);
     txt=await p.textContent('#crtPreviewBox');

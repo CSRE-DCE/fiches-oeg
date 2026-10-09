@@ -169,3 +169,4 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
 @media print{.backupPill,#endOfDayCard{display:none!important}}
 .offTab{display:none!important}
 .crtMapFallback{height:100%;display:flex;align-items:center;justify-content:center}.crtMapFallback[hidden]{display:none}
+.crtDraftBand{margin-top:6mm;border:1.5px solid #a3261f;color:#a3261f;background:#fde9e7;font-weight:800;letter-spacing:.4px;padding:3mm 5mm;font-size:9.5pt;text-align:center}.crtSignature{max-height:18mm;max-width:60mm;object-fit:contain;display:block}
