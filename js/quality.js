@@ -132,10 +132,14 @@ async function saveQualityRecord(){
   const life=previous?.lifecycle||{status:'À contrôler',version:0,createdAt:now,createdBy:actor};
   r.lifecycle={...life,status:'À contrôler',version:(Number(life.version)||0)+(previous?1:0),createdAt:life.createdAt||now,createdBy:life.createdBy||actor,updatedAt:now,updatedBy:actor,modifiedAfterValidation:previous?.lifecycle?.status==='Validée'};
   r.auditRefs=Array.isArray(previous?.auditRefs)?previous.auditRefs.slice():[];
-  r.lifecycle.integrityHash=await sha256(integrityPayload(r));
-  if(previous){r.lifecycle.status=previous.lifecycle.status||'À contrôler';records=records.map(x=>x.id===id?r:x)}else records.push(r);
+  // Une fiche validée ou rejetée puis modifiée repart « À contrôler » (l'historique reste dans
+  // l'audit) : auparavant des données modifiées restaient affichées comme validées.
+  if(previous){const ps=previous.lifecycle?.status||'À contrôler';r.lifecycle.status=(ps==='Validée'||ps==='Rejetée')?'À contrôler':ps;records=records.map(x=>x.id===id?r:x)}else records.push(r);
   const auditId=await audit(previous?'MODIFICATION_FICHE':'CREATION_FICHE',id,{station:r.station,network:r.network,session:r.session,changedFields:recordDiff(previous,r),version:r.lifecycle.version});
   r.auditRefs.push(auditId);
+  // Empreinte calculée en DERNIER (après l'ajout de la référence d'audit et le statut final) :
+  // sinon toute fiche fraîchement enregistrée apparaissait « à contrôler » à la vérification.
+  r.lifecycle.integrityHash=await sha256(integrityPayload(r));
   saveLS(LSC,custom);
   if(!saveLS(LS,records)){records=previous?records.map(x=>x.id===id?previous:x):records.filter(x=>x!==r);return}
   state.editing=null;$('save').textContent='💾 Enregistrer la fiche';updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi();toast(previous?'Fiche mise à jour ✓':'Fiche enregistrée ✓');
@@ -180,22 +184,60 @@ function renderQualityChecks(){
   const r=records.find(x=>x.id===val('qualityRecord'));const h=$('qualityChecks');if(!r){$('qualityStatus').value='';h.innerHTML='';return}$('qualityStatus').value=r.lifecycle?.status||'À contrôler';const checks=qualityChecksFor(r);h.innerHTML=checks.map(x=>`<div class="qualityCheck ${x.ok?'ok':(x.warn?'warn':'bad')}">${x.ok?'✓':'✕'} ${qEscape(x.label)}</div>`).join('');
 }
 $('qualityRecord').onchange=renderQualityChecks;
-$('qualityControl').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const now=new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'À contrôler',updatedAt:now,updatedBy:val('qualityValidator')||qActor(),validationComment:val('qualityValidationComment')||''};saveLS(LS,records);await audit('RETOUR_A_CONTROLER',id,{comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche remise à contrôler');};
-$('qualityValidate').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const name=val('qualityValidator').trim();const checks=qualityChecksFor(r);if(!name)return toast('Nom du validateur requis');if(checks.some(c=>!c.ok)){toast('Validation bloquée : contrôles qualité incomplets');renderQualityChecks();return}const now=val('qualityValidationDate')?new Date(val('qualityValidationDate')).toISOString():new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'Validée',validatedAt:now,validatedBy:name,validationComment:val('qualityValidationComment'),updatedAt:now,updatedBy:name};r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records);await audit('VALIDATION_FICHE',id,{validator:name,comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche validée ✓');};
+$('qualityControl').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const now=new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'À contrôler',updatedAt:now,updatedBy:val('qualityValidator')||qActor(),validationComment:val('qualityValidationComment')||''};r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records);await audit('RETOUR_A_CONTROLER',id,{comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche remise à contrôler');};
+$('qualityValidate').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const name=val('qualityValidator').trim();const checks=qualityChecksFor(r);if(!name)return toast('Nom du validateur requis');
+  // Seuls les contrôles critiques bloquent. Les avertissements (mesure non réalisée, délai, écart
+  // GPS…) doivent être justifiés dans le commentaire de validation. Auparavant tout avertissement
+  // bloquait : aucune fiche EL, par exemple, ne pouvait être validée.
+  const failed=checks.filter(c=>!c.ok),critical=failed.filter(c=>(c.level||'critical')==='critical'),warn=failed.filter(c=>c.level==='warning');
+  if(critical.length){toast('Validation bloquée : '+critical.length+' contrôle(s) critique(s) non satisfait(s)');renderQualityChecks();return}
+  if(warn.length&&!val('qualityValidationComment').trim()){toast('Justifiez dans le commentaire de validation les '+warn.length+' point(s) signalé(s) en orange');renderQualityChecks();$('qualityValidationComment')?.focus();return}const now=val('qualityValidationDate')?new Date(val('qualityValidationDate')).toISOString():new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'Validée',validatedAt:now,validatedBy:name,validationComment:val('qualityValidationComment'),updatedAt:now,updatedBy:name};r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records);await audit('VALIDATION_FICHE',id,{validator:name,comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche validée ✓');};
 $('qualityReject').onclick=async()=>{const id=val('qualityRecord');const r=records.find(x=>x.id===id);if(!r)return toast('Sélectionnez une fiche');const name=val('qualityValidator').trim();if(!name)return toast('Nom du validateur requis');const now=new Date().toISOString();r.lifecycle={...(r.lifecycle||{}),status:'Rejetée',validatedAt:now,validatedBy:name,validationComment:val('qualityValidationComment'),updatedAt:now,updatedBy:name};r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records);await audit('REJET_FICHE',id,{validator:name,comment:r.lifecycle.validationComment});renderQuality();renderQualityChecks();toast('Fiche rejetée');};
 
 /* --- Non-conformités --- */
 $('addNC').onclick=async()=>{const recordId=val('ncRecord');const desc=val('ncDescription').trim();if(!recordId||!desc)return toast('Fiche et description de l’écart requis');const n={id:Date.now()+'_'+Math.random().toString(36).slice(2,6),recordId,category:val('ncCategory'),severity:val('ncSeverity'),status:val('ncStatus'),responsible:val('ncResponsible'),dueDate:val('ncDueDate'),description:desc,immediate:val('ncImmediate'),corrective:val('ncCorrective'),createdAt:new Date().toISOString(),createdBy:qActor()};custom.nonConformites.push(n);saveLS(LSC,custom);await audit('CREATION_NON_CONFORMITE',recordId,{id:n.id,severity:n.severity,category:n.category});['ncResponsible','ncDueDate','ncDescription','ncImmediate','ncCorrective'].forEach(id=>setField(id,''));renderQuality();toast('Non-conformité enregistrée');};
 function renderNCList(){const h=$('ncList');if(!h)return;const arr=(custom.nonConformites||[]).slice().sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));h.innerHTML=arr.length?arr.map(n=>{const r=records.find(x=>x.id===n.recordId);return `<div class="listcard"><div class="listtop"><div><b>${qEscape(n.severity)} — ${qEscape(n.category)}</b><div class="meta">${qEscape(r?.station||'Fiche supprimée')} · ${qEscape(n.status)} · ${qEscape(n.createdAt?.slice(0,16).replace('T',' '))}</div></div><button class="btn ${n.status==='Clôturée'?'ghost':'primary'} small" data-nc="${qEscape(n.id)}">${n.status==='Clôturée'?'Réouvrir':'Clôturer'}</button></div><div style="margin-top:6px;font-size:12px">${qEscape(n.description)}</div><div class="meta" style="margin-top:4px">Responsable : ${qEscape(n.responsible||'—')} · Échéance : ${qEscape(n.dueDate||'—')}</div></div>`}).join(''):'<div class="suiviEmpty">Aucune non-conformité enregistrée.</div>';h.querySelectorAll('[data-nc]').forEach(b=>b.onclick=async()=>{const n=custom.nonConformites.find(x=>x.id===b.dataset.nc);if(!n)return;n.status=n.status==='Clôturée'?'Ouverte':'Clôturée';n.closedAt=n.status==='Clôturée'?new Date().toISOString():'';n.closedBy=qActor();saveLS(LSC,custom);await audit(n.status==='Clôturée'?'CLOTURE_NON_CONFORMITE':'REOUVERTURE_NON_CONFORMITE',n.recordId,{id:n.id});renderQuality()})}
 
-async function verifyAllIntegrity(){let ok=0,bad=0;for(const r of records){const expected=await sha256(integrityPayload(r));if(r.lifecycle?.integrityHash===expected)ok++;else bad++}$('integrityResult').innerHTML=`<div class="banner ${bad?'danger':''}" style="margin:0">Empreintes vérifiées : <b>${ok}</b> OK · <b>${bad}</b> à contrôler.</div>`;await audit('VERIFICATION_INTEGRITE','',{ok,bad});renderAudit()}
+async function verifyAllIntegrity(){let ok=0,bad=0,light=0;for(const r of records){if(r._archived){light++;continue}const expected=await sha256(integrityPayload(r));if(r.lifecycle?.integrityHash===expected)ok++;else bad++}$('integrityResult').innerHTML=`<div class="banner ${bad?'danger':''}" style="margin:0">Empreintes vérifiées : <b>${ok}</b> OK · <b>${bad}</b> à contrôler`+(light?` · <b>${light}</b> fiche(s) allégée(s), non vérifiable(s) sans leurs photos (« Récupérer l’historique » les leur rend)`:'')+`.</div>`;await audit('VERIFICATION_INTEGRITE','',{ok,bad,allegees:light});renderAudit()}
 $('runIntegrity').onclick=verifyAllIntegrity;
 $('clearAuditView').onclick=renderQuality;
 function renderAudit(){const h=$('auditBody');if(!h)return;const arr=(custom.auditTrail||[]).slice().reverse().slice(0,250);h.innerHTML=arr.length?arr.map(a=>`<tr><td>${qEscape((a.timestamp||'').replace('T',' ').slice(0,19))}</td><td>${qEscape(a.action)}</td><td>${qEscape((records.find(r=>r.id===a.recordId)?.station)||a.recordId||'—')}</td><td>${qEscape(a.actor)}</td><td>${qEscape(JSON.stringify(a.details||{}).slice(0,220))}</td></tr>`).join(''):'<tr><td colspan="5">Aucun évènement d’audit.</td></tr>'}
 
 /* --- Export / import renforcés --- */
 $('exportJSON').onclick=async()=>{await audit('EXPORT_JSON','',{records:records.length});saveLS(LSC,custom);download('sauvegarde_OEG_'+Date.now()+'.json',JSON.stringify({records,custom,version:20,exportedAt:new Date().toISOString()},null,2),'application/json')};
-$('exportCSV').onclick=async()=>{await audit('EXPORT_CSV','',{records:records.length});const cols=['id','network','activity','bioOperation','session','station','date','heureDebut','heureFin','organisme','preleveurs','xTheorique','yTheorique','xTerrain','yTerrain','ecartM','methodRef','methodVersion','obs','comment','status'];const rows=[cols.join(';')];records.forEach(r=>rows.push(cols.map(c=>csv(c==='status'?(r.lifecycle?.status||''):(c==='preleveurs'?r.preleveurs:r[c]))).join(';')));download('fiches_OEG_'+Date.now()+'.csv','\uFEFF'+rows.join('\n'),'text/csv;charset=utf-8')};
+// Export CSV « à plat » : une ligne par fiche, avec les mesures in situ, les conditions (codes
+// SANDRE), l'échantillonnage, le contrôle qualité, la traçabilité et la validation — auparavant
+// 21 colonnes d'identification seulement, sans aucune mesure. Colonnes = union des champs des
+// fiches exportées, dans un ordre stable (identification d'abord).
+function flatRecordForCsv(r){
+  const lc=r.lifecycle||{},si=r.stationInfo||{},i=r.insitu||{},o={};
+  const put=(k,v)=>{if(v===undefined||v===null||typeof v==='object'&&!Array.isArray(v))return;o[k]=v===true?'Oui':v===false?'':v};
+  const r2=v=>{const n=numOrNull(v);return n===null?(v??''):Math.round(n*100)/100};
+  ['id','network','activity','bioOperation','session','station'].forEach(k=>put(k,r[k]??''));
+  put('codeStation',si.code||si.code_bss||'');
+  ['date','heureDebut','heureFin','organisme','preleveurs','xTheorique','yTheorique','xTerrain','yTerrain','projection'].forEach(k=>put(k,r[k]??''));
+  put('ecartM',numOrNull(String(r.ecartM||'').replace(/\s*m\s*$/,''))??''); // nombre (auparavant « 12.3 m »)
+  ['methodRef','methodVersion','obs','comment'].forEach(k=>put(k,r[k]??''));
+  put('status',lc.status||'');put('version',lc.version??'');put('validePar',lc.validatedBy||'');put('valideLe',lc.validatedAt||'');put('commentaireValidation',lc.validationComment||'');
+  put('signataire',r.signName||'');put('boitier',r.insituBoitier||'');
+  put('nonConformitesOuvertes',(custom.nonConformites||[]).filter(n=>String(n.recordId)===String(r.id)&&n.status!=='Clôturée').length);
+  if(r.network==='EL'){
+    const P=i.profondeurs||{},D=['surface','intermediaire','fond'];
+    put('el_profondeurTotale',i.profondeur??'');D.forEach(d=>put('el_niveau_'+d,P[d]??''));
+    Object.entries(i.params||{}).forEach(([k,d])=>{D.forEach(dd=>put('el_'+k+'_'+dd,(dd==='intermediaire'?(d?.intermediaire??d?.inter):d?.[dd])??''));put('el_'+k+'_sonde',d?.sonde??'')});
+    const t=i.turbidite||{};[['surf','surface'],['inter','intermediaire'],['fond','fond']].forEach(([a,b])=>put('el_turb_'+b,r2(t[a]?.moyenne)));
+  }else Object.entries(i).forEach(([k,d])=>{if(!d||typeof d!=='object'||Array.isArray(d))return;put('mes_'+k,k==='turb'?r2(d.moyenne??d.value):(d.value??''));put('mes_'+k+'_gmao',d.gmao??'');if(d.mode)put('mes_'+k+'_mode',d.mode)});
+  Object.entries(r.conditions||{}).forEach(([k,v])=>put('cond_'+k,v));
+  const s=r.sample||{},recv=list=>(Array.isArray(list)?list:[]).filter(x=>x&&(x.organisme||x.dateHeure)).map(x=>(x.organisme||'?')+(x.dateHeure?' ('+x.dateHeure+')':''));
+  Object.entries(s).forEach(([k,v])=>{if(!Array.isArray(v)||v.every(x=>x===null||typeof x!=='object'))put('ech_'+k,v)});
+  put('ech_recepteurs',recv(s.recepteurs));put('ech_esoRecepteurs',recv(s.esoRecepteurs));
+  Object.entries(r.specific||{}).forEach(([k,v])=>put('spec_'+k,v));
+  put('qc',r.qc||'');put('qcType',r.qcType||'');Object.entries(r.quality||{}).forEach(([k,v])=>put('qualite_'+k,v));
+  Object.entries(r.sampleTrace||{}).forEach(([k,v])=>put('trace_'+k,v));
+  return o;
+}
+window.flatRecordForCsv=flatRecordForCsv;
+$('exportCSV').onclick=async()=>{await audit('EXPORT_CSV','',{records:records.length});const flat=records.map(flatRecordForCsv),cols=[],seen=new Set();flat.forEach(o=>Object.keys(o).forEach(k=>{if(!seen.has(k)){seen.add(k);cols.push(k)}}));const rows=[cols.join(';')];flat.forEach(o=>rows.push(cols.map(c=>csv(o[c])).join(';')));download('fiches_OEG_'+Date.now()+'.csv','﻿'+rows.join('\n'),'text/csv;charset=utf-8')};
 
 /* Import : conserver un historique et initialiser les nouvelles structures. */
 // Gestionnaire unique du bouton "Importer JSON" (seul point d'entrée — ne pas en ajouter un
@@ -214,14 +256,25 @@ function ensureLifecycle(r){
 $('importJSON').onchange=e=>{
   const files=[...e.target.files];
   if(!files.length)return;
-  let imported=0,updated=0,fail=0,pending=files.length;
+  let imported=0,updated=0,older=0,same=0,fail=0,pending=files.length;
+  // Une fiche déjà présente n'est remplacée que par une version PLUS RÉCENTE (date de dernière
+  // modification). Auparavant le dernier fichier lu l'emportait : restaurer un dossier contenant
+  // plusieurs versions, ou importer une ancienne sauvegarde, écrasait la bonne version.
+  const importOne=r=>{
+    ensureLifecycle(r);
+    const idx=records.findIndex(x=>x.id===r.id);
+    if(idx===-1){records.push(r);imported++;return}
+    const cur=records[idx];
+    if(JSON.stringify(stableObj(cur))===JSON.stringify(stableObj(r))){same++;return}
+    if(recordStamp(r)>recordStamp(cur)){records[idx]=r;updated++}else older++;
+  };
   const finish=async()=>{
     saveLS(LS,records);saveLS(LSC,custom);
     await audit('IMPORT_JSON','',{nouvelles:imported,misesAJour:updated,echecs:fail});
     renderOperators();renderEquipment();renderOrgOptions();renderPre();updateCount();renderList();renderQuality();
     if($('suivi')?.classList.contains('active'))renderSuivi();
     e.target.value='';
-    toast(`Import terminé : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(fail?`, ${fail} fichier(s) invalide(s)`:'')+' ✓');
+    toast(`Import terminé : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(older?`, ${older} version(s) plus ancienne(s) ignorée(s) (la tablette a plus récent)`:'')+(fail?`, ${fail} fichier(s) non reconnu(s)`:'')+' ✓');
   };
   files.forEach(f=>{
     const fr=new FileReader();
@@ -229,16 +282,13 @@ $('importJSON').onchange=e=>{
       try{
         const d=JSON.parse(fr.result);
         if(Array.isArray(d.records)){
-          d.records.forEach(r=>{
-            ensureLifecycle(r);
-            const idx=records.findIndex(x=>x.id===r.id);
-            if(idx>-1){records[idx]=r;updated++}else{records.push(r);imported++}
-          });
+          d.records.forEach(importOne);
           if(d.custom)mergeCustomInto(custom,d.custom);
         }else if(d&&d.id&&d.network){
-          ensureLifecycle(d);
-          const idx=records.findIndex(x=>x.id===d.id);
-          if(idx>-1){records[idx]=d;updated++}else{records.push(d);imported++}
+          importOne(d);
+        }else if(d&&(d.type==='referentiel_operateurs_equipements_stations'||d.type==='qualite_audit_non_conformites')){
+          // fichiers « _referentiel… » et « _qualite… » du dossier de sauvegarde / de Drive
+          mergeCustomInto(custom,d);
         }else{fail++}
       }catch(err){fail++}
       if(--pending===0)finish();
@@ -249,7 +299,7 @@ $('importJSON').onchange=e=>{
 };
 
 /* --- Liste des fiches : statut + métrologie + NC ouvertes --- */
-function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>JSON.stringify(x).toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.heureDebut||'')}–${qEscape(f.heureFin||'')}</div></div><span class="badge">${qEscape(st)}</span></div><div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${f.conflict?`<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — comparez avec la fiche d’origine, gardez la bonne et supprimez l’autre.</div>`:''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button></div>`;const b=d.querySelectorAll('button');b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
+function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>[x.station,x.stationInfo?.code,x.network,x.activity,x.session,x.date,(x.preleveurs||[]).join(' '),x.organisme,x.signName,x.obs,x.comment,x.lifecycle?.status,x.id].join(' ').toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.heureDebut||'')}–${qEscape(f.heureFin||'')}</div></div><span class="badge">${qEscape(st)}</span></div><div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${f.conflict?`<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — comparez avec la fiche d’origine, gardez la bonne et supprimez l’autre.</div>`:''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button></div>`;const b=d.querySelectorAll('button');b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
 
 /* --- Qualité : configuration persistante --- */
 ['qualityMethodRef','qualityMethodVersion','qualityInterlab','qualityMaterialRef'].forEach(id=>{

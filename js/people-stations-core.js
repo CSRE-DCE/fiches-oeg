@@ -121,6 +121,8 @@ function clearFormNoConfirm(opts){state={network:null,activity:null,bioOperation
   // (app-core.js) les inclut, sinon les mesures saisies ne déclenchaient pas le brouillon.
   const inForm=t=>!!t?.closest&&(typeof inFiche==='function'?inFiche(t):!!t.closest('#new'));
   document.addEventListener('input',e=>{if(inForm(e.target))scheduleDraftSave()});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveDraftNow()});
+  window.addEventListener('pagehide',()=>saveDraftNow());
   document.addEventListener('change',e=>{if(inForm(e.target))scheduleDraftSave()});
   function showDraftBanner(draft){
     if(q('draftBanner'))return;

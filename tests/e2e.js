@@ -27,7 +27,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     const part=()=>{const parts=body.split(/--oegboundary[^\r\n]*/);const meta=JSON.parse(parts[1].split('\r\n\r\n')[1]);const txt=parts[2].split('\r\n\r\n').slice(1).join('\r\n\r\n').replace(/\r\n$/,'');return {meta,txt}};
     if(m==='GET'&&u.pathname==='/drive/v3/files')return r.fulfill({json:{files:[...drive].map(([id,f])=>({id,name:f.name,version:String(f.v)}))}});
     let mm;
-    if(m==='GET'&&(mm=u.pathname.match(/^\/drive\/v3\/files\/(.+)$/))){const f=drive.get(mm[1]);if(u.searchParams.get('alt')==='media')return r.fulfill({body:f.text,contentType:'application/json'});return r.fulfill({json:{version:String(f.v)}})}
+    if(m==='GET'&&(mm=u.pathname.match(/^\/drive\/v3\/files\/(.+)$/))){const f=drive.get(mm[1]);if(!f)return mm[1]==='F'?r.fulfill({json:{id:'F',trashed:false}}):r.fulfill({status:404,json:{}});if(u.searchParams.get('alt')==='media')return r.fulfill({body:f.text,contentType:'application/json'});return r.fulfill({json:{version:String(f.v)}})}
     if(m==='POST'&&u.pathname.startsWith('/upload')){const {meta,txt}=part();const id='f'+(nid++);drive.set(id,{name:meta.name,text:txt,v:1});return r.fulfill({json:{id,version:'1'}})}
     if(m==='PATCH'&&(mm=u.pathname.match(/files\/(.+)$/))){const {meta,txt}=part();const f=drive.get(mm[1]);f.name=meta.name;f.text=txt;f.v++;return r.fulfill({json:{id:mm[1],version:String(f.v)}})}
     r.fulfill({status:500});
@@ -312,6 +312,486 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.obs==='BROUILLON X','mise à jour de A : le brouillon de la fiche X n’est pas effacé');
     ok(e6.length===0,'aucune erreur JavaScript (champs de fiche) '+JSON.stringify(e6));
     await c6.close();
+  }
+  // --- J : CRT (saison, date du rapport, saisies mémorisées par fiche, consolidé, carte hors ligne, logo) ---
+  {
+    const c7=await browser.newContext({serviceWorkers:'block'});
+    await c7.route('https://unpkg.com/**',r=>r.abort());
+    await c7.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c7.newPage();const e7=[];p.on('pageerror',e=>e7.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY);
+      const base=(id,s,date)=>({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:s.nom,stationInfo:s,date,heureDebut:'08:00',preleveurs:['PF'],organisme:"Office de l'Eau de Guyane",savedAt:date+'T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:date+'T08:00:00.000Z'},auditRefs:[],photos:[],insitu:{ph:{value:'6.5'}},comment:'Observation terrain'});
+      records.push(base('R1',st[0],'2026-10-05'),base('R2',st[1],'2027-02-10'),base('R3',st[2],'2026-12-14'),base('R4',st[3],'2027-03-09'));
+      const sig=(()=>{const c=document.createElement('canvas');c.width=300;c.height=80;const g=c.getContext('2d');g.fillRect(10,30,200,8);return c.toDataURL('image/png')})();
+      records.push({...base('R5',st[4],'2026-10-06'),signName:'PF',signature:sig,lifecycle:{status:'Validée',version:2,updatedAt:'2026-10-07T08:00:00.000Z',validatedBy:'ML',validatedAt:'2026-10-07T08:00:00.000Z'}});saveLS(LS,records);
+    });
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);
+    const pick=id=>p.evaluate(id=>{const s=$('crtRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await pick('R1');await p.waitForTimeout(300);
+    let txt=await p.textContent('#crtPreviewBox');
+    ok(txt.includes('SAISON SÈCHE'),'CRT : visite d’octobre = saison sèche');
+    await pick('R2');await p.waitForTimeout(300);
+    ok((await p.textContent('#crtPreviewBox')).includes('SAISON DES PLUIES'),'CRT : visite de février = saison des pluies (auparavant toujours « sèche »)');
+    await pick('R3');await p.waitForTimeout(300);
+    ok((await p.textContent('#crtPreviewBox')).includes('SAISON SÈCHE'),'CRT : visite de décembre = saison sèche (août à décembre)');
+    await pick('R4');await p.waitForTimeout(300);
+    ok((await p.textContent('#crtPreviewBox')).includes('PETIT ÉTÉ DE MARS'),'CRT : visite de mars = petit été de mars');
+    ok((await p.textContent('#crtPreviewBox')).includes('DOCUMENT PROVISOIRE'),'CRT d’une fiche non validée : mention « document provisoire »');
+    await pick('R5');await p.waitForTimeout(300);
+    txt=await p.textContent('#crtPreviewBox');
+    ok(!txt.includes('DOCUMENT PROVISOIRE')&&/Validée par\s*ML/.test(txt)&&txt.includes('07/10/2026'),'CRT d’une fiche validée : validateur et date de validation, sans mention provisoire');
+    ok(await p.evaluate(()=>!!document.querySelector('#crtPreviewBox img.crtSignature'))&&/Signataire de la fiche terrain\s*PF/.test(txt),'CRT : signataire et signature de la fiche terrain');
+    // Saisies du CRT mémorisées par fiche
+    await pick('R1');await p.fill('#crtRef','CRT-2026-001');await p.fill('#crtDate','2026-10-20');await p.fill('#crtConclusion','Conclusion R1');await p.click('#crtPreview');await p.waitForTimeout(200);
+    txt=await p.textContent('#crtPreviewBox');
+    ok(txt.includes('CRT-2026-001')&&txt.includes('20/10/2026')&&txt.includes('Conclusion R1'),'CRT : référence, date du rapport et conclusion imprimées');
+    ok(!/Conclusion \/ synthèse\s*Observation terrain/.test(txt),'CRT : la conclusion ne recopie plus les observations');
+    await pick('R2');await p.waitForTimeout(200);
+    ok(await p.inputValue('#crtRef')===''&&await p.inputValue('#crtConclusion')==='','CRT : autre fiche = champs propres à cette fiche (vides)');
+    await p.fill('#crtRef','CRT-2027-002');await p.waitForTimeout(600);
+    await pick('R1');await p.waitForTimeout(200);
+    ok(await p.inputValue('#crtRef')==='CRT-2026-001'&&await p.inputValue('#crtConclusion')==='Conclusion R1','CRT : retour sur la fiche R1 = ses saisies retrouvées');
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);await pick('R2');await p.waitForTimeout(200);
+    ok(await p.inputValue('#crtRef')==='CRT-2027-002','CRT : saisies conservées après rechargement de l’appli');
+    // Consolidé : chaque fiche avec sa propre référence
+    await p.evaluate(()=>{window.print=()=>{window.__printed=(window.__printed||0)+1}});
+    await p.evaluate(()=>{const n=$('crtBatchNetwork');n.value='RCO';n.dispatchEvent(new Event('change'));const s=$('crtBatchSession');s.value=s.options[1].value;s.dispatchEvent(new Event('change'))});
+    await p.click('#crtBatchGenerate');await p.waitForFunction(()=>window.__printed>=1,null,{timeout:10000});
+    txt=await p.textContent('#crtPreviewBox');
+    ok(txt.includes('CRT-2026-001')&&txt.includes('CRT-2027-002'),'CRT consolidé : chaque fiche avec sa propre référence');
+    // Carte hors ligne : carte schématique au lieu d'un cadre vide ; logo en fichier
+    await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox .crtMapPlaceholder')].every(b=>{const fb=b.querySelector('.crtMapFallback');return fb&&!fb.hidden&&fb.querySelector('svg')})),'CRT : fond de carte indisponible = carte schématique affichée');
+    ok(await p.evaluate(()=>{const imgs=[...document.querySelectorAll('#crtPreviewBox img.crtPageLogo,#crtPreviewBox img.crtCoverLogo')];return imgs.length>0&&imgs.every(i=>i.getAttribute('src')==='img/logo-oeg.png'&&i.naturalWidth>0)}),'CRT : logo chargé depuis img/logo-oeg.png (plus 260 Ko recopiés par page)');
+    ok(await p.evaluate(()=>$('crtPreviewBox').innerHTML.length<200000),'CRT consolidé de 2 fiches : document léger ('+await p.evaluate(()=>Math.round($('crtPreviewBox').innerHTML.length/1024))+' Ko)');
+    ok(e7.length===0,'aucune erreur JavaScript (CRT) '+JSON.stringify(e7));
+    await c7.close();
+  }
+  // --- K : aller-retour complet (tout remplir → enregistrer → recharger → rouvrir → réenregistrer) ---
+  for(const net of ['RCO','BIO','ESO','Chimie','EL']){
+    const cx=await browser.newContext({serviceWorkers:'block'});
+    await cx.route('https://unpkg.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.click(`#networks .chip[data-n="${net}"]`);
+    for(const id of ['session','activity','bioOperation'])await p.evaluate(id=>{const s=$(id);if(!s||s.closest('.hide'))return;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
+    await p.evaluate(()=>{const s=$('station');s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    await p.waitForTimeout(300);
+    for(let pass=0;pass<3;pass++){
+      await p.evaluate(()=>{
+        const skip=new Set(['station','session','activity','bioOperation','org','projection','date']),groups=new Set();
+        document.querySelectorAll('input,select,textarea').forEach(e=>{
+          if(!inFiche(e)||e.closest('#endOfDayCard')||skip.has(e.id)||e.type==='file'||e.type==='button'||e.disabled)return;
+          if(e.closest('.hide')||(e.offsetParent===null&&e.type!=='radio'&&e.type!=='checkbox'))return;
+          if(e.type==='radio'){if(!groups.has(e.name)){groups.add(e.name);const g=[...document.getElementsByName(e.name)].filter(inFiche);if(!g.some(x=>x.checked)){const t=g.find(x=>x.value==='Oui')||g[0];t.checked=true;t.dispatchEvent(new Event('change',{bubbles:true}))}}return}
+          if(e.type==='checkbox'){if(!e.checked){e.checked=true;e.dispatchEvent(new Event('change',{bubbles:true}))}return}
+          if(e.value!=='')return;
+          if(e.tagName==='SELECT'){const o=[...e.options].filter(o=>o.value);if(o.length){e.value=o[o.length-1].value;e.dispatchEvent(new Event('change',{bubbles:true}))}return}
+          e.value=e.type==='number'?'3':e.type==='date'?'2026-10-08':e.type==='time'?'08:30':e.type==='datetime-local'?'2026-10-08T09:00':('T-'+(e.id||e.name||'x'));
+          e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));
+        });
+      });
+      await p.waitForTimeout(250);
+    }
+    await p.fill('#date','2026-10-08');
+    const S1=await p.evaluate(()=>snapshotForm());
+    await p.click('#save');await p.waitForTimeout(1500);
+    const R1=await p.evaluate(()=>JSON.parse(JSON.stringify(records[0]||null)));
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
+    await p.click('.tab[data-tab="list"]');await p.evaluate(()=>{loadRecord(records[0].id);showTab('new')});await p.waitForTimeout(700);
+    const S2=await p.evaluate(()=>snapshotForm());
+    const derived=/^(recepteur|remise|esoRecepteur|esoRemise|iv_turb)$/; // champs cachés recalculés
+    const diffs=[];
+    for(const k of new Set([...Object.keys(S1.v),...Object.keys(S2.v)]))if(!derived.test(k)&&S1.v[k]!==S2.v[k])diffs.push('champ '+k+': '+S1.v[k]+' → '+S2.v[k]);
+    for(const k of new Set([...Object.keys(S1.c),...Object.keys(S2.c)]))if(S1.c[k]!==S2.c[k])diffs.push('coche '+k);
+    await p.click('#save');await p.waitForTimeout(1500);
+    const R2=await p.evaluate(()=>JSON.parse(JSON.stringify(records[0])));
+    const strip=r=>{const x={...r};['savedAt','lifecycle','auditRefs','appBuild','formValues','id','bioOperation'].forEach(k=>delete x[k]);return x};
+    const flat=(o,pre='',out={})=>{if(o&&typeof o==='object'&&!Array.isArray(o)){for(const k of Object.keys(o))flat(o[k],pre?pre+'.'+k:k,out)}else out[pre]=JSON.stringify(o);return out};
+    const f1=flat(strip(R1||{})),f2=flat(strip(R2));
+    for(const k of new Set([...Object.keys(f1),...Object.keys(f2)]))if(f1[k]!==f2[k]&&!(f1[k]===undefined&&['""','[]','false'].includes(f2[k])))diffs.push('fiche '+k+': '+f1[k]+' → '+f2[k]);
+    ok(!!R1&&Object.keys(S1.v).length>50&&diffs.length===0,`aller-retour ${net} : ${Object.keys(S1.v).length} champs et ${Object.keys(S1.c).length} réponses retrouvés à l’identique `+JSON.stringify(diffs.slice(0,6)));
+    ok(ex.length===0,'aucune erreur JavaScript (aller-retour '+net+') '+JSON.stringify(ex));
+    await cx.close();
+  }
+  // --- L : scénarios ciblés de l'audit ---
+  {
+    const c8=await browser.newContext({serviceWorkers:'block'});
+    await c8.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c8.newPage();const e8=[];p.on('pageerror',e=>e8.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const choose=async(net)=>{await p.click(`#networks .chip[data-n="${net}"]`);
+      for(const id of ['session','activity'])await p.evaluate(id=>{const s=$(id);if(!s||s.closest('.hide'))return;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
+      await p.evaluate(()=>{const s=$('station');s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300)};
+    // RCO avec conditions du site et signataire HYDRECO
+    await choose('RCO');await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+    await p.evaluate(()=>{$('meteo').selectedIndex=2;$('largeur').value='12';document.querySelector('input[name="representative"][value="Oui"]').checked=true;
+      $('org').value='HYDRECO';$('org').dispatchEvent(new Event('change',{bubbles:true}))});
+    await p.waitForTimeout(200);
+    await p.evaluate(()=>{const s=$('signName');const o=[...s.options].find(o=>o.value);s.value=o.value;window.__sign=o.value});
+    await p.click('#save');await p.waitForTimeout(1200);
+    const rco=await p.evaluate(()=>({id:records[0].id,meteo:records[0].conditions.meteo,largeur:records[0].conditions.largeur,sign:records[0].signName,rep:records[0].quality?.representative}));
+    ok(!!rco.sign&&rco.largeur==='12'&&rco.rep==='Oui','fiche RCO enregistrée (conditions du site, signataire HYDRECO '+rco.sign+')');
+    // Fiche EL (MEC) avec profondeur totale 14 m
+    await choose('EL');await p.fill('#date','2026-10-08');
+    await p.evaluate(()=>{$('elDepth').value='14';$('elDepth').dispatchEvent(new Event('input',{bubbles:true}))});
+    await p.click('#save');await p.waitForTimeout(1200);
+    const elId=await p.evaluate(()=>records.find(r=>r.network==='EL')?.id);
+    // Rouvrir RCO après la fiche EL puis réenregistrer sans changement
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},rco.id);await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>!!$('largeur')&&$('largeur').value==='12'&&!!$('seuil')),'fiche RCO rouverte après une fiche EL : carte « Conditions du site » complète (non EL)');
+    ok(await p.inputValue('#signName')===rco.sign,'signataire hors liste OEG retrouvé à la modification');
+    for(const n of [1,2,3])if(!(await p.inputValue('#iv_turb_'+n)))await p.fill('#iv_turb_'+n,'4');
+    await p.click('#save');await p.waitForTimeout(1200);
+    ok(await p.evaluate(id=>{const r=records.find(x=>x.id===id);return r.conditions.largeur==='12'&&r.conditions.meteo&&r.signName&&r.quality?.representative==='Oui'},rco.id),'fiche RCO réenregistrée : conditions du site, représentativité et signataire conservés');
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},elId);await p.waitForTimeout(500);
+    ok(await p.inputValue('#elDepth')==='14','fiche EL rouverte : profondeur totale 14 m conservée (plus remise à 10)');
+    ok(e8.length===0,'aucune erreur JavaScript (scénarios audit) '+JSON.stringify(e8));
+    await c8.close();
+  }
+  // --- M : sauvegarde et synchronisation (constats de l'audit) ---
+  {
+    const c9=await browser.newContext({serviceWorkers:'block'});
+    await c9.route('https://unpkg.com/**',r=>r.abort());
+    await c9.route('https://accounts.google.com/**',r=>r.fulfill({contentType:'text/javascript',body:'window.google={accounts:{oauth2:{initTokenClient:o=>({requestAccessToken(){this.callback({access_token:"tok",expires_in:3600})}})}}}'}));
+    // Faux Google Drive avec dossiers : un « compte » = un ensemble de dossiers et de fichiers
+    let acct={folders:new Map(),files:new Map()},nid=1;
+    const part=body=>{const parts=body.split(/--oegboundary[^\r\n]*/);return {meta:JSON.parse(parts[1].split('\r\n\r\n')[1]),txt:parts[2].split('\r\n\r\n').slice(1).join('\r\n\r\n').replace(/\r\n$/,'')}};
+    await c9.route('https://www.googleapis.com/**',async r=>{
+      const u=new URL(r.request().url()),m=r.request().method(),body=r.request().postData()||'';let mm;
+      if(m==='GET'&&u.pathname==='/drive/v3/files'){const q=u.searchParams.get('q')||'';
+        if(q.includes('vnd.google-apps.folder'))return r.fulfill({json:{files:[...acct.folders.values()].map(f=>({id:f.id,name:f.name}))}});
+        const pm=q.match(/'([^']+)' in parents/);return r.fulfill({json:{files:[...acct.files].filter(([id,f])=>!pm||f.parent===pm[1]).map(([id,f])=>({id,name:f.name,version:String(f.v)}))}})}
+      if(m==='POST'&&u.pathname==='/drive/v3/files'){const j=JSON.parse(body);const id='D'+(nid++);acct.folders.set(id,{id,name:j.name});return r.fulfill({json:{id}})}
+      if(m==='GET'&&(mm=u.pathname.match(/^\/drive\/v3\/files\/(.+)$/))){const id=mm[1];
+        if(acct.folders.has(id))return r.fulfill({json:{id,trashed:false}});
+        const f=acct.files.get(id);if(!f)return r.fulfill({status:404,json:{}});
+        if(u.searchParams.get('alt')==='media')return r.fulfill({body:f.text,contentType:'application/json'});return r.fulfill({json:{version:String(f.v)}})}
+      if(m==='POST'&&u.pathname.startsWith('/upload')){const {meta,txt}=part(body);if(!acct.folders.has(meta.parents?.[0]))return r.fulfill({status:404,json:{}});const id='f'+(nid++);acct.files.set(id,{name:meta.name,text:txt,v:1,parent:meta.parents[0]});return r.fulfill({json:{id,version:'1'}})}
+      if(m==='PATCH'&&(mm=u.pathname.match(/files\/(.+)$/))){const f=acct.files.get(mm[1]);if(!f)return r.fulfill({status:404,json:{}});const {meta,txt}=part(body);f.name=meta.name;f.text=txt;f.v++;return r.fulfill({json:{id:mm[1],version:String(f.v)}})}
+      r.fulfill({status:500});
+    });
+    // Faux sélecteur de dossier local (File System Access)
+    await c9.addInitScript(()=>{window.__folders={};let n=0;window.showDirectoryPicker=async()=>{const name='dossier'+(++n),files={};window.__folders[name]=files;
+      return {name,queryPermission:async()=>'granted',requestPermission:async()=>'granted',getFileHandle:async fn=>({createWritable:async()=>{let b='';return {write:async t=>{b+=t},close:async()=>{files[fn]=b}}}})}}});
+    const p=await c9.newPage();const e9=[];p.on('pageerror',e=>e9.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const mk=(id,extra={})=>Object.assign({id,network:'RCO',station:'ST'+id,date:'2026-10-01',savedAt:'2026-10-01T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-01T08:00:00.000Z'},auditRefs:[],photos:[]},extra);
+    await p.evaluate(r=>{records.push(r);saveLS(LS,records)},mk('M1',{comment:'v1'}));
+    // 1) Nouveau dossier de sauvegarde : il reçoit toutes les fiches
+    await p.evaluate(()=>OEGSync.chooseLocalFolder());await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier1).some(f=>f.startsWith('fiche_'))),'dossier de sauvegarde 1 : fiche écrite');
+    await p.evaluate(()=>OEGSync.forgetLocalFolder());await p.evaluate(()=>OEGSync.chooseLocalFolder());await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier2).some(f=>f.startsWith('fiche_'))),'nouveau dossier de sauvegarde : toutes les fiches y sont réécrites (auparavant vide)');
+    await p.evaluate(()=>OEGSync.forgetLocalFolder());
+    // 2) Drive : changement de compte / dossier supprimé / fichier supprimé
+    await p.evaluate(()=>{localStorage.setItem('oeg_sync_drive_cfg_v1',JSON.stringify({clientId:'x',folderId:'',connected:true}))});
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>OEGSync.manualSyncNow());
+    const count=()=>[...acct.files.values()].filter(f=>f.name.startsWith('fiche_')).length;
+    ok(count()===1,'Drive : fiche envoyée');
+    acct={folders:new Map(),files:new Map()}; // autre compte Google (ou dossier supprimé)
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>OEGSync.manualSyncNow());
+    ok(count()===1&&acct.folders.size===1,'Drive : autre compte / dossier supprimé → dossier recréé et fiches réenvoyées (auparavant jamais)');
+    const fid=[...acct.files].find(([id,f])=>f.name.startsWith('fiche_'))[0];acct.files.delete(fid); // fichier supprimé sur Drive
+    await p.evaluate(()=>{records.find(r=>r.id==='M1').comment='v2';records.find(r=>r.id==='M1').lifecycle.updatedAt='2026-10-02T08:00:00.000Z';saveLS(LS,records)});
+    await p.evaluate(()=>OEGSync.manualSyncNow());await p.evaluate(()=>OEGSync.manualSyncNow());
+    ok(count()===1&&[...acct.files.values()].some(f=>f.text.includes('"v2"')),'Drive : fichier supprimé → recréé avec la dernière version');
+    // 3) Changement de date : le fichier Drive est renommé en place (un seul fichier par fiche)
+    await p.evaluate(()=>{const r=records.find(r=>r.id==='M1');r.date='2026-09-30';r.lifecycle.updatedAt='2026-10-03T08:00:00.000Z';saveLS(LS,records)});
+    await p.evaluate(()=>OEGSync.manualSyncNow());
+    ok(count()===1&&[...acct.files.values()].some(f=>f.name.includes('2026-09-30')),'Drive : date corrigée → même fichier renommé (plus de second fichier)');
+    // 4) Fiche allégée : jamais réécrite sans ses photos ; la récupération lui rend ses photos
+    const full=mk('M2',{photos:[{data:'data:image/png;base64,AAAA',group:'Amont'},{data:'data:image/png;base64,BBBB',group:'Aval'}]});
+    await p.evaluate(r=>{records.push(r);saveLS(LS,records)},full);await p.evaluate(()=>OEGSync.manualSyncNow());
+    await p.evaluate(()=>{const r=records.find(r=>r.id==='M2');r._archivedPhotoCount=2;r.photos=[];r._archived=true;r.lifecycle.status='Validée';r.lifecycle.updatedAt='2026-10-01T08:00:00.000Z';saveLS(LS,records)});
+    await p.evaluate(()=>OEGSync.manualSyncNow());
+    const m2=()=>JSON.parse([...acct.files.values()].find(f=>f.text.includes('"M2"')).text);
+    ok(m2().photos.length===2,'fiche allégée modifiée : le fichier Drive garde ses 2 photos (auparavant écrasé sans photos)');
+    const pull=await p.evaluate(()=>OEGSync.pullFromDrive());
+    ok(await p.evaluate(()=>{const r=records.find(r=>r.id==='M2');return r.photos.length===2&&!r._archived})&&pull.conflicts===0,'« Récupérer l’historique » rend ses photos à la fiche allégée, sans fausse copie de conflit '+JSON.stringify(pull));
+    const pull2=await p.evaluate(()=>OEGSync.pullFromDrive());
+    ok(pull2.conflicts===0,'seconde récupération : aucune copie de conflit');
+    // 5) Import : une version plus ancienne ne remplace pas la plus récente ; NC et qualité importées
+    const old=mk('M1',{comment:'ancienne',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-09-01T08:00:00.000Z'}});
+    await p.click('.tab[data-tab="data"]');
+    await p.setInputFiles('#importJSON',[{name:'sauvegarde.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({records:[old],custom:{nonConformites:[{id:'nc1',recordId:'M1',severity:'Critique',status:'Ouverte',createdAt:'2026-09-02'}],qualityConfig:{qualityMethodRef:'REF-X'}}}))}]);
+    await p.waitForTimeout(800);
+    ok(await p.evaluate(()=>records.find(r=>r.id==='M1').comment==='v2'),'import d’une sauvegarde plus ancienne : la fiche plus récente est conservée');
+    ok(await p.evaluate(()=>custom.nonConformites.some(n=>n.id==='nc1')&&custom.qualityConfig.qualityMethodRef==='REF-X'),'import : non-conformités et configuration qualité récupérées');
+    await p.setInputFiles('#importJSON',[{name:'_qualite_audit_non-conformites.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({type:'qualite_audit_non_conformites',nonConformites:[{id:'nc2',recordId:'M1',status:'Ouverte'}],auditTrail:[],qualityConfig:{}}))}]);
+    await p.waitForTimeout(800);
+    ok(await p.evaluate(()=>custom.nonConformites.some(n=>n.id==='nc2')),'import du fichier « _qualite » du dossier de sauvegarde reconnu');
+    // 6) Onglet Qualité : rejeter / remettre à contrôler sans erreur
+    const before=e9.length;
+    await p.click('.tab[data-tab="quality"]');
+    await p.evaluate(()=>{const s=$('qualityRecord');s.value='M1';s.dispatchEvent(new Event('change',{bubbles:true}));const v=$('qualityValidator');if(v.tagName==='SELECT'){const o=[...v.options].find(o=>o.value);if(o)v.value=o.value}else v.value='PF'});
+    await p.click('#qualityReject');await p.waitForTimeout(500);await p.click('#qualityControl');await p.waitForTimeout(500);
+    ok(e9.length===before&&await p.evaluate(()=>records.find(r=>r.id==='M1').lifecycle.status==='À contrôler'),'onglet Qualité : rejeter puis remettre à contrôler sans erreur '+JSON.stringify(e9.slice(before)));
+    // 7) Réinitialisation : l'appli redémarre proprement et une nouvelle fiche s'enregistre
+    await p.click('.tab[data-tab="data"]');
+    await Promise.all([p.waitForNavigation(),p.click('#reset')]);await p.evaluate(()=>window.OEGRecordsReady);
+    ok(await p.evaluate(()=>records.length===0&&!JSON.parse(localStorage.getItem('oeg_sync_drive_cfg_v1')||'{}').connected),'réinitialisation : appareil vidé, Drive déconnecté');
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+    await p.click('#save');await p.waitForTimeout(1200);
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
+    ok(await p.evaluate(()=>records.length===1),'après réinitialisation : nouvelle fiche enregistrée et conservée');
+    ok(e9.length===0,'aucune erreur JavaScript (sauvegarde / synchronisation) '+JSON.stringify(e9));
+    await c9.close();
+  }
+  // --- N : règles de saisie et circuit qualité (constats de l'audit) ---
+  {
+    const b2=await chromium.launch(Object.assign(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{},{args:['--lang=en-US']}));
+    const c10=await b2.newContext({serviceWorkers:'block',locale:'en-US'});
+    await c10.route('https://unpkg.com/**',r=>r.abort());await c10.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c10.newPage();const e10=[];p.on('pageerror',e=>e10.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const choose=async(net,i=0)=>{await p.click(`#networks .chip[data-n="${net}"]`);
+      for(const id of ['session','activity'])await p.evaluate(id=>{const s=$(id);if(!s||s.closest('.hide'))return;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
+      await p.evaluate(i=>{const s=$('station');s.value=[...s.options].filter(o=>o.value)[i].value;s.dispatchEvent(new Event('change',{bubbles:true}))},i);await p.waitForTimeout(300)};
+    // Virgule décimale sur un navigateur en anglais
+    await choose('RCO');await p.click('#iv_cond');await p.keyboard.type('125,5');
+    ok(await p.inputValue('#iv_cond')==='125.5','virgule décimale (navigateur en anglais) : « 125,5 » reste 125.5 (auparavant 1255)');
+    // Mesure non faite = absente, pas 0 (turbidité EL, suivi)
+    await choose('EL');for(const n of [1,2,3])await p.fill('#el_turb_surf_'+n,'12');
+    ok(await p.evaluate(()=>{const t=collectInsitu().turbidite;return t.surf.moyenne===12&&t.inter.moyenne===null&&t.inter.mesures.every(v=>v===null)}),'EL : turbidité non mesurée en intermédiaire = absente (et non 0)');
+    await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];const b=(id,d,o2)=>({id,network:'RCO',station:st.nom,date:d,savedAt:d+'T08:00:00.000Z',lifecycle:{status:'À contrôler',updatedAt:d+'T08:00:00.000Z'},insitu:{o2mg:{value:o2},ph:{value:'7'}},photos:[],auditRefs:[]});records.push(b('S1','2026-10-01','7.5'),b('S2','2026-12-01',''));saveLS(LS,records)});
+    ok(await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];const s=suiviSeries('RCO',st.nom,'o2mg');return s.length===1&&s[0].mean===7.5}),'suivi : O₂ non mesuré absent des séries (moyenne 7,5 et non 3,75)');
+    // CRT EL : profil avec la mesure intermédiaire, sans faux zéros
+    await p.evaluate(()=>{const st=stationsFor('EL',null).find(Boolean)||Object.values(DATA).flat().find(x=>x&&x.nom);records.push({id:'ELX',network:'EL',station:st.nom,stationInfo:st,date:'2026-10-05',session:'',savedAt:'2026-10-05T08:00:00.000Z',lifecycle:{status:'À contrôler',updatedAt:'2026-10-05T08:00:00.000Z'},photos:[],auditRefs:[],insitu:{type:'MET',profondeur:'5',profondeurs:{surface:'0.5',intermediaire:'2',fond:'4'},params:{temp:{surface:'29.1',intermediaire:'28.4',fond:'27.2'},ph:{surface:'7.2',intermediaire:'7.0',fond:''}},turbidite:{}}});saveLS(LS,records)});
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='ELX';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    const crt=await p.textContent('#crtPreviewBox');
+    ok(/28[.,]4/.test(crt),'CRT EL : la mesure intermédiaire (28,4 °C) apparaît (auparavant « — » / 0)');
+    ok(await p.evaluate(()=>{const svg=[...document.querySelectorAll('#crtPreviewBox svg')].map(s=>s.textContent).join(' ');return !/\b0\.00\b/.test(svg)}),'CRT EL : aucun faux 0,00 tracé pour les mesures non faites');
+    // Habilitation d'un préleveur prestataire enregistré par ses initiales
+    ok(await p.evaluate(()=>{custom.preleveurs.push({nom:'Bernard',prenom:'Damien',organisme:'HYDRECO',initiales:'DB',habilitationEcheance:'2099-12-31'});const c=qualityChecksFor({network:'RCO',station:'x',preleveurs:['DB'],date:'2026-10-01'}).find(c=>/Opérateur DB/.test(c.label));return c&&c.ok}),'habilitation : préleveur HYDRECO reconnu par ses initiales (auparavant « non référencé »)');
+    // Fiche EL : les mesures in situ sont reconnues, pas d'identifiant d'échantillon exigé
+    ok(await p.evaluate(()=>{const c=qualityChecksFor(records.find(r=>r.id==='ELX'));const m=c.find(x=>/Mesures in situ/.test(x.label));return m&&m.ok&&!c.some(x=>/Identifiant échantillon/.test(x.label)&&!x.ok)}),'fiche EL : mesures in situ reconnues, pas d’identifiant d’échantillon exigé');
+    ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'ESO',insitu:{redox:{value:'120'}}});const u=c.find(x=>/redox.*unité/.test(x.label));return !u||u.ok}),'ESO : potentiel redox accepté (unité connue)');
+    // Enregistrement, empreinte d'intégrité, validation avec avertissements justifiés, modification après validation
+    await p.click('.tab[data-tab="new"]');await choose('RCO');
+    await p.fill('#date','2026-10-08');await p.fill('#start','08:00');await p.fill('#end','09:00');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+    await p.click('#save');await p.waitForTimeout(1200);
+    const rid=await p.evaluate(()=>records.find(r=>r.date==='2026-10-08'&&r.network==='RCO')?.id);
+    await p.click('.tab[data-tab="quality"]');await p.waitForTimeout(300);
+    ok(await p.evaluate(async id=>{const r=records.find(x=>x.id===id);return r.lifecycle.integrityHash===await sha256(integrityPayload(r))},rid),'empreinte d’intégrité : une fiche fraîchement enregistrée est « OK » (auparavant « à contrôler »)');
+    const rec=await p.evaluate(id=>{const r=records.find(x=>x.id===id);const c=qualityChecksFor(r);return {crit:c.filter(x=>!x.ok&&(x.level||'critical')==='critical').map(x=>x.label),warn:c.filter(x=>!x.ok&&x.level==='warning').length}},rid);
+    // compléter ce qui est critique pour pouvoir tester la validation (signature, coordonnées)
+    await p.evaluate(id=>{const r=records.find(x=>x.id===id);const c=document.createElement('canvas');c.width=200;c.height=60;c.getContext('2d').fillRect(5,20,150,6);r.signature=c.toDataURL();r.xTerrain=String(stationXY22(r.stationInfo)?.[0]??'');r.yTerrain=String(stationXY22(r.stationInfo)?.[1]??'');r.projection='RGFG 95 / UTM 22N';r.preleveurs=['PF'];
+      custom.equipements.push({gmao:'EQ-T1',nom:'Turbidimètre',serie:'S1',echeance:'2099-12-31'});Object.values(r.insitu).forEach(d=>{if(d&&typeof d==='object'&&String(d.value??'')!=='')d.gmao='EQ-T1'})},rid);
+    await p.evaluate(async id=>{const r=records.find(x=>x.id===id);r.lifecycle.integrityHash=await sha256(integrityPayload(r));saveLS(LS,records)},rid);
+    const left=await p.evaluate(id=>qualityChecksFor(records.find(x=>x.id===id)).filter(x=>!x.ok&&(x.level||'critical')==='critical').map(x=>x.label),rid);
+    await p.evaluate(id=>{const s=$('qualityRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}));const v=$('qualityValidator');if(v.tagName==='SELECT'){const o=[...v.options].find(o=>o.value);if(o)v.value=o.value}else v.value='PF';$('qualityValidationComment').value=''},rid);
+    await p.click('#qualityValidate');await p.waitForTimeout(400);
+    const st1=await p.evaluate(id=>records.find(x=>x.id===id).lifecycle.status,rid);
+    await p.fill('#qualityValidationComment','Salinité non mesurée : sonde en panne (justifié)');await p.click('#qualityValidate');await p.waitForTimeout(400);
+    const st2=await p.evaluate(id=>records.find(x=>x.id===id).lifecycle.status,rid);
+    ok(left.length===0&&st1==='À contrôler'&&st2==='Validée','validation : avertissements à justifier par un commentaire, puis fiche validée (auparavant impossible) '+JSON.stringify({left,st1,st2}));
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},rid);await p.waitForTimeout(400);
+    await p.fill('#iv_ph','9.4');await p.click('#save');await p.waitForTimeout(1200);
+    ok(await p.evaluate(id=>{const r=records.find(x=>x.id===id);return r.lifecycle.status==='À contrôler'&&r.lifecycle.modifiedAfterValidation},rid),'fiche validée puis modifiée : repasse « À contrôler »');
+    // Session EL de mars et station personnalisée en UTM 21N
+    ok(await p.evaluate(()=>sessions('EL').includes('S6 - Mars 2027 (petit été de mars)')),'session EL de mars : « petit été de mars »');
+    await p.evaluate(()=>{custom.stations.push({network:'RCO',nom:'Crique test 21N',code:'T21',x:'829131.9',y:'606538.4',projection:'RGFG 95 / UTM 21N',custom:true});saveLS(LSC,custom)});
+    await p.click('.tab[data-tab="new"]');await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity'])await p.evaluate(id=>{const s=$(id);const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
+    const has21=await p.evaluate(()=>{const s=$('station');const o=[...s.options].find(o=>o.value==='Crique test 21N');if(!o)return false;s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}));return true});
+    if(has21){
+      await p.evaluate(()=>{$('projection').value='RGFG 95 / UTM 21N';$('xT').value='829134.9';$('yT').value='606542.4';$('xT').dispatchEvent(new Event('input',{bubbles:true}));if(typeof updateDistance==='function')updateDistance()});
+      const d=parseFloat(await p.textContent('#distance'));
+      ok(d>0&&d<10,'station personnalisée en UTM 21N : écart GPS de quelques mètres (auparavant ≈ 665 km) — '+d+' m');
+    }else ok(true,'station personnalisée en UTM 21N : non proposée pour cette session (test non applicable)');
+    ok(e10.length===0,'aucune erreur JavaScript (règles de saisie et qualité) '+JSON.stringify(e10));
+    await b2.close();
+  }
+  // --- O : dernier audit — robustesse, synthèse, qualité ---
+  {
+    const c11=await browser.newContext({serviceWorkers:'block'});
+    await c11.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c11.newPage();const e11=[];p.on('pageerror',e=>e11.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Coordonnées terrain vides : pas de faux écart
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.evaluate(()=>{$('xT').value='';$('yT').value='';updateDistance()});
+    ok((await p.textContent('#distance')).trim()==='—','coordonnées terrain vides : écart « — » (auparavant ≈ 600 km)');
+    ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'RCO',station:'x',xTerrain:'',yTerrain:'',stationInfo:{x:'350000',y:'550000'}});const g=c.find(x=>/GPS terrain numériques/.test(x.label));return g&&!g.ok}),'contrôle qualité : coordonnées terrain manquantes signalées (et non un faux écart)');
+    // Mise à jour de l'appli pendant une saisie : pas de rechargement, bandeau
+    await p.evaluate(()=>{window.__noReload=true;navigator.serviceWorker.dispatchEvent(new Event('controllerchange'))});await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>!!document.getElementById('updateBanner')&&window.__noReload===true),'nouvelle version pendant une saisie : bandeau, pas de rechargement (la saisie est préservée)');
+    await Promise.all([p.waitForNavigation({timeout:8000}),p.evaluate(()=>clearFormNoConfirm())]);
+    ok(true,'fiche enregistrée / vidée : la mise à jour se fait ensuite d’elle-même');
+    await p.evaluate(()=>window.OEGRecordsReady);
+    // Brouillon enregistré immédiatement quand l'appli passe en arrière-plan
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.fill('#obs','Saisie juste avant de prendre une photo');await p.evaluate(()=>window.dispatchEvent(new Event('pagehide')));await p.waitForTimeout(200);
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.obs==='Saisie juste avant de prendre une photo','passage en arrière-plan : brouillon enregistré immédiatement');
+    await p.evaluate(()=>clearFormNoConfirm());
+    // Qualité : identifiant d'échantillon contrôlé, mesure vide non « numérique », chaîne du froid EL
+    ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'RCO',station:'x',sample:{stype:'x'},sampleTrace:{}});const i=c.find(x=>/Identifiant échantillon/.test(x.label));return i&&!i.ok&&i.level==='warning'}),'contrôle « Identifiant échantillon » actif (désactivé par erreur auparavant)');
+    ok(await p.evaluate(()=>!qualityChecksFor({network:'RCO',insitu:{sal:{value:''},ph:{value:'7'}}}).some(x=>/Salinité : valeur numérique/.test(x.label)&&x.ok)),'mesure vide : plus de « valeur numérique ✓ » contradictoire');
+    ok(await p.evaluate(()=>qualityChecksFor({network:'EL',sample:{transportFroid:'Glacières + blocs eutectiques',transportSuivi:'x'},sampleTrace:{}}).filter(x=>/température (départ|réception)/.test(x.label)).every(x=>x.level==='warning')),'EL avec glacière : températures de transport en avertissement (validation possible)');
+    // Suivi EL : turbidité non mesurée absente
+    await p.evaluate(()=>{records.push({id:'ELT',network:'EL',station:'Cayenne côte',date:'2026-10-05',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',updatedAt:'2026-10-05T08:00:00Z'},photos:[],auditRefs:[],insitu:{params:{temp:{surface:'28'}},turbidite:{surf:{mesures:[12,12,12],moyenne:12},inter:{mesures:[null,null,null],moyenne:null},fond:{mesures:[null,null,null],moyenne:null}}}});saveLS(LS,records)});
+    ok(await p.evaluate(()=>{const ks=suiviParamsFor('EL','Cayenne côte');return ks.includes('turb_surf')&&!ks.includes('turb_inter')&&!ks.includes('turb_fond')}),'suivi EL : turbidité non mesurée (intermédiaire, fond) absente au lieu de 0');
+    // Synthèse : stations BIO/EL, mesures EL, échéances dépassées
+    await p.evaluate(()=>{records.push({id:'BIO1',network:'BIO',station:'Station BIO test',date:'2026-10-05',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',updatedAt:'2026-10-05T08:00:00Z'},photos:[],auditRefs:[],insitu:{ph:{value:'6.8'}}});custom.equipements.push({gmao:'OLD-1',nom:'Sonde',echeance:'2020-01-01'});saveLS(LS,records);saveLS(LSC,custom)});
+    await p.click('.tab[data-tab="dashboard"]');await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>dashStationList('BIO').some(s=>s.nom==='Station BIO test')),'synthèse : stations BIO listées (liste vide auparavant)');
+    await p.evaluate(()=>{const n=$('dashNetwork');n.value='EL';n.dispatchEvent(new Event('change',{bubbles:true}));if(typeof renderDashStations==='function')renderDashStations();const s=$('dashStation');s.value='Cayenne côte';s.dispatchEvent(new Event('change',{bubbles:true}));renderDashStation()});
+    ok(!/Aucune mesure in situ/.test(await p.textContent('#dashParams')),'synthèse : mesures EL affichées pour la station');
+    ok(/échéance métrologique est dépassée/.test(await p.textContent('#dashActions')),'synthèse : étalonnage expiré signalé dans les actions prioritaires');
+    // Aller sur une station sans carte (hors ligne)
+    await p.click('.tab[data-tab="stations"]');await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>$('gotoStation').options.length>5),'« Aller sur une station » : liste remplie même sans la carte (hors ligne)');
+    // Recherche dans la liste des fiches : pas de correspondance dans les photos
+    await p.evaluate(()=>{const ph='data:image/png;base64,QUJDTUJERUY=';records.push({id:'SR1',network:'RCO',station:'S1',preleveurs:['PF'],photos:[{data:ph,group:'Amont'}],date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',lifecycle:{status:'À contrôler'},auditRefs:[]},{id:'SR2',network:'RCO',station:'S2',preleveurs:['QZX'],photos:[],date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',lifecycle:{status:'À contrôler'},auditRefs:[]});saveLS(LS,records)});
+    await p.click('.tab[data-tab="list"]');await p.fill('#search','QZX');await p.waitForTimeout(200);
+    ok(await p.evaluate(()=>document.querySelectorAll('#records .listcard').length)===1,'recherche par préleveur : seulement la bonne fiche (les photos ne sont plus fouillées)');
+    ok(e11.length===0,'aucune erreur JavaScript (dernier audit) '+JSON.stringify(e11));
+    await c11.close();
+  }
+  // --- P : contenu du CRT (ESO, contrôle qualité, traçabilité, codes SANDRE, NC, matériel, arrondis) ---
+  {
+    const c12=await browser.newContext({serviceWorkers:'block'});
+    await c12.route('https://unpkg.com/**',r=>r.abort());await c12.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c12.newPage();const e12=[];p.on('pageerror',e=>e12.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const eso=await p.evaluate(()=>{
+      const eso=stationsFor('ESO',null)[0],m={savedAt:'2026-10-05T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-05T08:00:00.000Z'},auditRefs:[],photos:[]};
+      records.push({id:'PESO',network:'ESO',session:'S1',station:eso.nom,stationInfo:eso,date:'2026-10-05',...m,conditions:{},
+        insitu:{mode:'par appareil',ph:{value:'6.5',gmao:'EQ-P1'},turb:{value:3.3333333333333335,moyenne:3.3333333333333335,mesures:[3,3,4]}},insituBoitier:'EQ-B1',
+        sample:{stype:'Ponctuel',esoNature:'Piézomètre',esoLieu:'Tête de puits',purgeDebit:'1.2',purgeDuree:'30',esoNiveau:'12.4',pompeDemeure:'Non',esoFroid:'Glacière',esoSuivi:'Enregistreur',esoRecepteurs:[{organisme:'LABO-ESO',dateHeure:'2026-10-05T16:30'}],esoRecepteur:'LABO-ESO',esoRemise:'2026-10-05T16:30',recepteurs:[]},
+        qc:'Oui',qcType:'Blanc terrain',quality:{qcBlank:'Oui',qcDuplicate:'Non',qcMaterial:'Oui',representative:'Non',representativeJustification:'Accès limité',uncertaintySource:'Pluie la veille'},
+        sampleTrace:{sampleId:'ECH-42',bottleLot:'LOT-7',tempDeparture:'4',tempReception:'5',transportAgent:'Agent X',custodyDate:'2026-10-05T17:00',custodyObs:'RAS transport'},
+        obs:'Eau claire au robinet',comment:'Mesure redox non réalisée'});
+      const rco=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];
+      records.push({id:'PRCO',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:'S1',station:rco.nom,stationInfo:rco,date:'2026-10-06',...m,insitu:{},
+        conditions:{hydro:'3',meteo:'1',limpidite:'2'},specific:{rcoEau:'Non',rcoSed:'Oui',rcoSedGants:'Oui',rcoBioObs:'  '},sample:{rcoSed:'Oui',rcoSedGants:'Oui'}});
+      const el=DATA.EL_STATIONS[0];
+      records.push({id:'PEL',network:'EL',station:el.nom,stationInfo:el,date:'2026-10-07',...m,insitu:{profondeur:'5',profondeurs:{surface:'0.5',intermediaire:'2',fond:'4'},params:{temp:{surface:'29.126',intermediaire:'28.4',fond:'27.2'}},turbidite:{surf:{moyenne:3.3333333333333335}}}});
+      records.push({id:'PBIO',network:'BIO',station:'Station BIO P',stationInfo:{nom:'Station BIO P'},date:'2026-10-08',...m,insitu:{},specific:{fishLab:'2026-10-09T09:15',fishWeight:'950',f_Chevaine_1_t:'210',f_Chevaine_1_p:'120'}});
+      custom.nonConformites=(custom.nonConformites||[]).concat([{id:'NC-P1',recordId:'PESO',category:'Transport',severity:'Majeure',status:'Ouverte',description:'Glacière arrivée à 9 °C',immediate:'Ré-échantillonnage',corrective:'Contrôle des blocs eutectiques',dueDate:'2026-11-01'}]);
+      custom.equipements.push({type:'sonde',gmao:'EQ-P1',nom:'Sonde pH P',serie:'SN-1',echeance:'2026-09-30'},{type:'boitier',gmao:'EQ-B1',nom:'Multi 3630',serie:'SN-2',echeance:'2027-06-30'});
+      saveLS(LS,records);saveLS(LSC,custom);return {code:eso.code_bss,commune:eso.commune};
+    });
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);
+    const pick=async id=>{await p.evaluate(id=>{const s=$('crtRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}))},id);await p.waitForTimeout(250);return p.textContent('#crtPreviewBox')};
+    let t=await pick('PESO');
+    ok(t.includes('Code BSS')&&t.includes(eso.code)&&!t.includes('Non défini')&&t.includes(eso.commune),'CRT ESO : code BSS et commune (auparavant « Non défini »)');
+    ok(/Moyen de refroidissement\s*Glacière/.test(t)&&/Suivi de la température\s*Enregistreur/.test(t)&&t.includes('LABO-ESO')&&t.includes('05/10/2026 16:30'),'CRT ESO : transport et organisme récepteur imprimés (auparavant « — »)');
+    ok(/Nature du point\s*Piézomètre/.test(t)&&t.includes('Tête de puits')&&/Niveau piézométrique \(m\)\s*12.4/.test(t)&&/Débit de purge \(m³\/h\)\s*1.2/.test(t),'CRT ESO : ouvrage, purge et niveau piézométrique');
+    ok(/Blanc de terrain réalisé\s*Oui/.test(t)&&t.includes('Accès limité')&&t.includes('Pluie la veille'),'CRT : section contrôle qualité');
+    ok(['ECH-42','LOT-7','Agent X','RAS transport','05/10/2026 17:00'].every(x=>t.includes(x)),'CRT : traçabilité / chaîne de possession');
+    ok(t.includes('Eau claire au robinet')&&t.includes('Mesure redox non réalisée'),'CRT : observations ET commentaires imprimés (auparavant l’un ou l’autre)');
+    ok(t.includes('Glacière arrivée à 9 °C')&&t.includes('1 non-conformité(s) non clôturée(s)'),'CRT : non-conformités de la fiche');
+    ok(/EQ-P1\s*Sonde pH P\s*SN-1[^]*Étalonnage expiré à la date de la visite/.test(t)&&/EQ-B1\s*Multi 3630[^]*Étalonnage valide à la date de la visite/.test(t),'CRT : matériel de mesure et statut métrologique à la date de la visite');
+    ok(t.includes('3.33')&&!t.includes('3.3333'),'CRT : valeurs arrondies à 2 décimales (turbidité moyenne)');
+    ok(/Matrice\(s\)\s*Eau souterraine/.test(t),'CRT ESO : matrice « eau souterraine »');
+    t=await pick('PRCO');
+    ok(t.includes('Basses eaux (code SANDRE 3)')&&t.includes('Ensoleillé (code SANDRE 1)')&&t.includes('Légèrement trouble (code SANDRE 2)'),'CRT : libellés SANDRE au lieu des seuls codes');
+    ok(/Matrice\(s\)\s*Sédiments/.test(t),'CRT RCO : matrice = sédiments (eau non prélevée ; auparavant toujours « Eau »)');
+    ok(/Eau prélevée\s*:\s*Non/.test(t)&&!/rcoSed|rcoBioObs/.test(t),'CRT RCO : données complémentaires libellées, sans clés brutes ni doublon sédiments');
+    t=await pick('PEL');
+    ok(/Niveau de mesure \(m\)\s*0.5\s*2\s*4/.test(t)&&t.includes('Profondeur totale : 5 m')&&t.includes('29.13'),'CRT EL : niveaux de mesure et profondeur totale dans le tableau, valeurs arrondies');
+    t=await pick('PBIO');
+    ok(/Date \/ heure d’arrivée au laboratoire\s*:\s*09\/10\/2026 09:15/.test(t)&&!t.includes('Laboratoire destinataire'),'CRT BIO : libellés du formulaire (arrivée au laboratoire) et dates lisibles');
+    ok(/Chevaine\s*1\s*210\s*120/.test(t)&&!t.includes('f_Chevaine'),'CRT BIO : individus de pêche en tableau (et non clés brutes)');
+    ok(e12.length===0,'aucune erreur JavaScript (contenu du CRT) '+JSON.stringify(e12));
+    await c12.close();
+  }
+  // --- Q : CRT imprimé (titres visibles, formulaire masqué, photos entières, graphes, carte lente) ---
+  {
+    const c13=await browser.newContext({serviceWorkers:'block'});
+    await c13.route('https://unpkg.com/**',r=>r.abort());
+    await c13.route('https://tile.openstreetmap.org/**',()=>{}); // réseau lent : tuiles jamais reçues
+    const p=await c13.newPage();const e13=[];p.on('pageerror',e=>e13.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const el=DATA.EL_STATIONS[0],m={savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler'},auditRefs:[]};
+      const c=document.createElement('canvas');c.width=300;c.height=600;c.getContext('2d').fillRect(0,0,300,600);
+      records.push({id:'QEL',network:'EL',station:el.nom,stationInfo:el,date:'2026-10-07',...m,photos:[{data:c.toDataURL('image/png'),group:'Amont'}],obs:'x'.repeat(400),
+        insitu:{profondeurs:{surface:'0',intermediaire:'3',fond:'6'},params:{temp:{surface:'29',intermediaire:'28',fond:'27'}},turbidite:{}}});
+      [['2026-03-10','27.5'],['2027-01-15','28.9']].forEach(([d,t],i)=>records.push({id:'QH'+i,network:'EL',station:el.nom,date:d,...m,photos:[],insitu:{params:{temp:{surface:t}}}}));
+      saveLS(LS,records);
+    });
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);
+    await p.evaluate(()=>{window.print=()=>{window.__printed=(window.__printed||0)+1};const s=$('crtRecord');s.value='QEL';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    const svgTxt=await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox svg')].map(s=>s.textContent).join(' '));
+    ok(!/-0[.,]\d/.test(svgTxt),'CRT : axe des profondeurs sans valeur négative');
+    ok(svgTxt.includes('10/03/26')&&svgTxt.includes('15/01/27'),'CRT : historique daté jj/mm/aa (auparavant « 03-10 », mois-jour)');
+    await p.emulateMedia({media:'print'});
+    const st=await p.evaluate(()=>{const cs=e=>e&&getComputedStyle(e);const h2=document.querySelector('#crtPreviewBox .crtPage:not(.crtCover) h2'),ch2=document.querySelector('#crtPreviewBox .crtCover h2'),img=document.querySelector('#crtPreviewBox .crtPhotoGrid img');
+      return {h2bg:cs(h2).backgroundColor,h2col:cs(h2).color,cbg:cs(ch2).backgroundColor,batch:cs($('crtBatchCard')).display,head:cs($('printHeader')).display,html:cs(document.documentElement).backgroundColor,fit:cs(img).objectFit,wrap:cs(document.querySelector('#crtPreviewBox .crtComment')).overflowWrap}});
+    ok(st.h2bg==='rgba(0, 0, 0, 0)'&&st.h2col!=='rgb(255, 255, 255)'&&st.cbg==='rgba(0, 0, 0, 0)','CRT imprimé : titres de section lisibles (auparavant bleu foncé sur bandeau bleu foncé) '+JSON.stringify([st.h2bg,st.h2col,st.cbg]));
+    ok(st.batch==='none'&&st.head==='none','CRT imprimé : ni formulaire « CRT consolidé » ni en-tête « Fiche terrain » en page 1');
+    ok(st.html==='rgb(255, 255, 255)','CRT imprimé : fond blanc (auparavant gris sous la dernière page)');
+    ok(st.fit==='contain'&&st.wrap==='anywhere','CRT imprimé : photos entières (non recadrées) et texte long renvoyé à la ligne');
+    await p.emulateMedia({media:'screen'});
+    // Carte : tuiles toujours en attente au bout de 8 s -> carte schématique à l'impression
+    await p.evaluate(()=>{Object.defineProperty(navigator,'onLine',{get:()=>true,configurable:true})});
+    await p.click('#crtGenerate');await p.waitForFunction(()=>window.__printed>=1,null,{timeout:15000});
+    ok(await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox .crtMapPlaceholder')].every(b=>{const fb=b.querySelector('.crtMapFallback');return fb&&!fb.hidden&&!b.querySelector('img[src*="openstreetmap"]')})),'CRT imprimé : fond de carte incomplet après 8 s = carte schématique (et non carte trouée)');
+    ok(e13.length===0,'aucune erreur JavaScript (CRT imprimé) '+JSON.stringify(e13));
+    await c13.close();
+  }
+  // --- R : exports et interface (CSV à plat, import Excel / CSV, téléphone, fiche imprimée) ---
+  {
+    const c14=await browser.newContext({serviceWorkers:'block',acceptDownloads:true});
+    await c14.route('https://unpkg.com/**',r=>r.abort());
+    await c14.route('https://cdn.sheetjs.com/**',r=>r.abort()); // site principal injoignable -> copie de secours
+    await c14.route('https://unpkg.com/xlsx@0.18.5/**',r=>r.fulfill({contentType:'text/javascript',body:'window.XLSX={read:()=>({SheetNames:["S"],Sheets:{S:{}}}),utils:{sheet_to_json:()=>[["Code station","Nom","X","Y"],["X1","Station Excel","1","2"]]}}'}));
+    const p=await c14.newPage();const e14=[];p.on('pageerror',e=>e14.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Export CSV : mesures, conditions, échantillonnage, qualité, traçabilité, validation
+    await p.evaluate(()=>{records.push({id:'CSV1',network:'ESO',station:'S',stationInfo:{code_bss:'BSS0X'},date:'2026-10-05',ecartM:'12.3 m',signName:'PF',insituBoitier:'EQ-B1',savedAt:'2026-10-05T08:00:00Z',
+      lifecycle:{status:'Validée',version:2,validatedBy:'ML',validatedAt:'2026-10-06T08:00:00Z'},auditRefs:[],photos:[],conditions:{hydro:'3'},insitu:{ph:{value:'6.5',gmao:'EQ-P1'},turb:{moyenne:3.3333333,value:3.3333333}},
+      sample:{esoFroid:'Glacière',esoRecepteurs:[{organisme:'LABO',dateHeure:'2026-10-05T16:30'}]},quality:{qcBlank:'Oui'},sampleTrace:{sampleId:'ECH-1'},comment:'ligne 1\nligne 2; suite'});saveLS(LS,records)});
+    const [dl]=await Promise.all([p.waitForEvent('download'),p.evaluate(()=>$('exportCSV').click())]);
+    const csvTxt=fs.readFileSync(await dl.path(),'utf8').replace(/^﻿/,'');
+    const head=csvTxt.split('\n')[0].split(';');
+    const lines=csvTxt.split('\n'),row=lines.find(l=>l.startsWith('CSV1;'));
+    const val=k=>{const parts=[];let cur='',q=false;const full=lines.slice(lines.indexOf(row)).join('\n');for(let i=0;i<full.length;i++){const ch=full[i];if(q){if(ch==='"'){if(full[i+1]==='"'){cur+='"';i++}else q=false}else cur+=ch}else if(ch==='"')q=true;else if(ch===';'){parts.push(cur);cur=''}else if(ch==='\n'){parts.push(cur);break}else cur+=ch}return parts[head.indexOf(k)]};
+    ok(['mes_ph','mes_ph_gmao','cond_hydro','ech_esoFroid','qualite_qcBlank','trace_sampleId','status','validePar','signataire','boitier','codeStation'].every(k=>head.includes(k)),'export CSV : mesures, conditions, échantillonnage, qualité, traçabilité et validation (auparavant 21 colonnes sans mesure)');
+    ok(val('mes_ph')==='6.5'&&val('mes_turb')==='3.33'&&val('ecartM')==='12.3'&&val('validePar')==='ML'&&val('codeStation')==='BSS0X'&&/LABO \(2026-10-05T16:30\)/.test(val('ech_esoRecepteurs')),'export CSV : valeurs exactes (écart GPS en nombre, turbidité arrondie, récepteurs ESO)');
+    ok(val('comment')==='ligne 1\nligne 2; suite','export CSV : commentaire multiligne avec « ; » correctement protégé');
+    // Import programme de marché : CSV hors connexion, Excel via la bibliothèque chargée à la demande
+    await p.setInputFiles('#miFile',{name:'marche.csv',mimeType:'text/csv',buffer:Buffer.from('﻿Code station;Nom;X;Y\nC1;"Station; avec point-virgule";352000;540000\n')});
+    await p.waitForFunction(()=>Array.isArray(miParsedRows)&&miParsedRows.length===1,null,{timeout:5000}).catch(()=>{});
+    ok(await p.evaluate(()=>miParsedRows?.[0]?.[1]==='Station; avec point-virgule'&&miMapping.code===0&&miMapping.nom===1&&!!document.querySelector('#miMapping select')),'import de marché : fichier CSV lu hors connexion, colonnes reconnues');
+    await p.setInputFiles('#miFile',{name:'marche.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from('PK')});
+    await p.waitForFunction(()=>miParsedRows?.[0]?.[1]==='Station Excel',null,{timeout:5000}).catch(()=>{});
+    ok(await p.evaluate(()=>miParsedRows?.[0]?.[1]==='Station Excel'&&!!window.XLSX),'import de marché : Excel lu (bibliothèque chargée à la demande, copie de secours ; auparavant « XLSX is not defined »)');
+    // Fiche imprimée : sans outils de saisie, réseau en toutes lettres
+    await p.click('.tab[data-tab="new"]');await p.click('#networks .chip[data-n="EL"]');
+    await p.evaluate(()=>{for(const id of ['session','activity']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const s=$('station');s.value=[...s.options].filter(o=>o.value)[0].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    await p.waitForTimeout(400);await p.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));await p.emulateMedia({media:'print'});
+    const tools=await p.evaluate(()=>[...document.querySelectorAll('label.btn,#drawEraser,[id^="rxAdd_"],.swatch')].filter(e=>e.getBoundingClientRect().width>0).length);
+    ok(tools===0,'fiche imprimée : sans boutons photo, palette / gomme du schéma ni « ajouter un organisme »');
+    ok(/EL — suivi littoral/.test(await p.textContent('#printHeaderTitle')),'fiche imprimée : réseau en toutes lettres dans l’en-tête');
+    await p.emulateMedia({media:'screen'});
+    // Téléphone (390 px) : aucune page plus large que l'écran, bouton Enregistrer visible
+    await p.setViewportSize({width:390,height:844});await p.waitForTimeout(300);
+    const m=await p.evaluate(()=>{const b=$('save').getBoundingClientRect();return {sw:document.documentElement.scrollWidth,w:document.documentElement.clientWidth,right:b.right}});
+    ok(m.sw<=m.w&&m.right<=m.w,'téléphone : page sans défilement horizontal, bouton Enregistrer entièrement visible '+JSON.stringify(m));
+    ok(e14.length===0,'aucune erreur JavaScript (exports et interface) '+JSON.stringify(e14));
+    await c14.close();
+  }
+  {
+    // Import Excel sans connexion : message clair (proposer le CSV) au lieu de « XLSX is not defined »
+    const c15=await browser.newContext({serviceWorkers:'block'});await c15.route(/^https:\/\//,r=>r.abort());
+    const p=await c15.newPage();await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.setInputFiles('#miFile',{name:'m.xlsx',mimeType:'application/octet-stream',buffer:Buffer.from('PK')});
+    await p.waitForFunction(()=>/format CSV/.test(document.body.innerText),null,{timeout:5000}).catch(()=>{});
+    ok(await p.evaluate(()=>/format CSV/.test(document.body.innerText)&&!/XLSX is not defined/.test(document.body.innerText)),'import Excel hors connexion : message clair proposant le CSV');
+    await c15.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

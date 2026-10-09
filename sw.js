@@ -92,7 +92,7 @@ self.addEventListener('fetch', event => {
       const cache = await caches.open(CACHE_VERSION);
       try {
         const resp = await fetch(req);
-        if (resp && resp.ok && req.url.startsWith('https://unpkg.com/')) cache.put(req, resp.clone());
+        if (resp && resp.ok && (req.url.startsWith('https://unpkg.com/') || req.url.startsWith('https://cdn.sheetjs.com/'))) cache.put(req, resp.clone());
         return resp;
       } catch (e) {
         const cached = await cache.match(req);

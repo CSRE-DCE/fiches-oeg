@@ -1,7 +1,8 @@
 /* ========== V19 : CONTRÔLES QUALITE AUTOMATISES + TABLEAU DE BORD ========== */
 (function(){
   const V19_VERSION='20.0';
-  const UNITS={ph:'u.pH',temp:'°C',cond:'µS/cm',sal:'µS/cm',o2mg:'mg/L',o2pc:'%',turb:'NTU',air:'°C'};
+  // (redox ajouté : une fiche ESO avec potentiel redox était bloquée ; salinité sans unité, comme à la saisie)
+  const UNITS={ph:'u.pH',temp:'°C',cond:'µS/cm',sal:'',o2mg:'mg/L',o2pc:'%',turb:'NTU',air:'°C',redox:'mV/ENH'};
   window.UNITS=UNITS;
   const LABELS={ph:'pH',temp:"Température de l'eau",cond:'Conductivité',sal:'Salinité',o2mg:'Oxygène dissous',o2pc:'Saturation O₂',turb:'Turbidité',air:"Température de l'air"};
   // Pas de plage de référence pour le pH ni la température (retirées à la demande de l'OEG) :
@@ -12,7 +13,7 @@
   custom.qualityConfig.appVersion=V19_VERSION;
   saveLS(LSC,custom);
 
-  function qcNum(v){const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:null}
+  function qcNum(v){if(v===''||v==null)return null;const n=Number(String(v).replace(',','.'));return Number.isFinite(n)?n:null}
   function pad(n){return String(n).padStart(2,'0')}
   function dtLocal(date,time){ if(!date||!time)return null; const d=new Date(`${date}T${time}`); return Number.isNaN(d.getTime())?null:d; }
   function asDate(s){const d=new Date(s);return Number.isNaN(d.getTime())?null:d}
@@ -31,7 +32,9 @@
   function operatorStatus(name){
     const target=String(name||'').trim().toLowerCase();
     const all=custom.preleveurs||[];
-    const match=all.find(o=>String(operatorDisplay(o)).trim().toLowerCase()===target);
+    // Les préleveurs des prestataires (HYDRECO, NBC, DGTM) sont cochés par leurs initiales : on
+    // cherche aussi par initiales, sinon leur habilitation enregistrée n'était jamais reconnue.
+    const match=all.find(o=>String(operatorDisplay(o)).trim().toLowerCase()===target)||all.find(o=>String(o.initiales||'').trim().toLowerCase()===target);
     if(match){
       const due=match.habilitationEcheance||match.habEch||'';
       const d=due?new Date(due+'T23:59:59'):null;
@@ -39,10 +42,11 @@
       return due?{state:'valid',label:'Habilitation enregistrée'}:{state:'unknown',label:'Habilitation à documenter'};
     }
     if((OEG_PRELEVEURS||[]).map(String).some(x=>x.toLowerCase()===target)) return {state:'unknown',label:'Préleveur historique OEG — habilitation à documenter'};
+    if(Object.values(typeof PRELEVEURS_BY_ORG!=='undefined'?PRELEVEURS_BY_ORG:{}).flat().map(String).some(x=>x.toLowerCase()===target)) return {state:'unknown',label:'Préleveur prestataire — habilitation à documenter'};
     return {state:'missing',label:'Opérateur non référencé dans les habilitations'};
   }
   function eqStatusFor(gmao){return equipStatus(equipmentByGmao(gmao))}
-  function stationCoords(r){const s=r?.stationInfo||getStation();return s||null}
+  function stationCoords(r){const s=r?.stationInfo||getStation();if(!s)return null;const z=(typeof stationXY22==='function')?stationXY22(s):null;return z?{...s,x:z[0],y:z[1]}:s}
   function dateTimeOfRecord(r){return dtLocal(r?.date,r?.heureDebut)}
   function custodyDateOfRecord(r){return asDate(r?.sampleTrace?.custodyDate||r?.sample?.remise||r?.sample?.esoRemise||r?.custodyDate||'')}
   function filtrationCheck(r){
@@ -72,8 +76,11 @@
     if(cooling){
       checks.push({label:'Chaîne de froid : moyen renseigné',ok:true});
       checks.push({label:'Chaîne de froid : suivi température renseigné',ok:!!(sm.transportSuivi||sm.esoSuivi||''),level:'critical'});
-      checks.push({label:'Chaîne de froid : température départ renseignée',ok:s.tempDeparture!==''&&s.tempDeparture!=null,level:'critical'});
-      checks.push({label:'Chaîne de froid : température réception renseignée',ok:s.tempReception!==''&&s.tempReception!=null,level:'critical'});
+      // la fiche EL n'a pas de champs de température départ / réception : avertissement (à
+      // justifier) au lieu d'un blocage — sinon aucune fiche EL avec glacière n'était validable
+      const lvl=r?.network==='EL'?'warning':'critical';
+      checks.push({label:'Chaîne de froid : température départ renseignée',ok:s.tempDeparture!==''&&s.tempDeparture!=null,level:lvl});
+      checks.push({label:'Chaîne de froid : température réception renseignée',ok:s.tempReception!==''&&s.tempReception!=null,level:lvl});
     }
     return checks;
   }
@@ -94,7 +101,15 @@
     });return out;
   }
   function insituChecks(r){
-    const out=[]; const entries=Object.entries(r?.insitu||{}); const withVal=entries.filter(([k,d])=>d&&String(d.value??'').trim()!=='');
+    if(r?.network==='EL'){
+      // EL : mesures par profondeur (params.*.surface/intermediaire/fond, turbidité moyenne) ;
+      // auparavant non reconnues → « aucune mesure » et validation impossible.
+      const ins=r.insitu||{},has=v=>v!==''&&v!=null;
+      const any=Object.values(ins.params||{}).some(p=>p&&(has(p.surface)||has(p.intermediaire)||has(p.fond)))||Object.values(ins.turbidite||{}).some(t=>t&&has(t.moyenne));
+      return [{label:'Mesures in situ : au moins une mesure enregistrée',ok:any,level:'warning'}];
+    }
+    // seules les vraies mesures (objets) : « mode » (texte) produisait un faux « mesure manquante »
+    const out=[]; const entries=Object.entries(r?.insitu||{}).filter(([k,d])=>d&&typeof d==='object'); const withVal=entries.filter(([k,d])=>d&&String(d.value??'').trim()!=='');
     out.push({label:'Mesures in situ : au moins une mesure enregistrée',ok:withVal.length>0,level:'warning'});
     if(withVal.length>0){
       entries.forEach(([k,d])=>{const blank=String(d?.value??'').trim()==='';if(blank)out.push({label:`${LABELS[k]||k} : mesure manquante — à justifier ou réaliser`,ok:false,level:'warning'});});
@@ -137,12 +152,14 @@
     checks.push(...delayCheck(r));
     const ncs=openNCsFor(r?.id);checks.push({label:'Aucune NC critique ouverte',ok:ncs.every(n=>n.severity!=='Critique'),level:'critical'});
     checks.push({label:'Empreinte d’intégrité présente',ok:!!r?.lifecycle?.integrityHash,level:'critical'});
-    const missing=(!r?.sampleTrace?.sampleId && r?.sample && r?.network!=='BIO');checks.push({label:'Identifiant échantillon / traçabilité',ok:!missing,level:'warning'});
+    // (pas de champ identifiant sur la fiche EL)
+    const missing=(!r?.sampleTrace?.sampleId && r?.sample && r?.network!=='BIO' && r?.network!=='EL');
+    checks.push({label:'Identifiant échantillon / traçabilité',ok:!missing,level:'warning'});
     return checks;
   }
   function statusFromChecks(c){return c.some(x=>!x.ok&&(x.level||'critical')==='critical')?'critical':c.some(x=>!x.ok)?'warning':'ok'}
   function renderChecksV19(r){
-    const h=$('qualityChecks');if(!h)return;const c=qualityChecksV19(r);h.innerHTML=c.map(x=>{const cls=x.ok?'ok':(x.level==='warning'?'warn':'bad');return `<div class="qualityCheck ${cls}">${x.ok?'✓':'✕'} ${qEscape(x.label)}${x.detail?` <span class="meta">${qEscape(x.detail)}</span>`:''}</div>`}).join('');
+    const h=$('qualityChecks');if(!h)return;if(!r){h.innerHTML='';return}const c=qualityChecksV19(r);h.innerHTML=c.map(x=>{const cls=x.ok?'ok':(x.level==='warning'?'warn':'bad');return `<div class="qualityCheck ${cls}">${x.ok?'✓':'✕'} ${qEscape(x.label)}${x.detail?` <span class="meta">${qEscape(x.detail)}</span>`:''}</div>`}).join('');
   }
   window.OEGQualityV19={qualityChecksFor:qualityChecksV19,statusFromChecks};
 
@@ -209,7 +226,9 @@
 
   /* Replace quality validation check function and display. */
   qualityChecksFor=qualityChecksV19;
-  if(typeof renderQualityChecks==='function')renderQualityChecks=renderChecksV19;
+  // quality.js appelle renderQualityChecks() sans argument (après Valider / Rejeter / Remettre à
+  // contrôler) : on retrouve la fiche sélectionnée, sinon une erreur s'affichait à chaque fois.
+  if(typeof renderQualityChecks==='function')renderQualityChecks=r=>renderChecksV19(r||records.find(x=>x.id===val('qualityRecord')));
   $('qualityRecord')?.addEventListener('change',()=>renderChecksV19(records.find(x=>x.id===val('qualityRecord'))));
 
   /* Add configurable OEG control thresholds to the quality page. */

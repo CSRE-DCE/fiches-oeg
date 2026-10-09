@@ -422,7 +422,11 @@
   <input id="crtRef" placeholder="CRT-AAAA-NNN">
   </div>
   <div class="field"><label>Date du rapport</label>
-  <input id="crtDate" type="date">
+  <input id="crtDate" type="date"><div class="hint">Vide : date du jour de l’impression.</div>
+  </div>
+  <div class="field"><label>Saison</label>
+  <select id="crtSaison"><option value="">Automatique (d’après la date de la visite)</option><option>SAISON SÈCHE</option><option>SAISON DES PLUIES</option><option>PETIT ÉTÉ DE MARS</option></select>
+  <div class="hint">Automatique : saison sèche d’août à décembre, saison des pluies de janvier à juillet, petit été de mars en mars.</div>
   </div>
   <div class="field"><label>Rédacteur</label>
   <select id="crtAuthor"><option value="">— sélectionner —</option>
@@ -727,7 +731,6 @@
     <button class="btn ghost small" id="disconnectDriveBtn" style="display:none">Déconnecter</button>
     <button class="btn ghost small" id="syncNowBtn">↻ Synchroniser maintenant</button>
     <button class="btn ghost small" id="pullDriveBtn">⬇️ Récupérer l'historique complet depuis Drive</button>
-    <button class="btn ghost small" id="lightenStorageBtn">🗜️ Alléger le stockage (fiches déjà sauvegardées)</button>
   </div>
   <p class="note">"Alléger le stockage" retire les photos, dessins et signatures du stockage du navigateur pour les fiches déjà confirmées sauvegardées dans le dossier local et/ou sur Drive — utile si un message "stockage saturé" apparaît. Rien n'est perdu : le contenu original reste dans les fichiers déjà écrits, récupérable via "Importer JSON" ou "Récupérer l'historique depuis Drive".</p>
   <p class="note">"Récupérer l'historique" va chercher, sur Google Drive, les fiches enregistrées par les autres tablettes connectées au même compte Google, et les ajoute à celles déjà présentes ici — utile avant de générer un CRT pour que le suivi historique d'une station soit complet.</p>
@@ -793,7 +796,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
       </div>
 </div>
   
-<div class="card" id="marketImportCard"><h2>📥 Import programme de marché</h2><div class="banner info">Importez un fichier Excel (tableau de stations) pour mettre à jour un référentiel réseau — la nouvelle station ou les nouvelles coordonnées d'un marché reconduit chaque année, par exemple. Rien n'est appliqué avant validation ci-dessous.</div><div class="grid2"><div class="field"><label>Référentiel à mettre à jour</label><select id="miGroup"><option value="RCO13">RCO — 13 stations</option><option value="RCO25">RCO — 25 stations (réf.)</option><option value="RCO_BIO12">RCO-BIO — 12 stations</option><option value="BIO_CE">BIO — Cours d'eau</option><option value="BIO_FISH">BIO — Poissons</option><option value="BIO_PHYTO">BIO — Phytoplancton</option><option value="BIO_ADNE">BIO — ADNe</option><option value="ESO">ESO</option><option value="CH_STATIONS">Chimie</option><option value="EL_STATIONS">EL</option></select></div><div class="field"><label>Fichier Excel (.xlsx)</label><input type="file" id="miFile" accept=".xlsx,.xls"></div></div><div id="miMapping"></div><div id="miDiff"></div><div class="actions"><button class="btn primary small" id="miApply" disabled>Appliquer les modifications sélectionnées</button></div></div>
+<div class="card" id="marketImportCard"><h2>📥 Import programme de marché</h2><div class="banner info">Importez un fichier Excel ou CSV (tableau de stations) pour mettre à jour un référentiel réseau — la nouvelle station ou les nouvelles coordonnées d'un marché reconduit chaque année, par exemple. Rien n'est appliqué avant validation ci-dessous.</div><div class="grid2"><div class="field"><label>Référentiel à mettre à jour</label><select id="miGroup"><option value="RCO13">RCO — 13 stations</option><option value="RCO25">RCO — 25 stations (réf.)</option><option value="RCO_BIO12">RCO-BIO — 12 stations</option><option value="BIO_CE">BIO — Cours d'eau</option><option value="BIO_FISH">BIO — Poissons</option><option value="BIO_PHYTO">BIO — Phytoplancton</option><option value="BIO_ADNE">BIO — ADNe</option><option value="ESO">ESO</option><option value="CH_STATIONS">Chimie</option><option value="EL_STATIONS">EL</option></select></div><div class="field"><label>Fichier Excel (.xlsx) ou CSV</label><input type="file" id="miFile" accept=".xlsx,.xls,.csv"></div></div><div id="miMapping"></div><div id="miDiff"></div><div class="actions"><button class="btn primary small" id="miApply" disabled>Appliquer les modifications sélectionnées</button></div></div>
 <div class="card"><h2>Données personnalisées</h2><p class="note">Les opérateurs et équipements GMAO sont gérés directement dans le panneau « Gestion opérateur & équipements GMAO ». L’onglet ESO suit la structure de la fiche terrain ESO transmise.</p><hr><div class="grid2"><input id="customNet" placeholder="RCO / BIO / ESO / Chimie / EL"><select id="customMarche"><option value="">— sélectionner un marché —</option></select><input id="customStation" placeholder="Nom station"><input id="customCode" placeholder="Code SANDRE / BSS"><input id="customX" type="number" placeholder="X"><input id="customY" type="number" placeholder="Y"><select id="customProjection"><option value="RGFG 95 / UTM 22N">RGFG 95 / UTM 22N</option><option value="RGFG 95 / UTM 21N">RGFG 95 / UTM 21N</option></select><select id="customBassin"><option value="">— sélectionner un bassin versant —</option></select><input id="customME" placeholder="Bassin / masse d’eau"><input id="customTransport" placeholder="Moyens de transport nécessaires"></div><button class="btn primary" id="addStation" style="margin-top:8px">Ajouter station</button><div id="stationData" style="margin-top:8px"></div></div></section>
 </div>
 <div class="btnbar" id="bar">
@@ -825,8 +828,24 @@ if('serviceWorker' in navigator){
     }).catch(()=>{});
     // Dès qu'une nouvelle version prend la main, on recharge une seule fois pour l'afficher
     // immédiatement plutôt que de rester sur l'ancienne page déjà chargée en mémoire.
+    // Mais jamais pendant la saisie ou la modification d'une fiche : le rechargement effaçait
+    // ce qui n'était pas encore enregistré. Un bandeau propose alors la mise à jour, qui se fait
+    // d'elle-même dès que la fiche est enregistrée (formulaire vidé).
     let reloaded=false;
-    navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloaded)return;reloaded=true;window.location.reload()});
+    const ficheOpen=()=>{try{return !!(state&&(state.editing||state.network))}catch(e){return false}};
+    const doReload=()=>{if(reloaded)return;reloaded=true;window.location.reload()};
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if(reloaded)return;
+      if(!ficheOpen()){doReload();return}
+      if(!document.getElementById('updateBanner')){
+        const b=document.createElement('button');b.type='button';b.id='updateBanner';
+        b.style.cssText='position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:99997;background:#003d7a;color:#fff;border:0;border-radius:10px;padding:10px 14px;font:700 13px/1.3 -apple-system,Segoe UI,Roboto,Arial,sans-serif;box-shadow:0 4px 16px #0004;max-width:92vw';
+        b.textContent='🔄 Nouvelle version disponible — enregistrez la fiche en cours ; la mise à jour se fera ensuite (ou touchez ici).';
+        b.onclick=()=>{if(ficheOpen()&&!confirm('La fiche en cours n’est peut-être pas enregistrée. Mettre à jour maintenant quand même ?'))return;doReload()};
+        document.body.appendChild(b);
+      }
+      const t=setInterval(()=>{if(!ficheOpen()){clearInterval(t);doReload()}},2000);
+    });
   });
 }
 // Détecte une mise à jour INCOMPLÈTE (certains fichiers .js renvoyés sur GitHub, d'autres
