@@ -94,7 +94,8 @@
     });return out;
   }
   function insituChecks(r){
-    const out=[]; const entries=Object.entries(r?.insitu||{}); const withVal=entries.filter(([k,d])=>d&&String(d.value??'').trim()!=='');
+    // seules les vraies mesures (objets) : « mode » (texte) produisait un faux « mesure manquante »
+    const out=[]; const entries=Object.entries(r?.insitu||{}).filter(([k,d])=>d&&typeof d==='object'); const withVal=entries.filter(([k,d])=>d&&String(d.value??'').trim()!=='');
     out.push({label:'Mesures in situ : au moins une mesure enregistrée',ok:withVal.length>0,level:'warning'});
     if(withVal.length>0){
       entries.forEach(([k,d])=>{const blank=String(d?.value??'').trim()==='';if(blank)out.push({label:`${LABELS[k]||k} : mesure manquante — à justifier ou réaliser`,ok:false,level:'warning'});});

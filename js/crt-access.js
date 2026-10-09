@@ -139,14 +139,17 @@
         if(metaTimer)clearTimeout(metaTimer);metaTimer=setTimeout(()=>saveLS(LSC,custom),400);
       }
       Object.values(META_FIELDS).forEach(id=>{const el=$(id);if(el){el.oninput=saveMetaFromForm;el.onchange=saveMetaFromForm}});
-      // Saison : choisie dans le formulaire CRT, sinon déduite du mois de la visite (Guyane :
-      // saison sèche d'août à novembre, saison des pluies de décembre à juillet). Auparavant elle
-      // était déduite du nom de la session, qui ne contient jamais « pluie » : toujours « sèche ».
+      // Saison : choisie dans le formulaire CRT, sinon déduite du mois de la visite, selon le
+      // calendrier retenu par l'OEG : saison sèche d'août à décembre, saison des pluies de janvier
+      // à juillet, avec le « petit été de mars » (mars). Auparavant elle était déduite du nom de
+      // la session, qui ne contient jamais « pluie » : toujours « sèche ».
       function seasonFor(r){
         const m=metaFor(r);if(m.saison)return m.saison;
         const month=Number(String(r.date||'').slice(5,7));
         if(!month)return 'SAISON NON DÉTERMINÉE';
-        return month>=8&&month<=11?'SAISON SÈCHE':'SAISON DES PLUIES';
+        if(month>=8)return 'SAISON SÈCHE';
+        if(month===3)return 'PETIT ÉTÉ DE MARS';
+        return 'SAISON DES PLUIES';
       }
       function frDate(iso){const s=String(iso||'');const m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);return m?m[3]+'/'+m[2]+'/'+m[1]:(s||'—')}
       function reportDate(r){const d=metaFor(r).date;return d?frDate(d):frDate(new Date().toISOString().slice(0,10))}

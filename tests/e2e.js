@@ -323,7 +323,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.evaluate(()=>{
       const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY);
       const base=(id,s,date)=>({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:s.nom,stationInfo:s,date,heureDebut:'08:00',preleveurs:['PF'],organisme:"Office de l'Eau de Guyane",savedAt:date+'T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:date+'T08:00:00.000Z'},auditRefs:[],photos:[],insitu:{ph:{value:'6.5'}},comment:'Observation terrain'});
-      records.push(base('R1',st[0],'2026-10-05'),base('R2',st[1],'2027-02-10'));saveLS(LS,records);
+      records.push(base('R1',st[0],'2026-10-05'),base('R2',st[1],'2027-02-10'),base('R3',st[2],'2026-12-14'),base('R4',st[3],'2027-03-09'));saveLS(LS,records);
     });
     await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);
     const pick=id=>p.evaluate(id=>{const s=$('crtRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
@@ -332,6 +332,10 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(txt.includes('SAISON SÈCHE'),'CRT : visite d’octobre = saison sèche');
     await pick('R2');await p.waitForTimeout(300);
     ok((await p.textContent('#crtPreviewBox')).includes('SAISON DES PLUIES'),'CRT : visite de février = saison des pluies (auparavant toujours « sèche »)');
+    await pick('R3');await p.waitForTimeout(300);
+    ok((await p.textContent('#crtPreviewBox')).includes('SAISON SÈCHE'),'CRT : visite de décembre = saison sèche (août à décembre)');
+    await pick('R4');await p.waitForTimeout(300);
+    ok((await p.textContent('#crtPreviewBox')).includes('PETIT ÉTÉ DE MARS'),'CRT : visite de mars = petit été de mars');
     // Saisies du CRT mémorisées par fiche
     await pick('R1');await p.fill('#crtRef','CRT-2026-001');await p.fill('#crtDate','2026-10-20');await p.fill('#crtConclusion','Conclusion R1');await p.click('#crtPreview');await p.waitForTimeout(200);
     txt=await p.textContent('#crtPreviewBox');
@@ -357,6 +361,88 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(()=>$('crtPreviewBox').innerHTML.length<200000),'CRT consolidé de 2 fiches : document léger ('+await p.evaluate(()=>Math.round($('crtPreviewBox').innerHTML.length/1024))+' Ko)');
     ok(e7.length===0,'aucune erreur JavaScript (CRT) '+JSON.stringify(e7));
     await c7.close();
+  }
+  // --- K : aller-retour complet (tout remplir → enregistrer → recharger → rouvrir → réenregistrer) ---
+  for(const net of ['RCO','BIO','ESO','Chimie','EL']){
+    const cx=await browser.newContext({serviceWorkers:'block'});
+    await cx.route('https://unpkg.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.click(`#networks .chip[data-n="${net}"]`);
+    for(const id of ['session','activity','bioOperation'])await p.evaluate(id=>{const s=$(id);if(!s||s.closest('.hide'))return;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
+    await p.evaluate(()=>{const s=$('station');s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    await p.waitForTimeout(300);
+    for(let pass=0;pass<3;pass++){
+      await p.evaluate(()=>{
+        const skip=new Set(['station','session','activity','bioOperation','org','projection','date']),groups=new Set();
+        document.querySelectorAll('input,select,textarea').forEach(e=>{
+          if(!inFiche(e)||e.closest('#endOfDayCard')||skip.has(e.id)||e.type==='file'||e.type==='button'||e.disabled)return;
+          if(e.closest('.hide')||(e.offsetParent===null&&e.type!=='radio'&&e.type!=='checkbox'))return;
+          if(e.type==='radio'){if(!groups.has(e.name)){groups.add(e.name);const g=[...document.getElementsByName(e.name)].filter(inFiche);if(!g.some(x=>x.checked)){const t=g.find(x=>x.value==='Oui')||g[0];t.checked=true;t.dispatchEvent(new Event('change',{bubbles:true}))}}return}
+          if(e.type==='checkbox'){if(!e.checked){e.checked=true;e.dispatchEvent(new Event('change',{bubbles:true}))}return}
+          if(e.value!=='')return;
+          if(e.tagName==='SELECT'){const o=[...e.options].filter(o=>o.value);if(o.length){e.value=o[o.length-1].value;e.dispatchEvent(new Event('change',{bubbles:true}))}return}
+          e.value=e.type==='number'?'3':e.type==='date'?'2026-10-08':e.type==='time'?'08:30':e.type==='datetime-local'?'2026-10-08T09:00':('T-'+(e.id||e.name||'x'));
+          e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));
+        });
+      });
+      await p.waitForTimeout(250);
+    }
+    await p.fill('#date','2026-10-08');
+    const S1=await p.evaluate(()=>snapshotForm());
+    await p.click('#save');await p.waitForTimeout(1500);
+    const R1=await p.evaluate(()=>JSON.parse(JSON.stringify(records[0]||null)));
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
+    await p.click('.tab[data-tab="list"]');await p.evaluate(()=>{loadRecord(records[0].id);showTab('new')});await p.waitForTimeout(700);
+    const S2=await p.evaluate(()=>snapshotForm());
+    const derived=/^(recepteur|remise|esoRecepteur|esoRemise|iv_turb)$/; // champs cachés recalculés
+    const diffs=[];
+    for(const k of new Set([...Object.keys(S1.v),...Object.keys(S2.v)]))if(!derived.test(k)&&S1.v[k]!==S2.v[k])diffs.push('champ '+k+': '+S1.v[k]+' → '+S2.v[k]);
+    for(const k of new Set([...Object.keys(S1.c),...Object.keys(S2.c)]))if(S1.c[k]!==S2.c[k])diffs.push('coche '+k);
+    await p.click('#save');await p.waitForTimeout(1500);
+    const R2=await p.evaluate(()=>JSON.parse(JSON.stringify(records[0])));
+    const strip=r=>{const x={...r};['savedAt','lifecycle','auditRefs','appBuild','formValues','id','bioOperation'].forEach(k=>delete x[k]);return x};
+    const flat=(o,pre='',out={})=>{if(o&&typeof o==='object'&&!Array.isArray(o)){for(const k of Object.keys(o))flat(o[k],pre?pre+'.'+k:k,out)}else out[pre]=JSON.stringify(o);return out};
+    const f1=flat(strip(R1||{})),f2=flat(strip(R2));
+    for(const k of new Set([...Object.keys(f1),...Object.keys(f2)]))if(f1[k]!==f2[k]&&!(f1[k]===undefined&&['""','[]','false'].includes(f2[k])))diffs.push('fiche '+k+': '+f1[k]+' → '+f2[k]);
+    ok(!!R1&&Object.keys(S1.v).length>50&&diffs.length===0,`aller-retour ${net} : ${Object.keys(S1.v).length} champs et ${Object.keys(S1.c).length} réponses retrouvés à l’identique `+JSON.stringify(diffs.slice(0,6)));
+    ok(ex.length===0,'aucune erreur JavaScript (aller-retour '+net+') '+JSON.stringify(ex));
+    await cx.close();
+  }
+  // --- L : scénarios ciblés de l'audit ---
+  {
+    const c8=await browser.newContext({serviceWorkers:'block'});
+    await c8.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c8.newPage();const e8=[];p.on('pageerror',e=>e8.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const choose=async(net)=>{await p.click(`#networks .chip[data-n="${net}"]`);
+      for(const id of ['session','activity'])await p.evaluate(id=>{const s=$(id);if(!s||s.closest('.hide'))return;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
+      await p.evaluate(()=>{const s=$('station');s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300)};
+    // RCO avec conditions du site et signataire HYDRECO
+    await choose('RCO');await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
+    await p.evaluate(()=>{$('meteo').selectedIndex=2;$('largeur').value='12';document.querySelector('input[name="representative"][value="Oui"]').checked=true;
+      $('org').value='HYDRECO';$('org').dispatchEvent(new Event('change',{bubbles:true}))});
+    await p.waitForTimeout(200);
+    await p.evaluate(()=>{const s=$('signName');const o=[...s.options].find(o=>o.value);s.value=o.value;window.__sign=o.value});
+    await p.click('#save');await p.waitForTimeout(1200);
+    const rco=await p.evaluate(()=>({id:records[0].id,meteo:records[0].conditions.meteo,largeur:records[0].conditions.largeur,sign:records[0].signName,rep:records[0].quality?.representative}));
+    ok(!!rco.sign&&rco.largeur==='12'&&rco.rep==='Oui','fiche RCO enregistrée (conditions du site, signataire HYDRECO '+rco.sign+')');
+    // Fiche EL (MEC) avec profondeur totale 14 m
+    await choose('EL');await p.fill('#date','2026-10-08');
+    await p.evaluate(()=>{$('elDepth').value='14';$('elDepth').dispatchEvent(new Event('input',{bubbles:true}))});
+    await p.click('#save');await p.waitForTimeout(1200);
+    const elId=await p.evaluate(()=>records.find(r=>r.network==='EL')?.id);
+    // Rouvrir RCO après la fiche EL puis réenregistrer sans changement
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},rco.id);await p.waitForTimeout(500);
+    ok(await p.evaluate(()=>!!$('largeur')&&$('largeur').value==='12'&&!!$('seuil')),'fiche RCO rouverte après une fiche EL : carte « Conditions du site » complète (non EL)');
+    ok(await p.inputValue('#signName')===rco.sign,'signataire hors liste OEG retrouvé à la modification');
+    for(const n of [1,2,3])if(!(await p.inputValue('#iv_turb_'+n)))await p.fill('#iv_turb_'+n,'4');
+    await p.click('#save');await p.waitForTimeout(1200);
+    ok(await p.evaluate(id=>{const r=records.find(x=>x.id===id);return r.conditions.largeur==='12'&&r.conditions.meteo&&r.signName&&r.quality?.representative==='Oui'},rco.id),'fiche RCO réenregistrée : conditions du site, représentativité et signataire conservés');
+    await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},elId);await p.waitForTimeout(500);
+    ok(await p.inputValue('#elDepth')==='14','fiche EL rouverte : profondeur totale 14 m conservée (plus remise à 10)');
+    ok(e8.length===0,'aucune erreur JavaScript (scénarios audit) '+JSON.stringify(e8));
+    await c8.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

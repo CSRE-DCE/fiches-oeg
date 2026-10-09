@@ -147,6 +147,7 @@ function inFiche(f){return !f.closest('.view:not(#new),.top,.btnbar,.tabs,#oegEr
 // Vide tous les champs de la fiche (y compris les cartes hors de #new), sans toucher à la valeur
 // des cases à cocher / boutons radio (on les décoche seulement).
 function clearFicheFields(){
+  formLoadSeq++; // annule une réapplication différée en attente (fiche précédente)
   document.querySelectorAll('input,textarea,select').forEach(e=>{
     if(!inFiche(e)||e.closest('#endOfDayCard')||e.type==='file')return;
     if(e.type==='radio'||e.type==='checkbox'){e.checked=false;return}
@@ -154,6 +155,41 @@ function clearFicheFields(){
   });
 }
 window.clearFicheFields=clearFicheFields;
+// Mémorise la valeur brute de TOUS les champs de la fiche (filet de sécurité enregistré avec la
+// fiche dans formValues) : un champ qui n'est pas repris par collectRecord/loadRecord (oubli,
+// nom différent, champ ajouté plus tard) n'est ainsi plus perdu quand on modifie la fiche.
+let formLoadSeq=0;
+const SNAPSHOT_SKIP=new Set(['station','session','activity','bioOperation','org','projection','crtRecord']);
+function snapshotForm(){
+  const v={},c={};
+  document.querySelectorAll('input,select,textarea').forEach(e=>{
+    if(!inFiche(e)||e.closest('#endOfDayCard')||e.type==='file'||e.type==='button'||SNAPSHOT_SKIP.has(e.id))return;
+    if(e.type==='radio'){if(e.checked&&e.name)c['r:'+e.name]=e.value;return}
+    if(e.type==='checkbox'){if(e.checked&&(e.id||e.name))c['c:'+(e.id||(e.name+'='+e.value))]=true;return}
+    if(e.id&&e.value!=='')v[e.id]=e.value;
+  });
+  return {v,c};
+}
+function applyFormSnapshot(s){
+  if(!s||typeof s!=='object')return;
+  Object.entries(s.v||{}).forEach(([id,value])=>{
+    const e=$(id);if(!e||!inFiche(e)||SNAPSHOT_SKIP.has(id)||e.type==='file'||e.value!=='')return;
+    if(e.tagName==='SELECT'&&![...e.options].some(o=>o.value===value))return;
+    e.value=value;
+  });
+  Object.keys(s.c||{}).forEach(k=>{
+    if(k.startsWith('r:')){
+      const group=[...document.getElementsByName(k.slice(2))].filter(inFiche);
+      if(!group.length||group.some(r=>r.checked))return;
+      const t=group.find(r=>r.value===s.c[k]);if(t){t.checked=true;t.dispatchEvent(new Event('change',{bubbles:true}))}
+    }else if(k.startsWith('c:')){
+      const key=k.slice(2);let e=$(key);
+      if(!e&&key.includes('=')){const i=key.indexOf('=');e=[...document.getElementsByName(key.slice(0,i))].find(x=>x.value===key.slice(i+1))}
+      if(e&&inFiche(e)&&!e.checked){e.checked=true;e.dispatchEvent(new Event('change',{bubbles:true}))}
+    }
+  });
+}
+window.snapshotForm=snapshotForm;
 function markFilledFields(){
   document.querySelectorAll('.field').forEach(f=>{if(inFiche(f))f.classList.toggle('filled',isFieldFilled(f))});
 }
@@ -732,8 +768,18 @@ function refreshELDepthLevels(){
   if($('el_depth_inter'))$('el_depth_inter').value=(total/2).toFixed(2);
   if($('el_depth_fond'))$('el_depth_fond').value=(total-1).toFixed(2);
 }
+// La carte « Conditions du site » d'origine (SANDRE, réseaux RCO/BIO/ESO/Chimie) était écrasée par
+// la version EL et n'était jamais remise : après une fiche EL, toute fiche d'un autre réseau
+// perdait ses conditions du site (et l'enregistrement les effaçait). Le contenu d'origine est
+// maintenant mis de côté (nœuds détachés, écouteurs conservés) puis remis pour les autres réseaux.
+let SANDRE_SITE=null;
+function restoreSandreSite(){
+  const c=$('siteCard');if(!c||!SANDRE_SITE)return;
+  c.innerHTML='';while(SANDRE_SITE.firstChild)c.appendChild(SANDRE_SITE.firstChild);SANDRE_SITE=null;
+}
 function buildELSite(){
   const c=$('siteCard');if(!c)return;
+  if(!SANDRE_SITE){SANDRE_SITE=document.createElement('div');while(c.firstChild)SANDRE_SITE.appendChild(c.firstChild)}
   const mec=elStationType()==='MEC';
   c.innerHTML=`<h2>${mec?'7 · Conditions du site — MEC':'7 · Conditions du site — MET'}</h2>
   <div class="elSectionTitle">Conditions générales</div>
@@ -854,7 +900,7 @@ function filterPanel(prefix=''){
   const p=prefix;
   const idk=k=>p+k;
   const col=(key,label)=>`<div class="filterCol">
-    <div class="filterHead"><label class="check" style="border:0;padding:0;background:transparent"><input type="checkbox" id="filtreParam_${idk(key)}" value="Oui"><span>${label}${key==='autres'?': <input id="filtre_${idk(key)}_nom" type="text" placeholder="préciser" style="width:120px;display:inline-block;margin-left:4px">':''}</span></label></div>
+    <div class="filterHead"><label class="check" style="border:0;padding:0;background:transparent"><input type="checkbox" id="filtreParam_${idk(key)}" value="Oui"><span>${label}${key==='autres'?`: <input id="filtre_${idk(key)}_nom" type="text" placeholder="préciser" style="width:120px;display:inline-block;margin-left:4px">`:''}</span></label></div>
     <div class="field"><label>Volume filtré (mL)</label><input id="filtre_${idk(key)}_volume" type="number" step="any" disabled></div>
     <div class="field"><label>Mode de filtration réalisé</label><div class="radioGrid filterModes">
       <label class="radio"><input type="radio" name="filtreMode_${idk(key)}" value="Sous vide à l’aide d’une pompe" disabled> Sous vide à l’aide d’une pompe</label>
@@ -1066,7 +1112,7 @@ function buildAll(){
     const s=getStation(); if(s&&$('elDepth')){$('elDepth').value=s.type==='MEC'?'10':'';refreshELDepthLevels();}
     return;
   }
-  buildInsitu();buildSample();buildSpecific();initCanvases()
+  restoreSandreSite();buildInsitu();buildSample();buildSpecific();initCanvases()
 }
 
 function collectSimple(ids){
@@ -1113,7 +1159,7 @@ function collectInsitu(){
     o.remise=o.recepteurs[0]?.dateHeure||'';
     return o;
   }
-  const ids=['stype','filtreDate','filtreHeure','filtre_chloro_volume','filtre_metaux_volume','filtre_autres_volume','filtre_autres_nom','recepteur','remise','transportFroid','transportSuivi','esoNature','esoLieu','esoRef','purgeStart','purgeEnd','purgeDebit','purgeDuree','purgeNivFinal','purgeMethode','esoEchProf','esoEchDebit','esoEchStart','esoEchEnd','esoEchMethode','esoNiveau','esoSuivi','esoFroid','esoRecepteur','esoRemise','filtreDateeso','filtreHeureeso'];
+  const ids=['stype','filtreDate','filtreHeure','filtre_chloro_volume','filtre_metaux_volume','filtre_autres_volume','filtre_autres_nom','recepteur','remise','transportFroid','transportSuivi','esoNature','esoLieu','esoRef','purgeStart','purgeEnd','purgeDebit','purgeDuree','purgeNivFinal','purgeMethode','esoEchProf','esoEchDebit','esoEchStart','esoEchEnd','esoEchMethode','esoNiveau','esoSuivi','esoFroid','esoRecepteur','esoRemise','filtreDateeso','filtreHeureeso','filtre_esochloro_volume','filtre_esometaux_volume','filtre_esoautres_volume','filtre_esoautres_nom'];
   const o=collectSimple(ids);
   o.smode=radioValue('smode');o.gants=radioValue('gants');o.filtresSite=radioValue('filtresSite');o.filtresSiteEso=radioValue('filtresSiteeso');o.consOui=radioValue('consOui');o.consOuiEso=radioValue('consOuieso');
   o.pompeDemeure=radioValue('pompeDemeureRadio');
@@ -1131,6 +1177,7 @@ function collectInsitu(){
     o[cap+'SedTamis']=radioValue(cap+'SedTamis');
     o[cap+'SedType']=radioValue(cap+'SedType');
     o[cap+'SedTypeAutre']=val(cap+'SedTypeAutre');
+    o[cap+'SedHauteur']=val(cap+'SedHauteur');
     o[cap+'SedMode']=radioValue(cap+'SedMode');
     o[cap+'SedGran']=radioValue(cap+'SedGran');
     o[cap+'SedMateriaux']=radioValue(cap+'SedMateriaux');
@@ -1149,11 +1196,17 @@ function collectInsitu(){
   return o;
 }
 function collectSpecific(){
-  const o={};document.querySelectorAll('#specific input,#specific select,#specific textarea').forEach(e=>{if(e.id)o[e.id]=e.type==='checkbox'?e.checked:e.value});return o;
+  // Boutons radio : la réponse cochée, par nom (auparavant ignorés quand ils n'avaient pas d'id —
+  // ex. RCO « Eau prélevée ? », « Invertébrés… », « Diatomées… » — ou enregistrés avec la valeur
+  // de leur attribut même non cochés quand ils en avaient un).
+  const o={};document.querySelectorAll('#specific input,#specific select,#specific textarea').forEach(e=>{
+    if(e.type==='radio'){if(e.checked&&e.name)o[e.name]=e.value;return}
+    if(e.id)o[e.id]=e.type==='checkbox'?e.checked:e.value;
+  });return o;
 }
 function collectConditions(){
   if(state.network==='EL'){
-    return collectSimple(['meteo','hydro','irisations','mousse','boues','feuilles','aspect','ombre','typePrelSandre','teinte','elIntensite','elIncidence','siteObs','elMer','elMaree','elCoefMaree','elActivites']);
+    return collectSimple(['meteo','hydro','irisations','mousse','boues','feuilles','aspect','ombre','typePrelSandre','teinte','elIntensite','elIncidence','siteObs','elMer','elMaree','elCoefMaree','elActivites','limpidite']);
   }
   return collectSimple(['meteo','seuil','typePrelSandre','hydro','aspect','irisations','mousse','feuilles','boues','autresCorps','teinte','coloration','limpidite','odeur','ombre','berge','debitTendance','macro','largeur','profMoy','siteObs']);
 }
@@ -1326,7 +1379,7 @@ function collectRecord(){
     xTheorique:s?.x??'',yTheorique:s?.y??'',xTerrain:val('xT'),yTerrain:val('yT'),ecartM:$('distance').textContent,
     conditions:collectConditions(),insitu:collectInsitu(),sample:collectSample(),specific:collectSpecific(),
     photos:(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p),projection:val('projection'),schemaLegend:{ecoulement:!!$('legendeEcoulement')?.checked,prelevement:!!$('legendePrelevement')?.checked,berges:!!$('legendeBerges')?.checked,acces:!!$('legendeAcces')?.checked,autre:val('legendeAutre')},dessin:canvasData('draw'),signature:canvasData('signature'),signName:val('signName'),
-    qc:radioValue('qc'),qcType:val('qcType'),obs:val('obs'),comment:val('comment'),savedAt:new Date().toISOString(),
+    qc:radioValue('qc'),qcType:val('qcType'),obs:val('obs'),comment:val('comment'),insituBoitier:val('insituBoitier'),formValues:snapshotForm(),savedAt:new Date().toISOString(),
     appBuild:window.APP_BUILD||''
   };
   /* --- Champs qualité / traçabilité étendus (ancien correctif) --- */
@@ -1395,6 +1448,7 @@ function loadRecord(id){
   }
   if(f.network==='EL' && f.insitu?.params){
     const d=f.insitu;
+    if($('elDepth')&&d.profondeur!=null&&d.profondeur!=='')$('elDepth').value=d.profondeur; // auparavant remise à 10 / vide
     [['surface','el_depth_surf'],['intermediaire','el_depth_inter'],['fond','el_depth_fond']].forEach(([k,id])=>{if($(id))$(id).value=d.profondeurs?.[k]??''});
     Object.entries(d.params).forEach(([k,v])=>{
       if(!v||typeof v!=='object')return;
@@ -1418,7 +1472,9 @@ function loadRecord(id){
     Object.entries(f.sample).forEach(([k,v])=>{
       if($(k))$(k).value=v||'';
     });
-    ['smode','gants','filtresSite','consOui','pompeDemeureRadio','filtresSiteeso','consOuieso'].forEach(k=>{if(f.sample[k]){const q=document.querySelector(`input[name="${k}"][value="${f.sample[k]}"]`);if(q)q.checked=true}});
+    // [nom du groupe de boutons, clé enregistrée] — certaines clés diffèrent du nom du groupe
+    // (pompe à demeure, filtrés sur site ESO) : elles n'étaient jamais restaurées.
+    [['smode','smode'],['gants','gants'],['filtresSite','filtresSite'],['consOui','consOui'],['pompeDemeureRadio','pompeDemeure'],['filtresSiteeso','filtresSiteEso'],['consOuieso','consOuieso'],['elChloro','elChloro']].forEach(([name,key])=>{const v=f.sample[key]??f.sample[name];if(v){const q=document.querySelector(`input[name="${name}"][value="${CSS.escape(v)}"]`);if(q){q.checked=true;q.dispatchEvent(new Event('change',{bubbles:true}))}}});
     ['global_mode','eso_mode'].forEach(k=>{if(f.insitu?.mode){const q=document.querySelector(`input[name="${k}"][value="${f.insitu.mode}"]`);if(q)q.checked=true}});
     ['chloro','metaux','autres'].forEach(k=>{
       const q=document.querySelector(`#filtreParam_${k}`); if(q)q.checked=!!f.sample['filtreParam_'+k] || f.sample['filtre_'+k]==='Oui';
@@ -1449,7 +1505,10 @@ function loadRecord(id){
     });
   }
   // Restore dynamically generated specific fields
-  Object.entries(f.specific||{}).forEach(([k,v])=>{const e=$(k);if(e){if(e.type==='checkbox')e.checked=!!v;else e.value=v||''}});
+  Object.entries(f.specific||{}).forEach(([k,v])=>{const e=$(k);if(e){if(e.type==='checkbox')e.checked=!!v;else if(e.type!=='radio')e.value=v||''}else if(v){const q=document.querySelector(`#specific input[type=radio][name="${CSS.escape(k)}"][value="${CSS.escape(String(v))}"]`);if(q){q.checked=true;q.dispatchEvent(new Event('change',{bubbles:true}))}}});
+  // Signataire : la liste est reconstruite d'après l'organisme ; un signataire hors liste
+  // (HYDRECO, DGTM, opérateur supprimé…) était effacé, puis perdu à l'enregistrement.
+  {const sn=$('signName');if(sn&&f.signName){if(![...sn.options].some(o=>o.value===f.signName))sn.add(new Option(f.signName,f.signName));sn.value=f.signName}}
   renderPhotos();if(window.drawPhotoGroups)drawPhotoGroups();updateDistance();$('save').textContent='💾 Mettre à jour la fiche';window.scrollTo(0,0);
   if(f._archived)toast('⚠️ Fiche allégée : '+(f._archivedPhotoCount||0)+' photo(s) retirée(s) du stockage local (déjà sauvegardés ailleurs). Réimportez le fichier original pour les revoir/modifier.');
   })(id);
@@ -1458,6 +1517,9 @@ function loadRecord(id){
   setField('methodRef',f.methodRef);setField('methodVersion',f.methodVersion);
   const st=f.sampleTrace||{};setField('sampleId',st.sampleId);setField('sampleBottleLot',st.bottleLot);setField('tempDeparture',st.tempDeparture);setField('tempReception',st.tempReception);setField('transportAgent',st.transportAgent);setField('custodyDate',st.custodyDate);setField('custodyObs',st.custodyObs);
   const q=f.quality||{};radioSet('representative',q.representative);setField('representativeJustification',q.representativeJustification);radioSet('qc_blank',q.qcBlank);radioSet('qc_duplicate',q.qcDuplicate);radioSet('qc_material',q.qcMaterial);setField('uncertaintySource',q.uncertaintySource);
+  // Filet de sécurité : tout champ resté vide reprend la valeur mémorisée à l'enregistrement
+  // (aussi pour les champs construits un peu plus tard, d'où le second passage différé).
+  const tok=formLoadSeq;applyFormSnapshot(f.formValues);setTimeout(()=>{if(formLoadSeq===tok)applyFormSnapshot(f.formValues)},300);
 }
 const SUIVI_PARAMS={
   ph:{label:'pH',unit:'u.pH'},
