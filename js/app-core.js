@@ -336,23 +336,65 @@ function miGuessField(header){
   return '';
 }
 let miParsedRows=null,miHeaders=null,miMapping={};
+// Lecture des fichiers Excel : bibliothèque SheetJS chargée au moment de l'import seulement (elle
+// n'était chargée nulle part : « XLSX is not defined » à chaque import). Version figée : 0.20.3
+// (failles de sécurité de 0.18.5 corrigées), puis la copie npm 0.18.5 si le premier site ne répond
+// pas. Le service worker la garde en cache après un premier chargement en ligne. Un fichier CSV
+// s'importe sans elle, même hors connexion.
+const XLSX_SOURCES=['https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js','https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'];
+let xlsxLoading=null;
+function loadXlsx(){
+  if(window.XLSX)return Promise.resolve(window.XLSX);
+  if(!xlsxLoading)xlsxLoading=XLSX_SOURCES.reduce((prev,url)=>prev.catch(()=>new Promise((res,rej)=>{
+    const sc=document.createElement('script');sc.src=url;
+    sc.onload=()=>window.XLSX?res(window.XLSX):rej(new Error('bibliothèque Excel invalide'));
+    sc.onerror=()=>{sc.remove();rej(new Error('indisponible'))};
+    document.head.appendChild(sc);
+  })),Promise.reject()).catch(()=>{xlsxLoading=null;throw new Error('lecture des fichiers Excel indisponible (pas de connexion ?). Réessayez avec une connexion, ou enregistrez le fichier au format CSV depuis Excel.')});
+  return xlsxLoading;
+}
+// CSV (séparateur ; , ou tabulation détecté sur la 1re ligne, guillemets gérés)
+function parseCsvRows(text){
+  text=String(text||'').replace(/^﻿/,'');
+  const first=text.split(/\r?\n/)[0]||'',count=c=>first.split(c).length-1;
+  const sep=[';',',','\t'].sort((a,b)=>count(b)-count(a))[0];
+  const rows=[];let row=[],cell='',q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(q){if(ch==='"'){if(text[i+1]==='"'){cell+='"';i++}else q=false}else cell+=ch;continue}
+    if(ch==='"')q=true;
+    else if(ch===sep){row.push(cell);cell=''}
+    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&text[i+1]==='\n')i++;row.push(cell);rows.push(row);row=[];cell=''}
+    else cell+=ch;
+  }
+  if(cell!==''||row.length){row.push(cell);rows.push(row)}
+  return rows;
+}
 function setupMarketImport(){
   const fileInput=$('miFile');if(!fileInput)return;
+  const useRows=rows=>{
+    let headerRowIdx=rows.findIndex(r=>r.filter(c=>String(c).trim()).length>=2);
+    if(headerRowIdx<0)headerRowIdx=0;
+    miHeaders=(rows[headerRowIdx]||[]).map(h=>String(h||'').trim());
+    miParsedRows=rows.slice(headerRowIdx+1).filter(r=>r.some(c=>String(c).trim()));
+    miMapping={};
+    miHeaders.forEach((h,i)=>{const g=miGuessField(h);if(g&&!Object.values(miMapping).includes(i))miMapping[g]=i});
+    renderMiMapping();
+  };
   fileInput.onchange=(e)=>{
     const file=e.target.files[0];if(!file)return;
     const reader=new FileReader();
-    reader.onload=(ev)=>{
+    if(/\.(csv|txt)$/i.test(file.name)||/csv/i.test(file.type)){
+      reader.onload=ev=>{try{useRows(parseCsvRows(ev.target.result))}catch(err){toast('Fichier illisible : '+err.message)}};
+      reader.readAsText(file);
+      return;
+    }
+    reader.onload=async(ev)=>{
       try{
-        const wb=XLSX.read(ev.target.result,{type:'array'});
+        const X=await loadXlsx();
+        const wb=X.read(ev.target.result,{type:'array'});
         const ws=wb.Sheets[wb.SheetNames[0]];
-        const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
-        let headerRowIdx=rows.findIndex(r=>r.filter(c=>String(c).trim()).length>=2);
-        if(headerRowIdx<0)headerRowIdx=0;
-        miHeaders=rows[headerRowIdx].map(h=>String(h||'').trim());
-        miParsedRows=rows.slice(headerRowIdx+1).filter(r=>r.some(c=>String(c).trim()));
-        miMapping={};
-        miHeaders.forEach((h,i)=>{const g=miGuessField(h);if(g&&!Object.values(miMapping).includes(i))miMapping[g]=i});
-        renderMiMapping();
+        useRows(X.utils.sheet_to_json(ws,{header:1,defval:''}));
       }catch(err){toast('Fichier illisible : '+err.message)}
     };
     reader.readAsArrayBuffer(file);
@@ -1653,7 +1695,7 @@ $('suiviNetwork').onchange=()=>{ $('suiviStation').value=''; renderSuivi() };
 $('suiviStation').onchange=renderSuivi;
 window.addEventListener('resize',()=>{if(document.getElementById('suivi')?.classList.contains('active'))renderSuivi()});
 
-function csv(v){let s=Array.isArray(v)?v.join(' / '):v??'';s=String(s).replaceAll('"','""');return /[";\n]/.test(s)?'"'+s+'"':s}
+function csv(v){let s=Array.isArray(v)?v.join(' / '):v??'';s=String(s).replaceAll('"','""');return /[";\r\n]/.test(s)?'"'+s+'"':s}
 function download(fn,c,m){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:m}));a.download=fn;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)}
 const AUTO_BACKUP_INTERVAL_MS=10*60*1000;
 function maybeAutoBackup(){
@@ -1788,5 +1830,7 @@ renderNetworks();renderOrgOptions("Office de l'Eau de Guyane");setupSandre();if(
 window.addEventListener('beforeprint',()=>{
   const h=$('printHeaderTitle');if(!h)return;
   const net=state.network||'';const st=state.station||'';const dt=$('date')?.value||'';
-  h.textContent='Fiche terrain'+(net?' — '+net:'')+(st?' — '+st:'')+(dt?' — '+dt:'');
+  // Libellé complet du réseau (« EL — suivi littoral », « Chimie ESC »…) : les puces réseau ne sont pas imprimées
+  const lab=(typeof netLabel==='function'&&netLabel(net))||net;
+  h.textContent='Fiche terrain'+(lab?' — '+lab:'')+(st?' — '+st:'')+(dt?' — '+dt.split('-').reverse().join('/'):'');
 });

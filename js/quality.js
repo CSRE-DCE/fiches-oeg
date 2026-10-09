@@ -205,7 +205,39 @@ function renderAudit(){const h=$('auditBody');if(!h)return;const arr=(custom.aud
 
 /* --- Export / import renforcés --- */
 $('exportJSON').onclick=async()=>{await audit('EXPORT_JSON','',{records:records.length});saveLS(LSC,custom);download('sauvegarde_OEG_'+Date.now()+'.json',JSON.stringify({records,custom,version:20,exportedAt:new Date().toISOString()},null,2),'application/json')};
-$('exportCSV').onclick=async()=>{await audit('EXPORT_CSV','',{records:records.length});const cols=['id','network','activity','bioOperation','session','station','date','heureDebut','heureFin','organisme','preleveurs','xTheorique','yTheorique','xTerrain','yTerrain','ecartM','methodRef','methodVersion','obs','comment','status'];const rows=[cols.join(';')];records.forEach(r=>rows.push(cols.map(c=>csv(c==='status'?(r.lifecycle?.status||''):(c==='preleveurs'?r.preleveurs:r[c]))).join(';')));download('fiches_OEG_'+Date.now()+'.csv','\uFEFF'+rows.join('\n'),'text/csv;charset=utf-8')};
+// Export CSV « à plat » : une ligne par fiche, avec les mesures in situ, les conditions (codes
+// SANDRE), l'échantillonnage, le contrôle qualité, la traçabilité et la validation — auparavant
+// 21 colonnes d'identification seulement, sans aucune mesure. Colonnes = union des champs des
+// fiches exportées, dans un ordre stable (identification d'abord).
+function flatRecordForCsv(r){
+  const lc=r.lifecycle||{},si=r.stationInfo||{},i=r.insitu||{},o={};
+  const put=(k,v)=>{if(v===undefined||v===null||typeof v==='object'&&!Array.isArray(v))return;o[k]=v===true?'Oui':v===false?'':v};
+  const r2=v=>{const n=numOrNull(v);return n===null?(v??''):Math.round(n*100)/100};
+  ['id','network','activity','bioOperation','session','station'].forEach(k=>put(k,r[k]??''));
+  put('codeStation',si.code||si.code_bss||'');
+  ['date','heureDebut','heureFin','organisme','preleveurs','xTheorique','yTheorique','xTerrain','yTerrain','projection'].forEach(k=>put(k,r[k]??''));
+  put('ecartM',numOrNull(String(r.ecartM||'').replace(/\s*m\s*$/,''))??''); // nombre (auparavant « 12.3 m »)
+  ['methodRef','methodVersion','obs','comment'].forEach(k=>put(k,r[k]??''));
+  put('status',lc.status||'');put('version',lc.version??'');put('validePar',lc.validatedBy||'');put('valideLe',lc.validatedAt||'');put('commentaireValidation',lc.validationComment||'');
+  put('signataire',r.signName||'');put('boitier',r.insituBoitier||'');
+  put('nonConformitesOuvertes',(custom.nonConformites||[]).filter(n=>String(n.recordId)===String(r.id)&&n.status!=='Clôturée').length);
+  if(r.network==='EL'){
+    const P=i.profondeurs||{},D=['surface','intermediaire','fond'];
+    put('el_profondeurTotale',i.profondeur??'');D.forEach(d=>put('el_niveau_'+d,P[d]??''));
+    Object.entries(i.params||{}).forEach(([k,d])=>{D.forEach(dd=>put('el_'+k+'_'+dd,(dd==='intermediaire'?(d?.intermediaire??d?.inter):d?.[dd])??''));put('el_'+k+'_sonde',d?.sonde??'')});
+    const t=i.turbidite||{};[['surf','surface'],['inter','intermediaire'],['fond','fond']].forEach(([a,b])=>put('el_turb_'+b,r2(t[a]?.moyenne)));
+  }else Object.entries(i).forEach(([k,d])=>{if(!d||typeof d!=='object'||Array.isArray(d))return;put('mes_'+k,k==='turb'?r2(d.moyenne??d.value):(d.value??''));put('mes_'+k+'_gmao',d.gmao??'');if(d.mode)put('mes_'+k+'_mode',d.mode)});
+  Object.entries(r.conditions||{}).forEach(([k,v])=>put('cond_'+k,v));
+  const s=r.sample||{},recv=list=>(Array.isArray(list)?list:[]).filter(x=>x&&(x.organisme||x.dateHeure)).map(x=>(x.organisme||'?')+(x.dateHeure?' ('+x.dateHeure+')':''));
+  Object.entries(s).forEach(([k,v])=>{if(!Array.isArray(v)||v.every(x=>x===null||typeof x!=='object'))put('ech_'+k,v)});
+  put('ech_recepteurs',recv(s.recepteurs));put('ech_esoRecepteurs',recv(s.esoRecepteurs));
+  Object.entries(r.specific||{}).forEach(([k,v])=>put('spec_'+k,v));
+  put('qc',r.qc||'');put('qcType',r.qcType||'');Object.entries(r.quality||{}).forEach(([k,v])=>put('qualite_'+k,v));
+  Object.entries(r.sampleTrace||{}).forEach(([k,v])=>put('trace_'+k,v));
+  return o;
+}
+window.flatRecordForCsv=flatRecordForCsv;
+$('exportCSV').onclick=async()=>{await audit('EXPORT_CSV','',{records:records.length});const flat=records.map(flatRecordForCsv),cols=[],seen=new Set();flat.forEach(o=>Object.keys(o).forEach(k=>{if(!seen.has(k)){seen.add(k);cols.push(k)}}));const rows=[cols.join(';')];flat.forEach(o=>rows.push(cols.map(c=>csv(o[c])).join(';')));download('fiches_OEG_'+Date.now()+'.csv','﻿'+rows.join('\n'),'text/csv;charset=utf-8')};
 
 /* Import : conserver un historique et initialiser les nouvelles structures. */
 // Gestionnaire unique du bouton "Importer JSON" (seul point d'entrée — ne pas en ajouter un

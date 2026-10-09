@@ -742,6 +742,57 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e13.length===0,'aucune erreur JavaScript (CRT imprimé) '+JSON.stringify(e13));
     await c13.close();
   }
+  // --- R : exports et interface (CSV à plat, import Excel / CSV, téléphone, fiche imprimée) ---
+  {
+    const c14=await browser.newContext({serviceWorkers:'block',acceptDownloads:true});
+    await c14.route('https://unpkg.com/**',r=>r.abort());
+    await c14.route('https://cdn.sheetjs.com/**',r=>r.abort()); // site principal injoignable -> copie de secours
+    await c14.route('https://unpkg.com/xlsx@0.18.5/**',r=>r.fulfill({contentType:'text/javascript',body:'window.XLSX={read:()=>({SheetNames:["S"],Sheets:{S:{}}}),utils:{sheet_to_json:()=>[["Code station","Nom","X","Y"],["X1","Station Excel","1","2"]]}}'}));
+    const p=await c14.newPage();const e14=[];p.on('pageerror',e=>e14.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Export CSV : mesures, conditions, échantillonnage, qualité, traçabilité, validation
+    await p.evaluate(()=>{records.push({id:'CSV1',network:'ESO',station:'S',stationInfo:{code_bss:'BSS0X'},date:'2026-10-05',ecartM:'12.3 m',signName:'PF',insituBoitier:'EQ-B1',savedAt:'2026-10-05T08:00:00Z',
+      lifecycle:{status:'Validée',version:2,validatedBy:'ML',validatedAt:'2026-10-06T08:00:00Z'},auditRefs:[],photos:[],conditions:{hydro:'3'},insitu:{ph:{value:'6.5',gmao:'EQ-P1'},turb:{moyenne:3.3333333,value:3.3333333}},
+      sample:{esoFroid:'Glacière',esoRecepteurs:[{organisme:'LABO',dateHeure:'2026-10-05T16:30'}]},quality:{qcBlank:'Oui'},sampleTrace:{sampleId:'ECH-1'},comment:'ligne 1\nligne 2; suite'});saveLS(LS,records)});
+    const [dl]=await Promise.all([p.waitForEvent('download'),p.evaluate(()=>$('exportCSV').click())]);
+    const csvTxt=fs.readFileSync(await dl.path(),'utf8').replace(/^﻿/,'');
+    const head=csvTxt.split('\n')[0].split(';');
+    const lines=csvTxt.split('\n'),row=lines.find(l=>l.startsWith('CSV1;'));
+    const val=k=>{const parts=[];let cur='',q=false;const full=lines.slice(lines.indexOf(row)).join('\n');for(let i=0;i<full.length;i++){const ch=full[i];if(q){if(ch==='"'){if(full[i+1]==='"'){cur+='"';i++}else q=false}else cur+=ch}else if(ch==='"')q=true;else if(ch===';'){parts.push(cur);cur=''}else if(ch==='\n'){parts.push(cur);break}else cur+=ch}return parts[head.indexOf(k)]};
+    ok(['mes_ph','mes_ph_gmao','cond_hydro','ech_esoFroid','qualite_qcBlank','trace_sampleId','status','validePar','signataire','boitier','codeStation'].every(k=>head.includes(k)),'export CSV : mesures, conditions, échantillonnage, qualité, traçabilité et validation (auparavant 21 colonnes sans mesure)');
+    ok(val('mes_ph')==='6.5'&&val('mes_turb')==='3.33'&&val('ecartM')==='12.3'&&val('validePar')==='ML'&&val('codeStation')==='BSS0X'&&/LABO \(2026-10-05T16:30\)/.test(val('ech_esoRecepteurs')),'export CSV : valeurs exactes (écart GPS en nombre, turbidité arrondie, récepteurs ESO)');
+    ok(val('comment')==='ligne 1\nligne 2; suite','export CSV : commentaire multiligne avec « ; » correctement protégé');
+    // Import programme de marché : CSV hors connexion, Excel via la bibliothèque chargée à la demande
+    await p.setInputFiles('#miFile',{name:'marche.csv',mimeType:'text/csv',buffer:Buffer.from('﻿Code station;Nom;X;Y\nC1;"Station; avec point-virgule";352000;540000\n')});
+    await p.waitForFunction(()=>Array.isArray(miParsedRows)&&miParsedRows.length===1,null,{timeout:5000}).catch(()=>{});
+    ok(await p.evaluate(()=>miParsedRows?.[0]?.[1]==='Station; avec point-virgule'&&miMapping.code===0&&miMapping.nom===1&&!!document.querySelector('#miMapping select')),'import de marché : fichier CSV lu hors connexion, colonnes reconnues');
+    await p.setInputFiles('#miFile',{name:'marche.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from('PK')});
+    await p.waitForFunction(()=>miParsedRows?.[0]?.[1]==='Station Excel',null,{timeout:5000}).catch(()=>{});
+    ok(await p.evaluate(()=>miParsedRows?.[0]?.[1]==='Station Excel'&&!!window.XLSX),'import de marché : Excel lu (bibliothèque chargée à la demande, copie de secours ; auparavant « XLSX is not defined »)');
+    // Fiche imprimée : sans outils de saisie, réseau en toutes lettres
+    await p.click('.tab[data-tab="new"]');await p.click('#networks .chip[data-n="EL"]');
+    await p.evaluate(()=>{for(const id of ['session','activity']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const s=$('station');s.value=[...s.options].filter(o=>o.value)[0].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    await p.waitForTimeout(400);await p.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));await p.emulateMedia({media:'print'});
+    const tools=await p.evaluate(()=>[...document.querySelectorAll('label.btn,#drawEraser,[id^="rxAdd_"],.swatch')].filter(e=>e.getBoundingClientRect().width>0).length);
+    ok(tools===0,'fiche imprimée : sans boutons photo, palette / gomme du schéma ni « ajouter un organisme »');
+    ok(/EL — suivi littoral/.test(await p.textContent('#printHeaderTitle')),'fiche imprimée : réseau en toutes lettres dans l’en-tête');
+    await p.emulateMedia({media:'screen'});
+    // Téléphone (390 px) : aucune page plus large que l'écran, bouton Enregistrer visible
+    await p.setViewportSize({width:390,height:844});await p.waitForTimeout(300);
+    const m=await p.evaluate(()=>{const b=$('save').getBoundingClientRect();return {sw:document.documentElement.scrollWidth,w:document.documentElement.clientWidth,right:b.right}});
+    ok(m.sw<=m.w&&m.right<=m.w,'téléphone : page sans défilement horizontal, bouton Enregistrer entièrement visible '+JSON.stringify(m));
+    ok(e14.length===0,'aucune erreur JavaScript (exports et interface) '+JSON.stringify(e14));
+    await c14.close();
+  }
+  {
+    // Import Excel sans connexion : message clair (proposer le CSV) au lieu de « XLSX is not defined »
+    const c15=await browser.newContext({serviceWorkers:'block'});await c15.route(/^https:\/\//,r=>r.abort());
+    const p=await c15.newPage();await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.setInputFiles('#miFile',{name:'m.xlsx',mimeType:'application/octet-stream',buffer:Buffer.from('PK')});
+    await p.waitForFunction(()=>/format CSV/.test(document.body.innerText),null,{timeout:5000}).catch(()=>{});
+    ok(await p.evaluate(()=>/format CSV/.test(document.body.innerText)&&!/XLSX is not defined/.test(document.body.innerText)),'import Excel hors connexion : message clair proposant le CSV');
+    await c15.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

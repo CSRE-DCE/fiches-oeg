@@ -198,3 +198,15 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
   .crtPage::after{content:attr(data-report) '  •  Office de l’Eau de Guyane'}
 }
 @page{@bottom-right{content:'Page ' counter(page) ' / ' counter(pages);font-family:Arial,Helvetica,sans-serif;font-size:7.5pt;color:#6e7b82}}
+/* ---- Téléphone / petite tablette (audit) : plus de défilement horizontal de toute la page ----
+   Les tableaux de mesures (in situ, EL, pêche) et la barre d'onglets élargissaient la page à
+   720-810 px pour un écran de 390 px : le bouton « Enregistrer » sortait de l'écran. Ils défilent
+   désormais horizontalement dans leur cadre. */
+@media screen and (max-width:760px){
+  .tabs{flex-wrap:wrap;overflow:visible}
+  .tabs .tab{flex:1 1 auto}
+  #insitu,#specific,#sample,.filterTable{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+}
+/* Fiche terrain imprimée : sans les outils de saisie (prise de photo, palette et gomme du
+   schéma, ajout / suppression d'organisme récepteur) */
+@media print{label.btn,.drawToolbar,.swatch,#drawEraser,#clearDraw,[id^="rxAdd_"],.receiverRow button{display:none!important}}
