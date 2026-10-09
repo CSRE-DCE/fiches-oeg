@@ -658,6 +658,55 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e11.length===0,'aucune erreur JavaScript (dernier audit) '+JSON.stringify(e11));
     await c11.close();
   }
+  // --- P : contenu du CRT (ESO, contrôle qualité, traçabilité, codes SANDRE, NC, matériel, arrondis) ---
+  {
+    const c12=await browser.newContext({serviceWorkers:'block'});
+    await c12.route('https://unpkg.com/**',r=>r.abort());await c12.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c12.newPage();const e12=[];p.on('pageerror',e=>e12.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const eso=await p.evaluate(()=>{
+      const eso=stationsFor('ESO',null)[0],m={savedAt:'2026-10-05T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-05T08:00:00.000Z'},auditRefs:[],photos:[]};
+      records.push({id:'PESO',network:'ESO',session:'S1',station:eso.nom,stationInfo:eso,date:'2026-10-05',...m,conditions:{},
+        insitu:{mode:'par appareil',ph:{value:'6.5',gmao:'EQ-P1'},turb:{value:3.3333333333333335,moyenne:3.3333333333333335,mesures:[3,3,4]}},insituBoitier:'EQ-B1',
+        sample:{stype:'Ponctuel',esoNature:'Piézomètre',esoLieu:'Tête de puits',purgeDebit:'1.2',purgeDuree:'30',esoNiveau:'12.4',pompeDemeure:'Non',esoFroid:'Glacière',esoSuivi:'Enregistreur',esoRecepteurs:[{organisme:'LABO-ESO',dateHeure:'2026-10-05T16:30'}],esoRecepteur:'LABO-ESO',esoRemise:'2026-10-05T16:30',recepteurs:[]},
+        qc:'Oui',qcType:'Blanc terrain',quality:{qcBlank:'Oui',qcDuplicate:'Non',qcMaterial:'Oui',representative:'Non',representativeJustification:'Accès limité',uncertaintySource:'Pluie la veille'},
+        sampleTrace:{sampleId:'ECH-42',bottleLot:'LOT-7',tempDeparture:'4',tempReception:'5',transportAgent:'Agent X',custodyDate:'2026-10-05T17:00',custodyObs:'RAS transport'},
+        obs:'Eau claire au robinet',comment:'Mesure redox non réalisée'});
+      const rco=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];
+      records.push({id:'PRCO',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:'S1',station:rco.nom,stationInfo:rco,date:'2026-10-06',...m,insitu:{},
+        conditions:{hydro:'3',meteo:'1',limpidite:'2'},specific:{rcoEau:'Non',rcoSed:'Oui',rcoSedGants:'Oui',rcoBioObs:'  '},sample:{rcoSed:'Oui',rcoSedGants:'Oui'}});
+      const el=DATA.EL_STATIONS[0];
+      records.push({id:'PEL',network:'EL',station:el.nom,stationInfo:el,date:'2026-10-07',...m,insitu:{profondeur:'5',profondeurs:{surface:'0.5',intermediaire:'2',fond:'4'},params:{temp:{surface:'29.126',intermediaire:'28.4',fond:'27.2'}},turbidite:{surf:{moyenne:3.3333333333333335}}}});
+      records.push({id:'PBIO',network:'BIO',station:'Station BIO P',stationInfo:{nom:'Station BIO P'},date:'2026-10-08',...m,insitu:{},specific:{fishLab:'2026-10-09T09:15',fishWeight:'950',f_Chevaine_1_t:'210',f_Chevaine_1_p:'120'}});
+      custom.nonConformites=(custom.nonConformites||[]).concat([{id:'NC-P1',recordId:'PESO',category:'Transport',severity:'Majeure',status:'Ouverte',description:'Glacière arrivée à 9 °C',immediate:'Ré-échantillonnage',corrective:'Contrôle des blocs eutectiques',dueDate:'2026-11-01'}]);
+      custom.equipements.push({type:'sonde',gmao:'EQ-P1',nom:'Sonde pH P',serie:'SN-1',echeance:'2026-09-30'},{type:'boitier',gmao:'EQ-B1',nom:'Multi 3630',serie:'SN-2',echeance:'2027-06-30'});
+      saveLS(LS,records);saveLS(LSC,custom);return {code:eso.code_bss,commune:eso.commune};
+    });
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(500);
+    const pick=async id=>{await p.evaluate(id=>{const s=$('crtRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}))},id);await p.waitForTimeout(250);return p.textContent('#crtPreviewBox')};
+    let t=await pick('PESO');
+    ok(t.includes('Code BSS')&&t.includes(eso.code)&&!t.includes('Non défini')&&t.includes(eso.commune),'CRT ESO : code BSS et commune (auparavant « Non défini »)');
+    ok(/Moyen de refroidissement\s*Glacière/.test(t)&&/Suivi de la température\s*Enregistreur/.test(t)&&t.includes('LABO-ESO')&&t.includes('05/10/2026 16:30'),'CRT ESO : transport et organisme récepteur imprimés (auparavant « — »)');
+    ok(/Nature du point\s*Piézomètre/.test(t)&&t.includes('Tête de puits')&&/Niveau piézométrique \(m\)\s*12.4/.test(t)&&/Débit de purge \(m³\/h\)\s*1.2/.test(t),'CRT ESO : ouvrage, purge et niveau piézométrique');
+    ok(/Blanc de terrain réalisé\s*Oui/.test(t)&&t.includes('Accès limité')&&t.includes('Pluie la veille'),'CRT : section contrôle qualité');
+    ok(['ECH-42','LOT-7','Agent X','RAS transport','05/10/2026 17:00'].every(x=>t.includes(x)),'CRT : traçabilité / chaîne de possession');
+    ok(t.includes('Eau claire au robinet')&&t.includes('Mesure redox non réalisée'),'CRT : observations ET commentaires imprimés (auparavant l’un ou l’autre)');
+    ok(t.includes('Glacière arrivée à 9 °C')&&t.includes('1 non-conformité(s) non clôturée(s)'),'CRT : non-conformités de la fiche');
+    ok(/EQ-P1\s*Sonde pH P\s*SN-1[^]*Étalonnage expiré à la date de la visite/.test(t)&&/EQ-B1\s*Multi 3630[^]*Étalonnage valide à la date de la visite/.test(t),'CRT : matériel de mesure et statut métrologique à la date de la visite');
+    ok(t.includes('3.33')&&!t.includes('3.3333'),'CRT : valeurs arrondies à 2 décimales (turbidité moyenne)');
+    ok(/Matrice\(s\)\s*Eau souterraine/.test(t),'CRT ESO : matrice « eau souterraine »');
+    t=await pick('PRCO');
+    ok(t.includes('Basses eaux (code SANDRE 3)')&&t.includes('Ensoleillé (code SANDRE 1)')&&t.includes('Légèrement trouble (code SANDRE 2)'),'CRT : libellés SANDRE au lieu des seuls codes');
+    ok(/Matrice\(s\)\s*Sédiments/.test(t),'CRT RCO : matrice = sédiments (eau non prélevée ; auparavant toujours « Eau »)');
+    ok(/Eau prélevée\s*:\s*Non/.test(t)&&!/rcoSed|rcoBioObs/.test(t),'CRT RCO : données complémentaires libellées, sans clés brutes ni doublon sédiments');
+    t=await pick('PEL');
+    ok(/Niveau de mesure \(m\)\s*0.5\s*2\s*4/.test(t)&&t.includes('Profondeur totale : 5 m')&&t.includes('29.13'),'CRT EL : niveaux de mesure et profondeur totale dans le tableau, valeurs arrondies');
+    t=await pick('PBIO');
+    ok(/Date \/ heure d’arrivée au laboratoire\s*:\s*09\/10\/2026 09:15/.test(t)&&!t.includes('Laboratoire destinataire'),'CRT BIO : libellés du formulaire (arrivée au laboratoire) et dates lisibles');
+    ok(/Chevaine\s*1\s*210\s*120/.test(t)&&!t.includes('f_Chevaine'),'CRT BIO : individus de pêche en tableau (et non clés brutes)');
+    ok(e12.length===0,'aucune erreur JavaScript (contenu du CRT) '+JSON.stringify(e12));
+    await c12.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
