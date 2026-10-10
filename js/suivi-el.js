@@ -34,19 +34,42 @@ function sessionKeySvg(si){
 }
 function elMean(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:null}
 function elFmt(v){return v==null?'—':Number(v).toFixed(2)}
+const EL_NO_SESSION='#6e7b82';
+const EL_MOIS={janvier:1,'février':2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,'août':8,aout:8,septembre:9,octobre:10,novembre:11,'décembre':12,decembre:12};
+// Ordre chronologique d'une session : mois et année lus dans le libellé (« Septembre 2026 » -> 2026-09),
+// date pour une visite sans session ; l'ordre du calendrier EL départage. Auparavant une session d'une
+// autre campagne (2025, ou la campagne suivante) était classée après toutes celles en cours.
+function elChronoKey(k){
+  const s=String(k||''),m=/([a-zéèûô]+)\.?\s+(\d{4})/i.exec(s),mo=m&&EL_MOIS[m[1].toLowerCase()];
+  return (mo?m[2]+'-'+String(mo).padStart(2,'0'):(/^\d{4}-\d{2}(-\d{2})?/.exec(s)||['~'])[0])+'|'+suiviSortKey(s,'EL');
+}
+function elSessionCmp(a,b){return elChronoKey(a).localeCompare(elChronoKey(b),'fr')}
 function elSessionInfo(label){
   const list=DATA.EL_SESSIONS||[],i=list.findIndex(x=>x.label===label);
-  const code=(/^(S\d+)\s*-/.exec(label||'')||[])[1]||'';
+  const code=(/^(S\d+)\s*-/.exec(label||'')||[])[1]||'',d=/^(\d{4})-(\d{2})-(\d{2})/.exec(label||'');
   const slot=i>=0?i:(code?Number(code.slice(1))-1:-1);
-  return {label,code:code||String(label||'').slice(0,10),name:code?(code+(i>=0&&list[i].mois?' · '+list[i].mois:'')):String(label||''),color:slot>=0?EL_SESSION_COLORS[slot%EL_SESSION_COLORS.length]:'#6e7b82',dash:false};
+  // Nom affiché : « S1 · Septembre 2026 » (mois et année lus dans le libellé si la session n'est pas au calendrier
+  // en cours), « Visite du 10/09/26 » pour une fiche sans session
+  const mois=i>=0?list[i].mois:((/([A-Za-zÀ-ÿ]+\s+\d{4})/.exec(label||'')||[])[1]||'');
+  return {label,code:code||(d?d[3]+'/'+d[2]+'/'+d[1].slice(2):String(label||'').slice(0,10)),name:code?(code+(mois?' · '+mois:'')):(d?'Visite du '+d[3]+'/'+d[2]+'/'+d[1].slice(2)+' (sans session)':String(label||'')),color:slot>=0?EL_SESSION_COLORS[slot%EL_SESSION_COLORS.length]:EL_NO_SESSION,dash:false};
 }
-// Sessions dans l'ordre du calendrier ; au-delà de 8, seules les plus récentes sont tracées (signalé)
+// Sessions dans l'ordre chronologique ; au-delà de 8, seules les plus récentes sont tracées (signalé)
 function elOrderSessions(keys){
-  const sorted=[...new Set(keys)].sort((a,b)=>suiviSortKey(a,'EL').localeCompare(suiviSortKey(b,'EL'),'fr'));
+  const sorted=[...new Set(keys)].sort(elSessionCmp);
   const shown=sorted.slice(-EL_MAX_SESSIONS),infos=shown.map(elSessionInfo),seen=new Set();
+  // Visites sans session (clé = date) : couleurs de la palette non prises par les sessions affichées
+  // (auparavant toutes grises et en pointillé)
+  const used=new Set(infos.filter(x=>x.color!==EL_NO_SESSION).map(x=>x.color)),free=EL_SESSION_COLORS.filter(c=>!used.has(c));let k=0;
+  infos.forEach(x=>{if(x.color===EL_NO_SESSION&&free.length)x.color=free[k++%free.length]});
   // Même couleur pour deux sessions affichées (même code, années différentes) : la plus ancienne en pointillé
   for(let i=infos.length-1;i>=0;i--){if(seen.has(infos[i].color))infos[i].dash=true;seen.add(infos[i].color)}
   return {infos,dropped:sorted.length-shown.length};
+}
+// Étiquettes de l'axe des sessions : « S1 » (avec l'année si le même code revient), jj/mm/aa pour
+// une visite sans session
+function elPeriodTicks(P){
+  const codes=P.map(p=>(/^(S\d+)\s*-/.exec(p)||[])[1]||''),dup=c=>c&&codes.filter(x=>x===c).length>1;
+  return P.map((p,i)=>{const d=/^(\d{4})-(\d{2})-(\d{2})/.exec(p);if(codes[i])return codes[i]+(dup(codes[i])?' ’'+((/(\d{4})/.exec(p)||['',''])[1].slice(2)):'');return d?d[3]+'/'+d[2]+'/'+d[1].slice(2):(p.length>11?p.slice(0,10)+'…':p)});
 }
 function elWrap(c,text,maxW,maxLines){
   const words=String(text).split(/\s+/),lines=[];let cur='';
@@ -62,6 +85,8 @@ function elPrepCanvas(canvas,h){
 }
 // Étendue de l'axe avec une marge ; jamais sous 0 pour des valeurs positives (salinité, turbidité…)
 function elRange(vals){const lo=Math.min(...vals);let min=lo,max=Math.max(...vals);if(min===max){min-=1;max+=1}else{const e=(max-min)*0.15;min-=e;max+=e}if(lo>=0&&min<0)min=0;return [min,max]}
+// Marge gauche assez large pour la graduation la plus longue (ex. 53088.33 µS/cm, auparavant rognée)
+function elAxisPad(c,min,max,base){c.font='9px Arial';let m=0;for(let i=0;i<4;i++)m=Math.max(m,c.measureText(Number((min+i*(max-min)/3).toFixed(2)).toString()).width);return Math.max(base,Math.ceil(m)+8)}
 // Marqueur sur le canevas (forme + couleur, liseré blanc pour les points superposés)
 function drawDepthMarker(c,shape,x,y,color){
   c.beginPath();
@@ -84,11 +109,14 @@ function elBindTip(wrap,canvas,pick){
     if(!res){hide();return}
     tip.innerHTML=res.html;tip.classList.remove('hide');
     if(res.cx!=null){line.classList.remove('hide');line.style.left=res.cx+'px'}else line.classList.add('hide');
+    tip.style.left='0px';
     const px=res.cx!=null?res.cx:ev.clientX-r.left,tw=tip.offsetWidth;
     tip.style.left=Math.max(0,Math.min(r.width-tw,px+10>r.width-tw?px-tw-10:px+10))+'px';
   };
   const hide=()=>{tip.classList.add('hide');line.classList.add('hide')};
-  canvas.addEventListener('pointermove',show);canvas.addEventListener('pointerdown',show);canvas.addEventListener('pointerleave',hide);
+  // Au doigt, l'info-bulle reste affichée après le toucher (elle disparaissait dès que le doigt se levait)
+  canvas.addEventListener('pointermove',show);canvas.addEventListener('pointerdown',show);
+  canvas.addEventListener('pointerleave',e=>{if(e.pointerType!=='touch')hide()});canvas.addEventListener('pointercancel',hide);
 }
 function elCard(base,label,unit,legend,chartLabel,tableHtml,note){
   const card=document.createElement('div');card.className='suiviParamCard';card.dataset.param=base;
@@ -105,7 +133,7 @@ function elCard(base,label,unit,legend,chartLabel,tableHtml,note){
 // chaque période (moyenne si plusieurs visites dans la même session).
 function suiviDepthData(network,station,base){
   const depths=EL_DEPTHS.map(d=>({d,byPeriod:new Map(suiviSeries(network,station,base+'_'+d.key).map(x=>[x.period,x]))})).filter(x=>x.byPeriod.size);
-  const periods=[...new Set(depths.flatMap(x=>[...x.byPeriod.keys()]))].sort((a,b)=>suiviSortKey(a,network).localeCompare(suiviSortKey(b,network),'fr'));
+  const periods=[...new Set(depths.flatMap(x=>[...x.byPeriod.keys()]))].sort(elSessionCmp);
   return {periods,depths};
 }
 // Une courbe par profondeur, interrompue quand une session n'a pas de mesure à cette profondeur
@@ -113,17 +141,20 @@ function suiviDepthData(network,station,base){
 function drawDepthSuiviChart(canvas,data,unit){
   if(!canvas||!data.periods.length)return null;
   const {c,w,h}=elPrepCanvas(canvas,180);
-  const pad={l:40,r:48,t:16,b:30},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,P=data.periods,n=P.length;
   const [min,max]=elRange(data.depths.flatMap(x=>[...x.byPeriod.values()].map(v=>v.mean)));
-  const xAt=i=>pad.l+(n===1?pw/2:i*(pw/(n-1))),yAt=v=>pad.t+(max-v)*(ph/(max-min));
+  const pad={l:elAxisPad(c,min,max,40),r:48,t:16,b:30},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,P=data.periods,n=P.length,ins=10;
+  // Points écartés de 10 px de l'axe (le premier recouvrait les graduations)
+  const xAt=i=>pad.l+ins+(n===1?(pw-2*ins)/2:i*((pw-2*ins)/(n-1))),yAt=v=>pad.t+(max-v)*(ph/(max-min));
   // Légère séparation horizontale des trois profondeurs pour que des valeurs égales restent visibles
   const dodge=data.depths.length>1?{surf:-4,inter:0,fond:4}:{surf:0,inter:0,fond:0};
   c.font='9px Arial';
   for(let i=0;i<4;i++){const v=min+i*(max-min)/3,y=yAt(v);c.strokeStyle='#e5ebee';c.lineWidth=1;c.beginPath();c.moveTo(pad.l,y);c.lineTo(w-pad.r,y);c.stroke();c.fillStyle='#6e7b82';c.textAlign='right';c.fillText(Number(v.toFixed(2)).toString(),pad.l-5,y+3)}
   c.strokeStyle='#c3cdd2';c.beginPath();c.moveTo(pad.l,pad.t+ph);c.lineTo(w-pad.r,pad.t+ph);c.stroke();
   c.fillStyle='#6e7b82';c.textAlign='left';c.fillText(unit,pad.l,10);
-  // Axe : code court de la session (« S1 ») ; le nom complet est dans l'info-bulle et le tableau
-  P.forEach((p,i)=>{const sh=(/^(S\d+)\s*-/.exec(p)||[])[1]||(p.length>11?p.slice(0,10)+'…':p);c.fillStyle='#52626e';c.font='9px Arial';c.textAlign='center';c.fillText(sh,xAt(i),h-12)});
+  // Axe : code court de la session (« S1 ») ; le nom complet est dans l'info-bulle et le tableau. Étiquettes
+  // espacées (une sur deux…) si elles ne tiennent pas, la dernière toujours affichée.
+  const xl=elPeriodTicks(P);c.font='9px Arial';const lw=Math.max(...xl.map(t=>c.measureText(t).width))+6,step=n>1?Math.max(1,Math.ceil(lw/((pw-2*ins)/(n-1)))):1;
+  xl.forEach((t,i)=>{if((n-1-i)%step)return;c.fillStyle='#52626e';c.textAlign='center';c.fillText(t,xAt(i),h-12)});
   const ends=[];
   data.depths.forEach(({d,byPeriod})=>{
     const dx=dodge[d.key]||0;
@@ -164,12 +195,14 @@ function elDepthProfileData(station,base){
     const key=suiviDateKey(r);if(!key)return;const P=r.insitu?.profondeurs||{};
     EL_DEPTHS.forEach(d=>{
       const v=numOrNull(suiviValueFor(r,base+'_'+d.key));if(v===null)return;
-      const z=numOrNull(P[d.field]),m=bySes.get(key)||{},a=m[d.key]||(m[d.key]={v:[],z:[]});
-      a.v.push(v);if(z!==null)a.z.push(z);bySes.set(key,m);
+      const z=numOrNull(P[d.field]),m=bySes.get(key)||{},a=m[d.key]||(m[d.key]={v:[],z:[],nz:[]});
+      if(z!==null){a.v.push(v);a.z.push(z)}else a.nz.push(v);bySes.set(key,m);
     });
   });
   const {infos,dropped}=elOrderSessions([...bySes.keys()]);
-  return {dropped,sessions:infos.map(si=>({si,levels:EL_DEPTHS.map(d=>{const a=bySes.get(si.label)[d.key];return a?{d,v:elMean(a.v),z:elMean(a.z),n:a.v.length}:null}).filter(Boolean)}))};
+  // Point tracé = moyenne des seules visites dont la profondeur est saisie ; les autres sont comptées à part
+  return {dropped,sessions:infos.map(si=>({si,levels:EL_DEPTHS.map(d=>{const a=bySes.get(si.label)[d.key];if(!a)return null;
+    return a.v.length?{d,v:elMean(a.v),z:elMean(a.z),n:a.v.length,noz:a.nz.length}:{d,v:elMean(a.nz),z:null,n:a.nz.length,noz:a.nz.length}}).filter(Boolean)}))};
 }
 // Valeur en abscisse, profondeur en ordonnée (0 m en haut) ; une courbe par session reliant surface,
 // intermédiaire et fond. Les points sans profondeur saisie ne peuvent pas être placés (signalé).
@@ -195,16 +228,22 @@ function drawElDepthProfile(canvas,data,unit){
     const last=L[L.length-1];ends.push({si,x:xAt(last.v),y:yAt(last.z)});
   });
   // Étiquette « S1 » au point le plus profond de chaque courbe (jusqu'à 5 sessions ; au-delà : légende, info-bulle et tableau)
-  if(ends.length<=5){c.font='bold 9px Arial';c.textAlign='left';c.fillStyle='#17212b';elSpread(ends,11,pad.t,pad.t+ph).forEach(e=>c.fillText(e.si.code,Math.min(e.x+8,w-pad.r+6),e.y+3))}
+  // En colonne à droite des points du fond, à la couleur de la session et détourées de blanc : une étiquette
+  // écartée ne se retrouve plus à côté du point d'une autre session ni sous le graphe.
+  if(ends.length<=5){
+    const lx=Math.min(Math.max(...ends.map(e=>e.x))+8,w-pad.r+6);ends.sort((a,b)=>a.y-b.y||a.x-b.x);
+    c.font='bold 9px Arial';c.textAlign='left';c.lineJoin='round';c.lineWidth=3;c.strokeStyle='#fff';
+    elSpread(ends,11,pad.t+4,pad.t+ph-4).forEach(e=>{c.strokeText(e.si.code,lx,e.y+3);c.fillStyle=e.si.color;c.fillText(e.si.code,lx,e.y+3)});
+  }
   return {marks};
 }
 function renderElDepthProfiles(s,grid){
   let count=0;
   EL_SUIVI_DEFS.forEach(([base,label,unit])=>{
     const data=elDepthProfileData(s,base);if(!data.sessions.length)return;count++;
-    const noZ=data.sessions.reduce((k,x)=>k+x.levels.filter(l=>l.z===null).length,0);
+    const noZ=data.sessions.reduce((k,x)=>k+x.levels.reduce((j,l)=>j+(l.noz||0),0),0);
     const table='<table class="suiviTrendTable"><thead><tr><th>Session</th>'+EL_DEPTHS.map(d=>'<th>'+depthMarkerSvg(d,10)+' '+escapeHTML(d.label)+'</th>').join('')+'</tr></thead><tbody>'+
-      data.sessions.map(({si,levels})=>'<tr><td>'+sessionKeySvg(si)+' '+escapeHTML(si.label)+'</td>'+EL_DEPTHS.map(d=>{const l=levels.find(x=>x.d===d);return '<td>'+(l?elFmt(l.v)+(l.z!==null?' <small>à '+Number(l.z.toFixed(2))+' m</small>':' <small>(profondeur non saisie)</small>')+(l.n>1?' <small>(n='+l.n+')</small>':''):'—')+'</td>'}).join('')+'</tr>').join('')+'</tbody></table>';
+      data.sessions.map(({si,levels})=>'<tr><td>'+sessionKeySvg(si)+' '+escapeHTML(si.label)+'</td>'+EL_DEPTHS.map(d=>{const l=levels.find(x=>x.d===d);return '<td>'+(l?elFmt(l.v)+(l.z!==null?' <small>à '+Number(l.z.toFixed(2))+' m</small>':' <small>(profondeur non saisie)</small>')+(l.n>1?' <small>(n='+l.n+')</small>':'')+(l.z!==null&&l.noz?' <small>(+'+l.noz+' sans profondeur saisie, non tracée(s))</small>':''):'—')+'</td>'}).join('')+'</tr>').join('')+'</tbody></table>';
     const note=[noZ?noZ+' mesure(s) sans profondeur saisie : non placée(s) sur le profil (voir le tableau).':'',data.dropped?data.dropped+' session(s) plus ancienne(s) non tracée(s) (8 au maximum).':''].filter(Boolean).join(' ');
     const card=elCard(base,label,unit,data.sessions.map(({si})=>'<span>'+sessionKeySvg(si)+' '+escapeHTML(si.name)+'</span>').join(''),label+' : profil de profondeur, une courbe par session',table,escapeHTML(note));
     grid.appendChild(card);
@@ -221,7 +260,9 @@ function renderElDepthProfiles(s,grid){
 
 // ---------- 3. Profil longitudinal de l'estuaire (stations de l'amont vers la mer) ----------
 function elStationsAll(){
-  const m=new Map();[...(DATA.EL_STATIONS||[]),...(custom.stations||[]).filter(s=>s.network==='EL')].forEach(s=>{if(s&&s.nom&&!m.has(s.nom))m.set(s.nom,s)});
+  // Référentiel, stations ajoutées, puis stations connues seulement par les fiches (station ajoutée sur une
+  // autre tablette, supprimée ici, ou renommée) — le référentiel l'emporte en cas de même nom
+  const m=new Map();[...(DATA.EL_STATIONS||[]),...(custom.stations||[]).filter(s=>s.network==='EL'),...records.filter(r=>r.network==='EL'&&r.station).map(r=>({...(r.stationInfo||{}),nom:r.station}))].forEach(s=>{if(s&&s.nom&&!m.has(s.nom))m.set(s.nom,s)});
   return [...m.values()];
 }
 function elBassinOf(s){return String(s?.bassin||s?.bv||'').trim()}
@@ -245,8 +286,8 @@ function elEstuaryData(bassin,base,depthKey){
 function drawElEstuary(canvas,data,unit,highlight){
   const vals=data.sessions.flatMap(s=>s.vals.filter(Boolean).map(x=>x.v));if(!vals.length)return null;
   const {c,w,h}=elPrepCanvas(canvas,220);
-  const n=data.stations.length,pad={l:42,r:30,t:16,b:46},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
-  const [min,max]=elRange(vals),xAt=i=>pad.l+(n===1?pw/2:i*(pw/(n-1))),yAt=v=>pad.t+(max-v)*(ph/(max-min)),gap=n>1?pw/(n-1):pw;
+  const [min,max]=elRange(vals),n=data.stations.length,pad={l:elAxisPad(c,min,max,42),r:30,t:16,b:46},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,ins=10;
+  const xAt=i=>pad.l+ins+(n===1?(pw-2*ins)/2:i*((pw-2*ins)/(n-1))),yAt=v=>pad.t+(max-v)*(ph/(max-min)),gap=n>1?(pw-2*ins)/(n-1):pw;
   const hi=data.stations.findIndex(s=>s.nom===highlight);
   if(hi>=0){c.fillStyle='rgba(0,61,122,.07)';const bw=Math.min(44,gap*.8);c.fillRect(xAt(hi)-bw/2,pad.t,bw,ph)}
   c.font='9px Arial';
@@ -255,7 +296,9 @@ function drawElEstuary(canvas,data,unit,highlight){
   c.fillStyle='#6e7b82';c.textAlign='left';c.fillText(unit,pad.l,10);
   data.stations.forEach((s,i)=>{
     const has=data.sessions.some(x=>x.vals[i]);c.font=(i===hi?'bold ':'')+'8.5px Arial';c.fillStyle=i===hi?'#003d7a':has?'#52626e':'#a9b4ba';c.textAlign='center';
-    elWrap(c,s.nom,Math.max(40,Math.min(gap-4,110)),2).forEach((l,k)=>c.fillText(l,Math.min(w-18,Math.max(18,xAt(i))),pad.t+ph+13+k*10));
+    // Nom centré sous la station, recalé pour rester entier au bord du graphe (auparavant rogné côté mer)
+    const L=elWrap(c,s.nom,Math.max(40,Math.min(gap-4,110)),2),tw=Math.max(...L.map(l=>c.measureText(l).width)),x=Math.min(w-2-tw/2,Math.max(2+tw/2,xAt(i)));
+    L.forEach((l,k)=>c.fillText(l,x,pad.t+ph+13+k*10));
   });
   c.font='8.5px Arial';c.fillStyle='#8a979e';c.textAlign='left';c.fillText('amont',pad.l,h-3);c.textAlign='right';c.fillText('mer →',w-pad.r,h-3);
   const ends=[];
@@ -267,7 +310,7 @@ function drawElEstuary(canvas,data,unit,highlight){
     if(last)ends.push({si,x:xAt(last.i),y:last.y});
   });
   if(ends.length<=5){c.font='bold 9px Arial';c.textAlign='left';c.fillStyle='#17212b';elSpread(ends,11,pad.t,pad.t+ph).forEach(e=>c.fillText(e.si.code,Math.min(e.x+7,w-24),e.y+3))}
-  return {xAt,n};
+  return {xAt,n,padB:pad.b};
 }
 function renderElEstuary(s,grid){
   const depth=EL_DEPTHS.find(d=>d.key===elEstuaryDepth)||EL_DEPTHS[0];let count=0;
@@ -282,6 +325,7 @@ function renderElEstuary(s,grid){
     card.querySelector('.suiviParamUnit').insertAdjacentHTML('beforeend',(unit?' · ':'')+depthMarkerSvg(depth,10)+' '+escapeHTML(depth.label));
     grid.appendChild(card);
     const canvas=card.querySelector('canvas'),geo=drawElEstuary(canvas,data,unit,s);
+    if(geo)card.querySelector('.suiviCross').style.bottom=geo.padB+'px'; // la ligne de repère s'arrête à l'axe, au-dessus des noms
     if(geo)elBindTip(card.querySelector('.suiviDepthWrap'),canvas,x=>{
       let i=0,best=Infinity;for(let k=0;k<geo.n;k++){const dd=Math.abs(geo.xAt(k)-x);if(dd<best){best=dd;i=k}}
       return {cx:geo.xAt(i),html:'<b>'+escapeHTML(data.stations[i].nom)+'</b> <span class="suiviTipN">('+escapeHTML(depth.label.toLowerCase())+')</span>'+data.sessions.map(({si,vals})=>{const x=vals[i];return '<div>'+sessionKeySvg(si)+' '+escapeHTML(si.code)+' : <b>'+(x?elFmt(x.v)+(unit?' '+escapeHTML(unit):''):'—')+'</b>'+(x&&x.n>1?' <span class="suiviTipN">(moyenne de '+x.n+' visites)</span>':'')+'</div>'}).join('')};

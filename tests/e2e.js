@@ -874,6 +874,49 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e17.length===0,'aucune erreur JavaScript (profils EL) '+JSON.stringify(e17));
     await c17.close();
   }
+  // --- U : suivi EL — corrections issues de la relecture (fiches sans session, autre campagne, tablette…) ---
+  {
+    const c18=await browser.newContext({serviceWorkers:'block'});await c18.route('https://unpkg.com/**',r=>r.abort());await c18.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c18.newPage();const e18=[];p.on('pageerror',e=>e18.push(e.message));
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Ordre chronologique : une session de la campagne précédente n'est plus classée « la plus récente »
+    const ord=await p.evaluate(()=>{const o=elOrderSessions(['S1 - Septembre 2026 (saison sèche)','S1 - Septembre 2025 (saison sèche)','S2 - Octobre 2026 (saison sèche)']);return o.infos.map(x=>x.label.replace(/\s*\(.*\)$/,'')+(x.dash?'*':''))});
+    ok(ord.join(' | ')==='S1 - Septembre 2025* | S1 - Septembre 2026 | S2 - Octobre 2026','sessions EL : ordre chronologique, la plus ancienne en pointillé '+ord.join(' | '));
+    ok(await p.evaluate(()=>{const keys=[];for(let m=1;m<=8;m++)keys.push('S'+m+' - '+['Septembre 2025','Octobre 2025','Novembre 2025','Décembre 2025','Janvier 2026','Mars 2026','Mai 2026','Juillet 2026'][m-1]);keys.push('S1 - Septembre 2026 (saison sèche)','S2 - Octobre 2026 (saison sèche)');const o=elOrderSessions(keys);return o.dropped===2&&o.infos.slice(-2).map(x=>x.label).join()==='S1 - Septembre 2026 (saison sèche),S2 - Octobre 2026 (saison sèche)'&&o.infos[0].name==='S3 · Novembre 2025'}),'sessions EL : au-delà de 8, ce sont les plus anciennes qui sont écartées');
+    await p.evaluate(()=>{
+      const by=n=>DATA.EL_STATIONS.find(s=>s.nom===n),m={lifecycle:{status:'À contrôler'},photos:[],auditRefs:[]};
+      // Fiches EL sans session (possible depuis la carte des stations)
+      ['2026-09-10','2026-10-12','2026-11-20'].forEach((d,i)=>records.push({id:'U'+i,network:'EL',station:'Kourou bourg',stationInfo:by('Kourou bourg'),session:'',date:d,savedAt:d+'T08:00:00Z',...m,insitu:{profondeurs:{surface:'0.5',fond:'6'},params:{sal:{surface:String(10+i),fond:String(15+i)}},turbidite:{}}}));
+      // Même session : une visite avec profondeur, une sans
+      const S1=DATA.EL_SESSIONS[0].label;
+      records.push({id:'UZ1',network:'EL',station:'Kourou fleuve',stationInfo:by('Kourou fleuve'),session:S1,date:'2026-09-11',savedAt:'2026-09-11T08:00:00Z',...m,insitu:{profondeurs:{surface:'0.5'},params:{sal:{surface:'4'}},turbidite:{}}},
+                   {id:'UZ2',network:'EL',station:'Kourou fleuve',stationInfo:by('Kourou fleuve'),session:S1,date:'2026-09-12',savedAt:'2026-09-12T08:00:00Z',...m,insitu:{profondeurs:{},params:{sal:{surface:'10'}},turbidite:{}}});
+      // Station ajoutée sur une autre tablette (absente du référentiel ici)
+      records.push({id:'UST',network:'EL',station:'Pointe Kourou test',stationInfo:{nom:'Pointe Kourou test',bassin:'Kourou',x:316000,y:575000},session:S1,date:'2026-09-13',savedAt:'2026-09-13T08:00:00Z',...m,insitu:{profondeurs:{surface:'0.5'},params:{sal:{surface:'33'}},turbidite:{}}});
+      saveLS(LS,records);
+    });
+    ok(await p.evaluate(()=>{const d=elDepthProfileData('Kourou bourg','sal');const cols=d.sessions.map(x=>x.si.color);return cols.length===3&&new Set(cols).size===3&&!cols.includes(EL_NO_SESSION)&&!d.sessions.some(x=>x.si.dash)&&/^Visite du 10\/09\/26/.test(d.sessions[0].si.name)}),'fiches EL sans session : une couleur distincte par visite (auparavant toutes grises en pointillé)');
+    ok(await p.evaluate(()=>{const d=elDepthProfileData('Kourou fleuve','sal'),l=d.sessions[0].levels[0];return l.v===4&&l.n===1&&l.noz===1}),'profil de profondeur : la mesure sans profondeur n’est plus moyennée dans le point d’une autre visite');
+    ok(await p.evaluate(()=>elEstuaryStations('Kourou').some(s=>s.nom==='Pointe Kourou test')),'profil de l’estuaire : station connue seulement par une fiche prise en compte');
+    ok(await p.evaluate(()=>{const c=document.createElement('canvas').getContext('2d');return typeof elAxisPad==='function'&&elAxisPad(c,52000,54000,40)>40}),'graphes EL : marge gauche élargie pour les graduations à 5 chiffres');
+    // Tablette : l'info-bulle reste affichée après un toucher
+    await p.click('.tab[data-tab="suivi"]');await p.waitForTimeout(300);
+    await p.evaluate(()=>{const n=$('suiviNetwork');n.value='EL';n.dispatchEvent(new Event('change'));const s=$('suiviStation');s.value='Kourou bourg';s.dispatchEvent(new Event('change'))});await p.waitForTimeout(300);
+    const tipStays=await p.evaluate(()=>{const cv=document.querySelector('.suiviParamCard[data-param="sal"] canvas'),r=cv.getBoundingClientRect(),o={bubbles:true,clientX:r.left+r.width/2,clientY:r.top+60,pointerType:'touch'};
+      cv.dispatchEvent(new PointerEvent('pointerdown',o));cv.dispatchEvent(new PointerEvent('pointerleave',o));return !cv.parentNode.querySelector('.suiviTip').classList.contains('hide')});
+    ok(tipStays,'tablette : l’info-bulle reste affichée quand le doigt se lève');
+    // CRT EL : axe jamais négatif, graduations toutes différentes, valeurs au-dessus de l'axe
+    await p.evaluate(()=>{const by=n=>DATA.EL_STATIONS.find(s=>s.nom===n),ses=DATA.EL_SESSIONS.map(x=>x.label),m={lifecycle:{status:'À contrôler'},photos:[],auditRefs:[]};
+      [['UC1',0,'2026-09-10',['0','0.3','0.4'],'8.10'],['UC2',1,'2026-10-10',['0.1','0.2','0.3'],'8.11'],['UC3',2,'2026-11-10',['0.3','0.5','0.6'],'8.12']].forEach(([id,si,d,sal,ph])=>records.push({id,network:'EL',station:'Mataroni',stationInfo:by('Mataroni'),session:ses[si],date:d,savedAt:d+'T08:00:00Z',...m,insitu:{profondeurs:{surface:'0.5',intermediaire:'2',fond:'4'},params:{sal:{surface:sal[0],intermediaire:sal[1],fond:sal[2]},ph:{surface:ph,intermediaire:ph,fond:ph}},turbidite:{}}}));saveLS(LS,records)});
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='UC3';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    const ax=await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox .crtGraphCard svg')].filter(s=>/Historique/.test(s.getAttribute('aria-label')||'')).map(s=>{const t=[...s.querySelectorAll('text[text-anchor="end"]')].map(x=>x.textContent);const axisY=Math.max(...[...s.querySelectorAll('line[stroke="#52626e"]')].map(l=>+l.getAttribute('y1')));const vals=[...s.querySelectorAll('text[font-weight="700"][fill="#17212b"]')].map(x=>+x.getAttribute('y'));return {ticks:t,neg:t.some(x=>/^-/.test(x)),uniq:new Set(t).size===t.length,below:vals.some(y=>y>axisY)}}));
+    ok(ax.length>=2&&ax.every(a=>!a.neg),'CRT EL historique : axe jamais négatif pour des valeurs positives '+JSON.stringify(ax.map(a=>a.ticks)));
+    ok(ax.every(a=>a.uniq),'CRT EL historique : graduations toutes différentes (pH sur une plage étroite)');
+    ok(ax.every(a=>!a.below),'CRT EL historique : valeurs de la visite jamais sous l’axe');
+    ok(e18.length===0,'aucune erreur JavaScript (corrections suivi EL) '+JSON.stringify(e18));
+    await c18.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

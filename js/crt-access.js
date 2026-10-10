@@ -312,12 +312,15 @@
         if(history.filter((rec,i)=>series.some(x=>x.pts[i]!==null)).length<2)return '';
         const W=640,H=250,L=62,R=60,T=18,B=50,iw=W-L-R,ih=H-T-B,n=history.length;
         const vals=series.flatMap(x=>x.pts.filter(v=>v!==null));
-        let vmin=Math.min(...vals),vmax=Math.max(...vals);if(vmin===vmax){vmin-=1;vmax+=1}else{const e=(vmax-vmin)*.14;vmin-=e;vmax+=e}
+        // Axe jamais négatif pour des valeurs positives (salinité, turbidité…)
+        const lo=Math.min(...vals);let vmin=lo,vmax=Math.max(...vals);if(vmin===vmax){vmin-=1;vmax+=1}else{const e=(vmax-vmin)*.14;vmin-=e;vmax+=e}if(lo>=0&&vmin<0)vmin=0;
         const sx=i=>L+(n===1?iw/2:i*iw/(n-1)),sy=v=>T+(vmax-v)/(vmax-vmin)*ih;
         const dodge=series.length>1?{surf:-5,inter:0,fond:5}:{surf:0,inter:0,fond:0};
         const fmtv=v=>{const a=Math.abs(v);return a>=100?v.toFixed(0):a>=10?v.toFixed(1):v.toFixed(2)};
+        // Graduations : assez de décimales pour que deux graduations voisines ne s'affichent jamais pareil
+        const tst=(vmax-vmin)/4,tdec=Math.min(4,Math.max(0,-Math.floor(Math.log10(tst)))),fmtt=v=>{const a=Math.abs(v);return v.toFixed(Math.max(a>=100?0:a>=10?1:2,tdec))};
         let g='';
-        for(let i=0;i<=4;i++){const v=vmin+(vmax-vmin)*i/4,py=sy(v);g+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#e5ebee"/><text x="'+(L-8)+'" y="'+(py+4).toFixed(1)+'" text-anchor="end" font-size="12" fill="#617180">'+esc(fmtv(v))+'</text>'}
+        for(let i=0;i<=4;i++){const v=vmin+(vmax-vmin)*i/4,py=sy(v);g+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#e5ebee"/><text x="'+(L-8)+'" y="'+(py+4).toFixed(1)+'" text-anchor="end" font-size="12" fill="#617180">'+esc(fmtt(v))+'</text>'}
         const ci=history.findIndex(rec=>rec.id===currentId);
         if(ci>=0){const bw=n>1?Math.min(46,iw/(n-1)*.8):46;g+='<rect x="'+(sx(ci)-bw/2).toFixed(1)+'" y="'+T+'" width="'+bw.toFixed(1)+'" height="'+ih+'" fill="#003D7A" fill-opacity=".07"/>'}
         g+='<line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/>';
@@ -334,7 +337,9 @@
         });
         // Valeurs de la visite du rapport seulement (les autres se lisent sur l'axe), chacune précédée du
         // symbole de sa profondeur (identifiable même écartée de son point) et détourée de blanc.
+        // écartées vers le bas puis remontées si besoin : jamais sous l'axe, dans la ligne des sessions / dates
         labs.sort((a,b)=>a.y-b.y);for(let j=1;j<labs.length;j++)if(labs[j].y-labs[j-1].y<15)labs[j].y=labs[j-1].y+15;
+        const over=labs.length?labs[labs.length-1].y-(T+ih-9):0;if(over>0)labs.forEach(l=>l.y=Math.max(T+8,l.y-over));
         const vl=labs.map(l=>depthMarkSvg(l.d,l.x+4,l.y,.7)+'<text x="'+(l.x+11).toFixed(1)+'" y="'+(l.y+4).toFixed(1)+'" font-size="12" font-weight="700" fill="#17212b" stroke="#fff" stroke-width="3.5" paint-order="stroke" stroke-linejoin="round">'+esc(l.txt)+'</text>').join('');
         return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Historique '+esc(unit)+' par profondeur"><rect width="100%" height="100%" fill="#fff"/>'+g+lines+marks+vl+'</svg>';
       }
@@ -342,7 +347,7 @@
         const network=r.network,defs=paramDefsFor(network);
         const history=records.filter(x=>x.station===r.station&&x.network===network).slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
         if(history.length<2)return '';
-        if(network==='EL'){
+        if(network==='EL'&&typeof EL_DEPTHS!=='undefined'){ // EL_DEPTHS / depthMarkerSvg : js/suivi-el.js (sinon histogramme habituel)
           const cards=defs.map(([k,label,unit])=>{const svg=elHistorySvg(history,k,unit,r.id);return svg?'<div class="crtGraphCard"><h3>'+esc(label)+' <span class="crtSmall">('+esc(unit)+')</span></h3>'+svg+'</div>':''}).filter(Boolean).join('');
           if(!cards)return '';
           const key=EL_DEPTHS.map(d=>'<span class="crtDepthKey">'+depthMarkerSvg(d,11)+' '+esc(d.label)+'</span>').join(' ');
