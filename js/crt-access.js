@@ -22,9 +22,12 @@
     // Fiche enregistrée en cours de modification : confirmation puis nouvelle fiche vierge,
     // sinon l'enregistrement écrasait cette fiche avec la nouvelle station (voir app-core.js).
     if(state.editing){if(!(window.leaveEditedFiche&&window.leaveEditedFiche()))return;if(x.network)selectNetwork(x.network)}
+    // Autre réseau : on le sélectionne vraiment, ce qui affiche et remplit « Campagne / session » (elle restait
+    // masquée, sans choix possible : fiches EL enregistrées sans session). Même réseau : la session choisie est gardée.
+    else if(x.network&&x.network!==state.network)selectNetwork(x.network);
     state.network=x.network||state.network;state.activity=x.activity||state.activity;state.station=x.nom;state.session=state.session||null;
     const st=stationsFor(state.network,state.activity).find(s=>s.nom===x.nom)||x;
-    try{fillStations();$('station').value=x.nom;refreshSiteFields();showForm();document.querySelector('[data-tab="new"]').click();toast('Station sélectionnée : '+x.nom)}catch(e){toast('Station sélectionnée : '+x.nom)}
+    try{fillStations();$('station').value=x.nom;refreshSiteFields();showForm();document.querySelector('[data-tab="new"]').click();toast('Station sélectionnée : '+x.nom+(state.network==='EL'&&!state.session?' — choisissez la campagne / session':''))}catch(e){toast('Station sélectionnée : '+x.nom)}
   }
   window.openStation=openStationEnhanced;
   window.openStationEnhanced=openStationEnhanced;

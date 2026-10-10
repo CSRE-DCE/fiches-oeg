@@ -100,6 +100,8 @@
   function preSaveProblems(){
     const blocking=[],warnings=[],fields=[];
     if(!state.network||!state.station)return {blocking,warnings,fields}; // message déjà géré par l'enregistrement
+    // EL : la session est obligatoire (sans elle, la fiche n'était rattachée à aucune campagne dans le suivi)
+    if(state.network==='EL'&&!val('session')){blocking.push('Campagne / session (obligatoire pour le réseau EL)');fields.push('session')}
     if(!val('date')){blocking.push('Date de la visite');fields.push('date')}
     if(!val('start')){warnings.push('Heure de début');fields.push('start')}
     if(!(state.preleveurs||[]).length){warnings.push('Préleveur(s)');fields.push('preleveurs')}

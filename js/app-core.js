@@ -578,6 +578,9 @@ $('session').onchange=()=>{
     state.activity=RCO_COMBINED_ACTIVITY;
     fill('activity',activities('RCO',state.session));
   }
+  // EL : la liste des stations ne dépend pas de la session — la station déjà choisie (ex. depuis la carte des
+  // stations) est gardée au lieu d'être effacée ; seul le rappel de la session (données spécifiques) est mis à jour.
+  if(state.network==='EL'&&state.station){fillStations();$('station').value=state.station;if(typeof buildSpecific==='function')buildSpecific();return}
   state.station=null;fillStations();hideForm();
 };
 // Changer de station reconstruit les tableaux de mesures / prélèvement (buildAll), ce qui effaçait

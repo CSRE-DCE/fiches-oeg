@@ -917,6 +917,27 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e18.length===0,'aucune erreur JavaScript (corrections suivi EL) '+JSON.stringify(e18));
     await c18.close();
   }
+  // --- V : réseau EL — campagne / session obligatoire ---
+  {
+    const c19=await browser.newContext({serviceWorkers:'block'});await c19.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c19.newPage();const e19=[],msgs=[];p.on('pageerror',e=>e19.push(e.message));p.on('dialog',d=>{msgs.push(d.message());d.accept()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Fiche ouverte depuis la carte des stations : le choix de session est affiché et rempli
+    await p.evaluate(()=>window.openStation({...DATA.EL_STATIONS[0],network:'EL'}));await p.waitForTimeout(400);
+    ok(await p.evaluate(()=>state.network==='EL'&&!$('sessionWrap').classList.contains('hide')&&[...$('session').options].filter(o=>o.value).length===DATA.EL_SESSIONS.length),'EL depuis la carte : « Campagne / session » affichée et remplie (auparavant masquée, sans choix possible)');
+    const n0=await p.evaluate(()=>records.length);
+    await p.click('#save');await p.waitForTimeout(500);
+    ok(msgs.some(m=>/Enregistrement impossible[^]*Campagne \/ session/.test(m))&&await p.evaluate(n0=>records.length===n0,n0)&&await p.evaluate(()=>$('session').classList.contains('fieldMissing')),'EL sans session : enregistrement refusé, champ signalé');
+    // Choisir la session garde la station choisie depuis la carte
+    await p.evaluate(()=>{const s=$('session');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>state.station===DATA.EL_STATIONS[0].nom&&$('station').value===DATA.EL_STATIONS[0].nom&&!$('insituCard').classList.contains('hide')),'EL : choisir la session après la station ne l’efface plus');
+    await p.click('#save');await p.waitForTimeout(1500);
+    ok(await p.evaluate(n0=>records.length===n0+1&&records.at(-1).network==='EL'&&records.at(-1).session===DATA.EL_SESSIONS[0].label,n0),'EL avec session : fiche enregistrée avec sa session');
+    // Circuit qualité : contrôle critique pour une fiche EL sans session (ex. fiche plus ancienne ou importée)
+    ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'EL',station:DATA.EL_STATIONS[0].nom,date:'2026-10-01'}).find(x=>/Campagne \/ session/.test(x.label));return c&&!c.ok&&c.level==='critical'&&!qualityChecksFor({network:'RCO',station:'x'}).some(x=>/obligatoire EL/.test(x.label))}),'circuit qualité : session manquante = anomalie critique pour l’EL (et pour l’EL seulement)');
+    ok(e19.length===0,'aucune erreur JavaScript (session EL obligatoire) '+JSON.stringify(e19));
+    await c19.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

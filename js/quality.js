@@ -125,6 +125,7 @@ async function saveQualityRecord(){
   if(before?.lifecycle?.status==='Validée') await audit('MODIFICATION_APRES_VALIDATION',before.id,{previousStatus:'Validée'});
   const result=await (async function saveQualityRecordCore(){
   if(!state.network||!state.station){toast('Sélectionnez le réseau et la station');return}
+  if(state.network==='EL'&&!state.session){toast('Réseau EL : choisissez la campagne / session');return}
   const id=state.editing||Date.now()+'_'+Math.random().toString(36).slice(2,7);
   const previous=records.find(x=>x.id===state.editing);
   const r=collectRecord();r.id=id;
