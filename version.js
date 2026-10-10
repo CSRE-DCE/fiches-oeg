@@ -5,5 +5,5 @@
  * détectent alors la nouvelle version et remplacent leur cache. La vérification automatique
  * (GitHub Actions) refuse une modification des fichiers de l'appli sans changement ici.
  */
-self.OEG_BUILD = 45;
-self.OEG_BUILD_DATE = '2026-10-09';
+self.OEG_BUILD = 49;
+self.OEG_BUILD_DATE = '2026-10-10';

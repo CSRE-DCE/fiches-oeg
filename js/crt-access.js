@@ -22,9 +22,12 @@
     // Fiche enregistrée en cours de modification : confirmation puis nouvelle fiche vierge,
     // sinon l'enregistrement écrasait cette fiche avec la nouvelle station (voir app-core.js).
     if(state.editing){if(!(window.leaveEditedFiche&&window.leaveEditedFiche()))return;if(x.network)selectNetwork(x.network)}
+    // Autre réseau : on le sélectionne vraiment, ce qui affiche et remplit « Campagne / session » (elle restait
+    // masquée, sans choix possible : fiches EL enregistrées sans session). Même réseau : la session choisie est gardée.
+    else if(x.network&&x.network!==state.network)selectNetwork(x.network);
     state.network=x.network||state.network;state.activity=x.activity||state.activity;state.station=x.nom;state.session=state.session||null;
     const st=stationsFor(state.network,state.activity).find(s=>s.nom===x.nom)||x;
-    try{fillStations();$('station').value=x.nom;refreshSiteFields();showForm();document.querySelector('[data-tab="new"]').click();toast('Station sélectionnée : '+x.nom)}catch(e){toast('Station sélectionnée : '+x.nom)}
+    try{fillStations();$('station').value=x.nom;refreshSiteFields();showForm();document.querySelector('[data-tab="new"]').click();toast('Station sélectionnée : '+x.nom+(state.network==='EL'&&!state.session?' — choisissez la campagne / session':''))}catch(e){toast('Station sélectionnée : '+x.nom)}
   }
   window.openStation=openStationEnhanced;
   window.openStationEnhanced=openStationEnhanced;
@@ -293,10 +296,66 @@
         });
         return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Historique des mesures"><rect width="100%" height="100%" fill="#fff"/>'+grid+'<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/><line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/>'+bars+labels+'</svg>';
       }
+      // ---- EL : historique sur un même graphe pour les trois profondeurs (couleur + forme de point
+      // partagées avec l'onglet Suivi, EL_DEPTHS dans app-core.js). Auparavant : la surface seule,
+      // en barres (et l'intermédiaire à sa place quand la surface manquait). ----
+      function elDepthValue(rec,k,d){
+        const i=rec.insitu||{};
+        if(k==='turb')return num(i.turbidite?.[d.key]?.moyenne);
+        const p=i.params?.[k]||{};return num(d.field==='intermediaire'?(p.intermediaire??p.inter):p[d.field]);
+      }
+      function depthMarkSvg(d,x,y,k){
+        k=k||1;const ring='stroke="#fff" stroke-width="'+(2*k)+'"',f=v=>v.toFixed(1);
+        if(d.shape==='square')return '<rect x="'+f(x-5*k)+'" y="'+f(y-5*k)+'" width="'+f(10*k)+'" height="'+f(10*k)+'" fill="'+d.color+'" '+ring+'/>';
+        if(d.shape==='triangle')return '<path d="M'+f(x)+' '+f(y-6.5*k)+' L'+f(x+6*k)+' '+f(y+4.5*k)+' L'+f(x-6*k)+' '+f(y+4.5*k)+' Z" fill="'+d.color+'" '+ring+'/>';
+        return '<circle cx="'+f(x)+'" cy="'+f(y)+'" r="'+f(5.5*k)+'" fill="'+d.color+'" '+ring+'/>';
+      }
+      function elHistorySvg(history,k,unit,currentId){
+        const series=EL_DEPTHS.map(d=>({d,pts:history.map(rec=>elDepthValue(rec,k,d))})).filter(x=>x.pts.some(v=>v!==null));
+        if(history.filter((rec,i)=>series.some(x=>x.pts[i]!==null)).length<2)return '';
+        const W=640,H=250,L=62,R=60,T=18,B=50,iw=W-L-R,ih=H-T-B,n=history.length;
+        const vals=series.flatMap(x=>x.pts.filter(v=>v!==null));
+        // Axe jamais négatif pour des valeurs positives (salinité, turbidité…)
+        const lo=Math.min(...vals);let vmin=lo,vmax=Math.max(...vals);if(vmin===vmax){vmin-=1;vmax+=1}else{const e=(vmax-vmin)*.14;vmin-=e;vmax+=e}if(lo>=0&&vmin<0)vmin=0;
+        const sx=i=>L+(n===1?iw/2:i*iw/(n-1)),sy=v=>T+(vmax-v)/(vmax-vmin)*ih;
+        const dodge=series.length>1?{surf:-5,inter:0,fond:5}:{surf:0,inter:0,fond:0};
+        const fmtv=v=>{const a=Math.abs(v);return a>=100?v.toFixed(0):a>=10?v.toFixed(1):v.toFixed(2)};
+        // Graduations : assez de décimales pour que deux graduations voisines ne s'affichent jamais pareil
+        const tst=(vmax-vmin)/4,tdec=Math.min(4,Math.max(0,-Math.floor(Math.log10(tst)))),fmtt=v=>{const a=Math.abs(v);return v.toFixed(Math.max(a>=100?0:a>=10?1:2,tdec))};
+        let g='';
+        for(let i=0;i<=4;i++){const v=vmin+(vmax-vmin)*i/4,py=sy(v);g+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#e5ebee"/><text x="'+(L-8)+'" y="'+(py+4).toFixed(1)+'" text-anchor="end" font-size="12" fill="#617180">'+esc(fmtt(v))+'</text>'}
+        const ci=history.findIndex(rec=>rec.id===currentId);
+        if(ci>=0){const bw=n>1?Math.min(46,iw/(n-1)*.8):46;g+='<rect x="'+(sx(ci)-bw/2).toFixed(1)+'" y="'+T+'" width="'+bw.toFixed(1)+'" height="'+ih+'" fill="#003D7A" fill-opacity=".07"/>'}
+        g+='<line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/>';
+        history.forEach((rec,i)=>{
+          const dt=/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',ses=(/^(S\d+)\s*-/.exec(rec.session||'')||[])[1]||'';
+          const bold=i===ci?' font-weight="700" fill="#003D7A"':' fill="#617180"';
+          g+=(ses?'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+16)+'" text-anchor="middle" font-size="12"'+bold+'>'+esc(ses)+'</text>':'')+'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+(ses?31:16))+'" text-anchor="middle" font-size="11"'+bold+'>'+esc(dt)+'</text>';
+        });
+        let lines='',marks='';const labs=[];
+        series.forEach(({d,pts})=>{
+          const dx=dodge[d.key]||0;let path='',open=false;
+          pts.forEach((v,i)=>{if(v===null){open=false;return}const x=sx(i)+dx,y=sy(v);path+=(open?'L':'M')+x.toFixed(1)+' '+y.toFixed(1);open=true;marks+=depthMarkSvg(d,x,y);if(i===ci)labs.push({d,x:x+9,y,txt:fmtv(v)})});
+          if(path)lines+='<path d="'+path+'" fill="none" stroke="'+d.color+'" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>';
+        });
+        // Valeurs de la visite du rapport seulement (les autres se lisent sur l'axe), chacune précédée du
+        // symbole de sa profondeur (identifiable même écartée de son point) et détourée de blanc.
+        // écartées vers le bas puis remontées si besoin : jamais sous l'axe, dans la ligne des sessions / dates
+        labs.sort((a,b)=>a.y-b.y);for(let j=1;j<labs.length;j++)if(labs[j].y-labs[j-1].y<15)labs[j].y=labs[j-1].y+15;
+        const over=labs.length?labs[labs.length-1].y-(T+ih-9):0;if(over>0)labs.forEach(l=>l.y=Math.max(T+8,l.y-over));
+        const vl=labs.map(l=>depthMarkSvg(l.d,l.x+4,l.y,.7)+'<text x="'+(l.x+11).toFixed(1)+'" y="'+(l.y+4).toFixed(1)+'" font-size="12" font-weight="700" fill="#17212b" stroke="#fff" stroke-width="3.5" paint-order="stroke" stroke-linejoin="round">'+esc(l.txt)+'</text>').join('');
+        return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Historique '+esc(unit)+' par profondeur"><rect width="100%" height="100%" fill="#fff"/>'+g+lines+marks+vl+'</svg>';
+      }
       function historyBlock(r,ins){
         const network=r.network,defs=paramDefsFor(network);
         const history=records.filter(x=>x.station===r.station&&x.network===network).slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
         if(history.length<2)return '';
+        if(network==='EL'&&typeof EL_DEPTHS!=='undefined'){ // EL_DEPTHS / depthMarkerSvg : js/suivi-el.js (sinon histogramme habituel)
+          const cards=defs.map(([k,label,unit])=>{const svg=elHistorySvg(history,k,unit,r.id);return svg?'<div class="crtGraphCard"><h3>'+esc(label)+' <span class="crtSmall">('+esc(unit)+')</span></h3>'+svg+'</div>':''}).filter(Boolean).join('');
+          if(!cards)return '';
+          const key=EL_DEPTHS.map(d=>'<span class="crtDepthKey">'+depthMarkerSvg(d,11)+' '+esc(d.label)+'</span>').join(' ');
+          return '<h3 style="margin-top:5mm">📈 Suivi historique à la station ('+history.length+' visite(s))</h3><div class="crtGraphLegend">Valeurs mesurées lors des visites successives à cette station, pour chaque profondeur : '+key+'. La visite du présent rapport est surlignée, avec ses valeurs.</div><div class="crtGraphGrid">'+cards+'</div>';
+        }
         const cards=defs.map(([k,label,unit])=>{
           const points=history.map(rec=>({label:/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',value:paramValue(rec,network,k)})).filter(p=>p.value!==null);
           if(points.length<2)return '';

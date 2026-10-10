@@ -138,6 +138,7 @@
     const checks=[];
     checks.push({label:'Station et réseau renseignés',ok:!!(r?.network&&r?.station),level:'critical'});
     const ps=programmedStation(r);checks.push({label:'Station programmée pour la session / opération',ok:ps.ok,level:'critical'});checks.push({label:'Session cohérente avec la station',ok:ps.ok,level:'critical'});
+    if(r?.network==='EL')checks.push({label:'Campagne / session renseignée (obligatoire EL)',ok:!!r?.session,level:'critical'});
     checks.push({label:'Date renseignée',ok:!!r?.date,level:'critical'});
     const start=dtLocal(r?.date,r?.heureDebut), end=dtLocal(r?.date,r?.heureFin);checks.push({label:'Heure début/fin cohérentes',ok:!!start&&!!end&&end>=start,level:'critical'});
     const ops=r?.preleveurs||[]; if(ops.length){ops.forEach(op=>{const st=operatorStatus(op);checks.push({label:`Opérateur ${op} : habilitation`,ok:st.state==='valid'||(st.state==='unknown'),level:st.state==='expired'||st.state==='missing'?'critical':'warning',warn:st.state==='unknown',detail:st.label})})}

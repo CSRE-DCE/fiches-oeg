@@ -23,6 +23,7 @@ const APP_SHELL = [
   './js/geo.js',
   './js/data.js',
   './js/app-core.js',
+  './js/suivi-el.js',
   './js/dashboard.js',
   './js/quality.js',
   './js/quality-automation.js',

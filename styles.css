@@ -210,3 +210,31 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
 /* Fiche terrain imprimée : sans les outils de saisie (prise de photo, palette et gomme du
    schéma, ajout / suppression d'organisme récepteur) */
 @media print{label.btn,.drawToolbar,.swatch,#drawEraser,#clearDraw,[id^="rxAdd_"],.receiverRow button{display:none!important}}
+/* Suivi EL : surface / intermédiaire / fond sur le même graphe */
+.depthMarker{display:inline-block;vertical-align:-1px;flex:0 0 auto}
+.suiviDepthLast{display:flex;flex-direction:column;align-items:flex-end;gap:1px;font-size:12px;font-weight:850;color:var(--brand2);font-variant-numeric:tabular-nums}
+.suiviDepthLast span,.suiviDepthLegend span{display:inline-flex;align-items:center;gap:4px}
+.suiviDepthLegend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:10.5px;color:#52626e;margin-bottom:6px}
+.suiviDepthWrap{position:relative}
+.suiviDepthWrap canvas{touch-action:pan-y}
+.suiviCross{position:absolute;top:16px;bottom:30px;width:1px;background:#9aa8b0;pointer-events:none}
+.suiviTip{position:absolute;top:6px;z-index:2;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 14px rgba(16,32,43,.14);padding:6px 8px;font-size:10.5px;color:var(--ink);pointer-events:none;white-space:nowrap}
+.suiviTip div{display:flex;align-items:center;gap:4px;margin-top:2px}
+.suiviTipN{color:var(--muted);font-weight:400}
+.suiviTrendTable td small{color:var(--muted)}
+.suiviTrendTable th .depthMarker{margin-right:2px}
+.crtDepthKey{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;color:#17212b;font-weight:700}
+/* Suivi EL : choix de la vue (évolution / profil de profondeur / profil de l'estuaire) */
+.suiviElBar{margin:0 0 10px}
+.suiviElSeg{display:flex;flex-wrap:wrap;gap:6px}
+.suiviElTab{border:1px solid var(--line);background:#fff;color:var(--brand2);border-radius:999px;padding:7px 12px;font-weight:800;font-size:12px;cursor:pointer}
+.suiviElTab.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.suiviElOpts{display:grid;grid-template-columns:repeat(2,minmax(0,220px));gap:8px;margin-top:8px}
+.suiviElHelp{font-size:11px;color:var(--muted);margin-top:6px}
+.suiviElCardNote{font-size:10px;color:#8a6100;background:#fff6df;border-radius:6px;padding:4px 6px;margin-top:6px}
+.suiviElEmpty{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;padding:14px;text-align:center;grid-column:1/-1}
+.suiviTrendTable .suiviElHi{background:#eef4fb;font-weight:800}
+@media(max-width:520px){.suiviElOpts{grid-template-columns:1fr}}
+/* Info-bulle : jamais plus large que le graphe (téléphone), lignes coupées entre les éléments */
+.suiviTip{max-width:100%}
+.suiviTip div{flex-wrap:wrap}

@@ -578,6 +578,9 @@ $('session').onchange=()=>{
     state.activity=RCO_COMBINED_ACTIVITY;
     fill('activity',activities('RCO',state.session));
   }
+  // EL : la liste des stations ne dépend pas de la session — la station déjà choisie (ex. depuis la carte des
+  // stations) est gardée au lieu d'être effacée ; seul le rappel de la session (données spécifiques) est mis à jour.
+  if(state.network==='EL'&&state.station){fillStations();$('station').value=state.station;if(typeof buildSpecific==='function')buildSpecific();return}
   state.station=null;fillStations();hideForm();
 };
 // Changer de station reconstruit les tableaux de mesures / prélèvement (buildAll), ce qui effaçait
@@ -1578,11 +1581,12 @@ const SUIVI_PARAMS={
   o2mg:{label:'Oxygène dissous',unit:'mg/L O2'},
   o2pc:{label:'Saturation O2',unit:'%'},
   turb:{label:'Turbidité',unit:'NTU'},
-  air:{label:'Température air',unit:'°C'}
+  air:{label:'Température air',unit:'°C'},
+  condms:{label:'Conductivité',unit:'mS/cm'} // EL uniquement (auparavant absente du suivi)
 };
 // EL mesure chaque paramètre sur 3 profondeurs (surface / intermédiaire / fond) : on ajoute
 // une entrée de suivi par profondeur pour ne pas perdre les 2/3 des données mesurées.
-['ph','temp','cond','sal','o2mg','o2pc','turb'].forEach(base=>{
+['ph','temp','cond','condms','sal','o2mg','o2pc','turb'].forEach(base=>{
   [['surf','surface'],['inter','intermédiaire'],['fond','fond -1 m']].forEach(([suffix,depthLabel])=>{
     SUIVI_PARAMS[base+'_'+suffix]={label:SUIVI_PARAMS[base].label+' ('+depthLabel+')',unit:SUIVI_PARAMS[base].unit};
   });
@@ -1677,11 +1681,16 @@ function renderSuivi(){
   if(!s){dash.classList.add('hide');empty.classList.add('hide');msg.textContent='Sélectionnez une station.';return}
   const params=suiviParamsFor(n,s);
   if(!params.length){dash.classList.add('hide');empty.classList.remove('hide');msg.textContent='';return}
-  empty.classList.add('hide');dash.classList.remove('hide');msg.textContent=params.length+' paramètre(s) in situ disponible(s) pour cette station.';
+  empty.classList.add('hide');dash.classList.remove('hide');
+  const nParams=n==='EL'&&typeof EL_SUIVI_DEFS!=='undefined'?EL_SUIVI_DEFS.filter(([b])=>EL_DEPTHS.some(d=>params.includes(b+'_'+d.key))).length:params.length;
+  msg.textContent=nParams+' paramètre(s) in situ disponible(s) pour cette station.';
   const sample=records.find(r=>r.network===n&&r.station===s);
   $('suiviStationTitle').textContent=s;
   $('suiviStationMeta').textContent=[sample?.stationInfo?.code_me?'Masse d’eau '+sample.stationInfo.code_me:'',sample?.stationInfo?.bassin||'',sample?.stationInfo?.pressions||''].filter(Boolean).join(' · ')||'Aperçu de la station';
   $('suiviStationBadge').textContent=(sample?.stationInfo?.code||'Station');
+  // EL : trois vues (évolution par profondeur, profil de profondeur, profil de l'estuaire), js/suivi-el.js
+  if(n==='EL'&&typeof renderSuiviEL==='function'){renderSuiviEL(n,s,grid);return}
+  if(typeof clearSuiviEL==='function')clearSuiviEL();
   grid.innerHTML='';
   params.forEach(p=>{
     const series=suiviSeries(n,s,p),all=series.flatMap(x=>x.values); if(!all.length)return;
