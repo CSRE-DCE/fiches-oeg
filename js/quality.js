@@ -143,6 +143,7 @@ async function saveQualityRecord(){
   r.lifecycle.integrityHash=await sha256(integrityPayload(r));
   saveLS(LSC,custom);
   if(!saveLS(LS,records)){records=previous?records.map(x=>x.id===id?previous:x):records.filter(x=>x!==r);return}
+  if(previous&&window.clearEditDraft)window.clearEditDraft(id); // modifications enregistrées : leur brouillon n'a plus lieu d'être
   state.editing=null;$('save').textContent='💾 Enregistrer la fiche';updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi();toast(previous?'Fiche mise à jour ✓':'Fiche enregistrée ✓');
   if(typeof window.maybeAutoBackup==='function')setTimeout(()=>window.maybeAutoBackup(),1200);
   return true;

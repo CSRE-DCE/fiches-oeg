@@ -375,6 +375,8 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await cx.route('https://unpkg.com/**',r=>r.abort());
     const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
     await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Parc d'équipements renseigné : boîtier et sondes ont alors de vrais choix (sinon listes vides, jamais testées)
+    await p.evaluate(()=>{custom.equipements=[{type:'boitier',gmao:'BX-1',nom:'Multi 3630',serie:'SB-1',statut:'En service'},{type:'boitier',gmao:'BX-2',nom:'Multi 3620',serie:'SB-2',statut:'En service'},{type:'sonde',gmao:'SD-1',nom:'Sonde 1',serie:'SS-1',statut:'En service'},{type:'sonde',gmao:'SD-2',nom:'Sonde 2',serie:'SS-2',statut:'En service'}];saveLS(LSC,custom)});
     await p.click(`#networks .chip[data-n="${net}"]`);
     for(const id of ['session','activity','bioOperation'])await p.evaluate(id=>{const s=$(id);if(!s||s.closest('.hide'))return;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
     await p.evaluate(()=>{const s=$('station');s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))});
@@ -966,6 +968,47 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(crt.includes('Légèrement trouble (code SANDRE 2)')&&crt.includes('Ensoleillé (code SANDRE 1)')&&/Marée : Montante/.test(crt)&&/Coefficient de marée : 95/.test(crt),'CRT EL : libellés SANDRE, marée et coefficient (station MET)');
     ok(e20.length===0,'aucune erreur JavaScript (caractérisation EL) '+JSON.stringify(e20));
     await c20.close();
+  }
+  // --- X : aucune saisie perdue (fiche ouverte sur une autre tablette, schéma et modifications en cas d'arrêt) ---
+  {
+    const c21=await browser.newContext({serviceWorkers:'block'});await c21.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c21.newPage();const e21=[],msgs=[];p.on('pageerror',e=>e21.push(e.message));p.on('dialog',d=>{msgs.push(d.message());d.accept()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Fiche enregistrée sur une autre tablette : boîtier, sondes et préleveur inconnus de cette tablette
+    await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records.push({id:'XA',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',heureDebut:'08:00',organisme:"Office de l'Eau de Guyane",preleveurs:['ZZ'],savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],
+      insituBoitier:'BX-AUTRE',insitu:{mode:'par appareil',ph:{value:'7.2',gmao:'SD-AUTRE',nom:'Sonde B',serie:'SB9'}},conditions:{},sample:{},specific:{}});saveLS(LS,records)});
+    await p.evaluate(()=>{loadRecord('XA');showTab('new')});await p.waitForTimeout(800);
+    const ld=await p.evaluate(()=>({box:$('insituBoitier').value,boxTxt:$('insituBoitier').selectedOptions[0]?.textContent,ph:$('ig_ph').value,nom:$('ign_ph').value,pre:[...document.querySelectorAll('#preleveurs input:checked')].map(x=>x.value)}));
+    ok(ld.box==='BX-AUTRE'&&/non référencé sur cette tablette/.test(ld.boxTxt)&&ld.ph==='SD-AUTRE'&&ld.nom==='Sonde B','modification : boîtier et sonde d’une autre tablette conservés (auparavant effacés) '+JSON.stringify(ld));
+    ok(ld.pre.includes('ZZ'),'modification : préleveur absent de la liste de cette tablette affiché et conservé');
+    // Cocher un autre préleveur ne fait plus disparaître ZZ ; la mise à jour garde tout
+    await p.evaluate(()=>{const b=document.querySelector('#preleveurs input:not(:checked)');b.checked=true;b.dispatchEvent(new Event('change',{bubbles:true}))});
+    for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'5'); // turbidité : 3 mesures exigées à l'enregistrement
+    await p.click('#save');await p.waitForTimeout(1500);
+    const sv=await p.evaluate(()=>{const r=records.find(x=>x.id==='XA');return {box:r.insituBoitier,gmao:r.insitu.ph.gmao,pre:r.preleveurs}});
+    ok(sv.box==='BX-AUTRE'&&sv.gmao==='SD-AUTRE'&&sv.pre.includes('ZZ')&&sv.pre.length===2,'modification enregistrée sans aucune perte (boîtier, sonde, préleveurs) '+JSON.stringify(sv));
+    // Schéma seul (aucun autre champ touché) : brouillon enregistré
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.waitForTimeout(3200); // brouillon déclenché par le choix de la station déjà écrit : seul le dessin reste à sauvegarder
+    const cv=await p.$('#draw');await cv.scrollIntoViewIfNeeded();const b=await cv.boundingBox();
+    await p.mouse.move(b.x+40,b.y+40);await p.mouse.down();await p.mouse.move(b.x+160,b.y+90,{steps:6});await p.mouse.up();await p.waitForTimeout(3200);
+    const dr=await p.evaluate(()=>OEGStore.get('oeg_draft_v1'));
+    ok((dr?.record?.dessin||'').length>500,'schéma dessiné : brouillon enregistré (auparavant perdu si l’appli s’arrêtait)');
+    // Modification d'une fiche enregistrée puis arrêt inopiné : modifications retrouvées au redémarrage
+    await p.evaluate(()=>{clearFormNoConfirm({keepDraft:true});loadRecord('XA');showTab('new')});await p.waitForTimeout(800);
+    ok(!(await p.evaluate(()=>OEGStore.get('oeg_draft_edit_v1')))?.XA,'fiche simplement ouverte : pas de brouillon de modification');
+    await p.fill('#obs','Modification avant arrêt');await p.waitForTimeout(3200);
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_edit_v1')))?.XA?.record?.obs==='Modification avant arrêt','modification en cours : brouillon de modification enregistré');
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.dessin?.length>500,'le brouillon de la fiche nouvelle n’est pas écrasé par la modification');
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);await p.waitForTimeout(1200);
+    ok(await p.evaluate(()=>!!document.getElementById('editDraftBanner_XA')&&!!document.getElementById('draftBanner')),'au redémarrage : modifications non enregistrées ET brouillon proposés');
+    await p.evaluate(()=>document.querySelector('#editDraftBanner_XA [data-a="restore"]').click());await p.waitForTimeout(800);
+    ok(await p.evaluate(()=>state.editing==='XA'&&$('obs').value==='Modification avant arrêt'&&records.find(r=>r.id==='XA').obs!=='Modification avant arrêt'),'reprise : la fiche XA est rouverte en modification avec les changements (la fiche enregistrée reste intacte tant qu’on n’enregistre pas)');
+    await p.click('#save');await p.waitForTimeout(1500);
+    ok(await p.evaluate(async()=>records.find(r=>r.id==='XA').obs==='Modification avant arrêt'&&!(await OEGStore.get('oeg_draft_edit_v1'))?.XA),'enregistrement : modifications appliquées et brouillon de modification effacé');
+    ok(e21.length===0,'aucune erreur JavaScript (aucune saisie perdue) '+JSON.stringify(e21));
+    await c21.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

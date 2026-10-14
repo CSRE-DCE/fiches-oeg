@@ -859,11 +859,15 @@ const EL_LEGACY_SANDRE={
 function elLegacyValue(k,v){const m=EL_LEGACY_SANDRE[k];return m&&v!=null&&Object.prototype.hasOwnProperty.call(m,v)?m[v]:v}
 // Valeur enregistrée remise dans une liste : si elle ne figure plus parmi les choix (ancienne liste), elle
 // est ajoutée telle quelle, marquée « ancienne saisie », au lieu d'être effacée sans prévenir.
-function setSelectKeep(el,v){
+function setSelectKeep(el,v,note){
+  if(!el)return;
   v=v==null?'':String(v);
-  if(el.tagName==='SELECT'&&v&&![...el.options].some(o=>o.value===v)){const o=document.createElement('option');o.value=v;o.textContent=v+' (ancienne saisie)';el.appendChild(o)}
+  if(el.tagName==='SELECT'&&v&&![...el.options].some(o=>o.value===v)){const o=document.createElement('option');o.value=v;o.textContent=v+' ('+(note||'ancienne saisie')+')';el.appendChild(o)}
   el.value=v;
 }
+// Équipement d'une fiche ouverte sur une autre tablette (liste d'équipements propre à chaque tablette) :
+// conservé au lieu d'être effacé, puis perdu au réenregistrement
+const EQ_KEEP='non référencé sur cette tablette';
 function buildELSample(){
   const h=$('sample');if(!h)return;const mec=elStationType()==='MEC';
   h.innerHTML=`<div class="elHead"><div><b>ÉCHANTILLONNAGE — EL</b><div class="hint" style="color:#fff">Rubriques reprises du modèle Excel FT_EL</div></div><span class="elBadge">${mec?'MEC':'MET'}</span></div>
@@ -1341,7 +1345,8 @@ function setupCanvas(c){
   const pos=e=>{const q=c.getBoundingClientRect();return [e.clientX-q.left,e.clientY-q.top]};
   c.onpointerdown=e=>{fitCanvas(c);applyPen(c);active=true;c.setPointerCapture(e.pointerId);const ctx=c.getContext('2d'),[x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+0.01,y+0.01);ctx.stroke()};
   c.onpointermove=e=>{if(!active)return;const ctx=c.getContext('2d'),[x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke()};
-  const end=()=>{if(!active)return;active=false;c._hasContent=true;try{state[key]=c.toDataURL('image/png')}catch(_){}};
+  // Fin d'un trait : image mémorisée, puis brouillon automatique (le schéma n'était pas sauvegardé en cas d'arrêt)
+  const end=()=>{if(!active)return;active=false;c._hasContent=true;try{state[key]=c.toDataURL('image/png')}catch(_){}if(window.markDraftDirty)window.markDraftDirty()};
   c.onpointerup=end;c.onpointercancel=end;return c.getContext('2d')
 }
 // Palette de couleurs et gomme pour le canvas "Schéma / dessin" : la gomme efface localement
@@ -1425,8 +1430,9 @@ $('clearDraw').onclick=()=>{
   c._pen={color:'#17212b',eraser:false};applyPen(c);
   document.querySelectorAll('#drawColors .swatch').forEach((b,i)=>b.classList.toggle('sel',i===0));
   $('drawEraser')?.classList.remove('sel');
+  if(window.markDraftDirty)window.markDraftDirty();
 };
-$('clearSig').onclick=()=>{const c=$('signature'),x=c.getContext('2d');x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();state.signature=null;c._hasContent=false};
+$('clearSig').onclick=()=>{const c=$('signature'),x=c.getContext('2d');x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();state.signature=null;c._hasContent=false;if(window.markDraftDirty)window.markDraftDirty()};
 $('printBtn').onclick=()=>{preparePrint();window.print()};
 
 function compress(file){
@@ -1502,7 +1508,7 @@ function loadRecord(id){
   if(f.insitu){
     Object.keys(f.insitu).forEach(k=>{
       const d=f.insitu[k];if(d&&typeof d==='object'&&$(`iv_${k}`)){
-        $(`iv_${k}`).value=d.value||'';if($(`ig_${k}`)){$(`ig_${k}`).value=d.gmao||'';const e=equipmentByGmao(d.gmao||'');if($(`ign_${k}`))$(`ign_${k}`).value=e?.nom||d.nom||'';if($(`igs_${k}`))$(`igs_${k}`).value=e?.serie||d.serie||''}
+        $(`iv_${k}`).value=d.value||'';if($(`ig_${k}`)){setSelectKeep($(`ig_${k}`),d.gmao,EQ_KEEP);const e=equipmentByGmao(d.gmao||'');if($(`ign_${k}`))$(`ign_${k}`).value=e?.nom||d.nom||'';if($(`igs_${k}`))$(`igs_${k}`).value=e?.serie||d.serie||''}
         if($(`ic_${k}`))$(`ic_${k}`).value=d.etalonnage||'';if($(`iq_${k}`))$(`iq_${k}`).value=d.controle||'';if($(`imode_${k}`))$(`imode_${k}`).value=d.mode||''
       }
     })
@@ -1522,17 +1528,18 @@ function loadRecord(id){
       if($(`el_${k}_surf`))$(`el_${k}_surf`).value=v.surface??'';
       if($(`el_${k}_inter`))$(`el_${k}_inter`).value=v.intermediaire??'';
       if($(`el_${k}_fond`))$(`el_${k}_fond`).value=v.fond??'';
-      if($(`el_probe_${k}`))$(`el_probe_${k}`).value=v.sonde??'';
+      if($(`el_probe_${k}`))setSelectKeep($(`el_probe_${k}`),v.sonde,EQ_KEEP);
     });
     ['surf','inter','fond'].forEach(dn=>{
       const tm=d.turbidite?.[dn]?.mesures||[];
       [1,2,3].forEach((n,i)=>{if($(`el_turb_${dn}_${n}`))$(`el_turb_${dn}_${n}`).value=tm[i]??''});
-      if($('el_probe_turb'))$('el_probe_turb').value=d.turbidite?.[dn]?.sonde||d.turbidite?.surf?.sonde||'';
+      if($('el_probe_turb'))setSelectKeep($('el_probe_turb'),d.turbidite?.[dn]?.sonde||d.turbidite?.surf?.sonde||'',EQ_KEEP);
       refreshELTurb(dn);
     });
   }
   const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
   Object.entries(mainMap).forEach(([k,v])=>{const e=$(k);if(!e)return;if(f.network==='EL')v=elLegacyValue(k,v);if(e.tagName==='SELECT')setSelectKeep(e,v);else e.value=v||''});
+  if(f.insituBoitier)setSelectKeep($('insituBoitier'),f.insituBoitier,EQ_KEEP); // boîtier / appareil multiparamètre
   renderOrgOptions(f.organisme);renderPre();
   radioSet('qc',f.qc);
   if(f.sample){

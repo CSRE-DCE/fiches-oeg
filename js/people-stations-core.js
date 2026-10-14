@@ -6,7 +6,7 @@ function people(){const arr=(custom.preleveurs||[]).map(o=>typeof o==='string'?o
 window.people=people;
 function refreshPeople(){const names=[...(typeof OEG_PRELEVEURS!=='undefined'?OEG_PRELEVEURS:[]),...people().map(o=>o.init+' — '+o.name)];['signName','qualityValidator'].forEach(id=>{const h=q(id);if(!h)return;const cur=h.value;h.innerHTML='<option value="">— sélectionner —</option>'+[...new Set(names)].map(v=>'<option value="'+E(v)+'">'+E(v)+'</option>').join('');if(names.includes(cur))h.value=cur})}
 window.renderOrgOptions=renderOrgOptions;window.renderOperators=renderOperators;window.refreshPeople=refreshPeople;
-function refreshPre(){const h=q('preleveurs');if(!h)return;const org=val('org'),base=org==='Office de l’Eau de Guyane'?(OEG_PRELEVEURS||[]):[],extra=people().filter(o=>o.org===org).map(o=>o.init),list=[...new Set([...base,...extra])],sel=new Set(state.preleveurs||[]);h.innerHTML=list.map((p,i)=>'<label class="check"><input type="checkbox" id="prex_'+i+'" value="'+E(p)+'" '+(sel.has(p)?'checked':'')+'><span>'+E(p)+'</span></label>').join('');h.querySelectorAll('input').forEach(x=>x.onchange=()=>state.preleveurs=[...h.querySelectorAll('input:checked')].map(a=>a.value))}
+function refreshPre(){const h=q('preleveurs');if(!h)return;const org=val('org'),base=org==='Office de l’Eau de Guyane'?(OEG_PRELEVEURS||[]):[],extra=people().filter(o=>o.org===org).map(o=>o.init),list=[...new Set([...base,...extra,...(state.preleveurs||[])])],sel=new Set(state.preleveurs||[]); /* préleveurs de la fiche absents de la liste de cette tablette : affichés et conservés (ils disparaissaient au premier clic) */h.innerHTML=list.map((p,i)=>'<label class="check"><input type="checkbox" id="prex_'+i+'" value="'+E(p)+'" '+(sel.has(p)?'checked':'')+'><span>'+E(p)+'</span></label>').join('');h.querySelectorAll('input').forEach(x=>x.onchange=()=>state.preleveurs=[...h.querySelectorAll('input:checked')].map(a=>a.value))}
 function renderPre(){refreshPre();if(typeof window.refreshPreUI==='function')window.refreshPreUI()}
 window.renderPre=renderPre;
 q('org')?.addEventListener('change',refreshPre);
@@ -52,10 +52,10 @@ function photoGroups(){
   camera.closest('.field').appendChild(sel);
   const holder=document.createElement('div');holder.className='photoGroups';holder.innerHTML=['Amont','Aval','Rive gauche','Rive droite'].map(g=>'<div class="photoGroup"><h4>'+g+'</h4><div class="mediaGrid" data-group="'+g+'"></div></div>').join('');
   root.parentElement.insertBefore(holder,root);root.classList.add('hide');
-  const addFiles=async fileList=>{for(const file of [...fileList].slice(0,5-state.photos.length))state.photos.push({data:await compress(file),group:sel.value});drawPhotoGroups()};
+  const addFiles=async fileList=>{for(const file of [...fileList].slice(0,5-state.photos.length))state.photos.push({data:await compress(file),group:sel.value});drawPhotoGroups();if(window.markDraftDirty)window.markDraftDirty()};
   camera.onchange=e=>{addFiles(e.target.files);e.target.value=''};
   gallery.onchange=e=>{addFiles(e.target.files);e.target.value=''};
-  window.drawPhotoGroups=()=>{holder.querySelectorAll('[data-group]').forEach(h=>h.innerHTML='');(state.photos||[]).forEach((p,i)=>{const data=typeof p==='string'?p:p.data,g=typeof p==='string'?'Amont':(p.group||'Amont'),h=holder.querySelector('[data-group="'+g+'"]');if(h)h.insertAdjacentHTML('beforeend','<div class="thumb"><img src="'+data+'"><button data-i="'+i+'">×</button></div>')});holder.querySelectorAll('button').forEach(b=>b.onclick=()=>{state.photos.splice(+b.dataset.i,1);drawPhotoGroups()})};
+  window.drawPhotoGroups=()=>{holder.querySelectorAll('[data-group]').forEach(h=>h.innerHTML='');(state.photos||[]).forEach((p,i)=>{const data=typeof p==='string'?p:p.data,g=typeof p==='string'?'Amont':(p.group||'Amont'),h=holder.querySelector('[data-group="'+g+'"]');if(h)h.insertAdjacentHTML('beforeend','<div class="thumb"><img src="'+data+'"><button data-i="'+i+'">×</button></div>')});holder.querySelectorAll('button').forEach(b=>b.onclick=()=>{state.photos.splice(+b.dataset.i,1);drawPhotoGroups();if(window.markDraftDirty)window.markDraftDirty()})};
   drawPhotoGroups();
 }
 function stations(){let a=[];Object.values(DATA||{}).forEach(v=>Array.isArray(v)&&v.forEach(x=>a.push(x)));return a.concat(custom.stations||[]).filter(x=>x.nom)}
@@ -87,7 +87,7 @@ window.clearFormNoConfirm=clearFormNoConfirm;window.saveQualityRecord=saveQualit
 // n'étaient pas vidées et la fiche suivante reprenait observations, réponses qualité, conditions
 // du site... Les cases à cocher / boutons radio sont décochés sans toucher à leur valeur.
 // opts.keepDraft : ne pas effacer le brouillon (il concerne alors une autre fiche, non enregistrée).
-function clearFormNoConfirm(opts){state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};clearFicheFields();document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);$('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();if(window.drawPhotoGroups)drawPhotoGroups();$('save').textContent='💾 Enregistrer la fiche';if(window.clearDraft&&!(opts&&opts.keepDraft))window.clearDraft();if(window.syncCanvases)window.syncCanvases()}
+function clearFormNoConfirm(opts){if(state?.editing&&window.clearEditDraft)window.clearEditDraft(state.editing);state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};clearFicheFields();document.querySelectorAll('#networks .chip').forEach(c=>c.classList.remove('sel'));fill('station',[]);$('activityWrap').classList.add('hide');$('sessionWrap').classList.add('hide');hideForm();renderPre();if(window.drawPhotoGroups)drawPhotoGroups();$('save').textContent='💾 Enregistrer la fiche';if(window.clearDraft&&!(opts&&opts.keepDraft))window.clearDraft();if(window.syncCanvases)window.syncCanvases()}
 
 // ---------- Brouillon automatique (protège contre la perte de saisie en cours) ----------
 // Enregistre périodiquement, dans IndexedDB (repli localStorage ; jamais dans "records"), le contenu de la
@@ -96,11 +96,22 @@ function clearFormNoConfirm(opts){state={network:null,activity:null,bioOperation
 // réellement enregistrée ou que le formulaire est explicitement vidé (clearFormNoConfirm).
 (function(){
   const DRAFT_KEY='oeg_draft_v1';
-  let draftTimer=null, draftId=null;
-  function canDraft(){return !state.editing && state.network && q('new')?.classList.contains('active')}
+  // Modifications non enregistrées d'une fiche DÉJÀ enregistrée : un brouillon par fiche (clé = identifiant),
+  // distinct du brouillon de fiche nouvelle (qui n'est donc jamais écrasé par une modification).
+  const EDIT_KEY='oeg_draft_edit_v1';
+  let draftTimer=null, draftId=null, editDirtyId=null, editDrafts={};
+  const editReady=(async()=>{try{const v=await OEGStore.get(EDIT_KEY);if(v&&typeof v==='object')editDrafts=v}catch(e){}})();
+  function canDraft(){return state.network && q('new')?.classList.contains('active')}
   function saveDraftNow(){
     if(!canDraft())return;
+    // Fiche enregistrée simplement ouverte : pas de brouillon tant que rien n'a été modifié par l'agent
+    if(state.editing&&editDirtyId!==state.editing)return;
     try{
+      if(state.editing){
+        const id=state.editing,r=collectRecord();r.id=id;
+        editReady.then(()=>{editDrafts[id]={record:r,savedAt:new Date().toISOString()};return OEGStore.set(EDIT_KEY,editDrafts)}).catch(()=>{});
+        return;
+      }
       if(!draftId)draftId=Date.now()+'_'+Math.random().toString(36).slice(2,7);
       const r=collectRecord();r.id=draftId;
       const draft={record:r,savedAt:new Date().toISOString()};
@@ -111,19 +122,30 @@ function clearFormNoConfirm(opts){state={network:null,activity:null,bioOperation
     }catch(e){/* collecte impossible : tant pis pour ce brouillon */}
   }
   function scheduleDraftSave(){if(draftTimer)clearTimeout(draftTimer);draftTimer=setTimeout(saveDraftNow,2500)}
+  // Action de l'agent hors champ de saisie (trait sur le schéma ou la signature, photo ajoutée ou retirée) :
+  // auparavant elle ne déclenchait aucun brouillon (schéma perdu si l'appli s'arrêtait juste après).
+  window.markDraftDirty=function(){if(state.editing)editDirtyId=state.editing;scheduleDraftSave()};
   window.clearDraft=function(){
     try{localStorage.removeItem(DRAFT_KEY)}catch(e){}
     OEGStore.del(DRAFT_KEY).catch(()=>{});
     draftId=null;if(draftTimer){clearTimeout(draftTimer);draftTimer=null}
     q('draftBanner')?.remove();
   };
+  // Brouillon de modification : effacé quand la fiche est enregistrée ou que l'agent abandonne ses modifications
+  window.clearEditDraft=function(id){
+    const ids=id?[id]:(state.editing?[state.editing]:[]);if(!ids.length&&editDirtyId)ids.push(editDirtyId);
+    if(draftTimer&&ids.includes(state.editing)){clearTimeout(draftTimer);draftTimer=null}
+    editDirtyId=null;
+    editReady.then(()=>{let changed=false;ids.forEach(i=>{if(editDrafts[i]){delete editDrafts[i];changed=true}q('editDraftBanner_'+i)?.remove()});if(changed)return OEGStore.set(EDIT_KEY,editDrafts)}).catch(()=>{});
+  };
   // Les cartes de mesures/prélèvement sont hors de #new (enfants directs de <body>) : inFiche()
   // (app-core.js) les inclut, sinon les mesures saisies ne déclenchaient pas le brouillon.
   const inForm=t=>!!t?.closest&&(typeof inFiche==='function'?inFiche(t):!!t.closest('#new'));
-  document.addEventListener('input',e=>{if(inForm(e.target))scheduleDraftSave()});
+  const onEdit=e=>{if(!inForm(e.target))return;if(state.editing&&e.isTrusted)editDirtyId=state.editing;scheduleDraftSave()};
+  document.addEventListener('input',onEdit);
+  document.addEventListener('change',onEdit);
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveDraftNow()});
   window.addEventListener('pagehide',()=>saveDraftNow());
-  document.addEventListener('change',e=>{if(inForm(e.target))scheduleDraftSave()});
   function showDraftBanner(draft){
     if(q('draftBanner'))return;
     const r=draft.record,when=new Date(draft.savedAt).toLocaleString('fr-FR');
@@ -132,6 +154,7 @@ function clearFormNoConfirm(opts){state={network:null,activity:null,bioOperation
     div.innerHTML='📝 Brouillon non enregistré retrouvé ('+escapeHTML(label||'fiche en cours')+', enregistré le '+escapeHTML(when)+'). <button type="button" class="btn primary small" id="draftRestoreBtn" style="margin-left:8px">Reprendre</button> <button type="button" class="btn ghost small" id="draftDiscardBtn">Ignorer</button>';
     const host=q('new');if(host)host.insertBefore(div,host.firstChild);
     q('draftRestoreBtn').onclick=()=>{
+      if(state.editing&&!(window.leaveEditedFiche&&window.leaveEditedFiche()))return;
       records.push(r);
       document.querySelector('[data-tab="new"]')?.click();
       loadRecord(r.id);
@@ -141,11 +164,35 @@ function clearFormNoConfirm(opts){state={network:null,activity:null,bioOperation
     };
     q('draftDiscardBtn').onclick=()=>window.clearDraft();
   }
+  function showEditDraftBanner(id,d){
+    if(q('editDraftBanner_'+id))return;
+    const orig=records.find(x=>x.id===id),r=d.record,when=new Date(d.savedAt).toLocaleString('fr-FR');
+    const label=[r.station,r.network,r.date].filter(Boolean).join(' · ');
+    const div=document.createElement('div');div.id='editDraftBanner_'+id;div.className='banner info';
+    div.innerHTML='📝 Modifications non enregistrées retrouvées pour la fiche '+escapeHTML(label||id)+' (le '+escapeHTML(when)+'). <button type="button" class="btn primary small" style="margin-left:8px" data-a="restore">Reprendre</button> <button type="button" class="btn ghost small" data-a="discard">Ignorer</button>';
+    const host=q('new');if(host)host.insertBefore(div,host.firstChild);
+    div.querySelector('[data-a="restore"]').onclick=()=>{
+      if(state.editing&&state.editing!==id&&!(window.leaveEditedFiche&&window.leaveEditedFiche()))return;
+      document.querySelector('[data-tab="new"]')?.click();
+      if(orig){
+        // La fiche enregistrée est remplacée le temps du chargement par sa version modifiée : le formulaire
+        // reprend les modifications, en mode « mise à jour » de cette fiche.
+        const i=records.indexOf(orig);records[i]=r;try{loadRecord(id)}finally{records[i]=orig}
+      }else{
+        // Fiche supprimée entre-temps : les modifications sont reprises comme une nouvelle fiche
+        records.push(r);loadRecord(id);records.splice(records.indexOf(r),1);state.editing=null;$('save').textContent='💾 Enregistrer la fiche';
+      }
+      editDirtyId=state.editing;div.remove();toast('Modifications restaurées ✓ — pensez à enregistrer');
+    };
+    div.querySelector('[data-a="discard"]').onclick=()=>window.clearEditDraft(id);
+  }
   setTimeout(async()=>{
     let draft=null;
     try{draft=await OEGStore.get(DRAFT_KEY)}catch(e){}
     if(!draft?.record){try{const raw=localStorage.getItem(DRAFT_KEY);if(raw)draft=JSON.parse(raw)}catch(e){}}
     if(draft?.record)showDraftBanner(draft);
+    await editReady;await (window.OEGRecordsReady||Promise.resolve());
+    Object.entries(editDrafts).forEach(([id,d])=>{if(d?.record)showEditDraftBanner(id,d)});
   },300);
 })();
 setTimeout(()=>{refreshPeople();refreshPre();photoGroups();receivers('recepteur');receivers('esoRecepteur');sedRules();document.querySelectorAll('input[id$="SedHauteur"]').forEach(h=>{h.addEventListener('input',()=>{if(+h.value>5){h.value=5;toast('La hauteur de prélèvement ne peut pas dépasser 5 cm')}})})},100);
