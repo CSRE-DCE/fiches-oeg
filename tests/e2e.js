@@ -389,7 +389,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
           if(e.type==='checkbox'){if(!e.checked){e.checked=true;e.dispatchEvent(new Event('change',{bubbles:true}))}return}
           if(e.value!=='')return;
           if(e.tagName==='SELECT'){const o=[...e.options].filter(o=>o.value);if(o.length){e.value=o[o.length-1].value;e.dispatchEvent(new Event('change',{bubbles:true}))}return}
-          e.value=e.type==='number'?'3':e.type==='date'?'2026-10-08':e.type==='time'?'08:30':e.type==='datetime-local'?'2026-10-08T09:00':('T-'+(e.id||e.name||'x'));
+          e.value=e.type==='number'?(e.min&&+e.min>3?e.min:'3'):e.type==='date'?'2026-10-08':e.type==='time'?'08:30':e.type==='datetime-local'?'2026-10-08T09:00':('T-'+(e.id||e.name||'x'));
           e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));
         });
       });
@@ -937,6 +937,35 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'EL',station:DATA.EL_STATIONS[0].nom,date:'2026-10-01'}).find(x=>/Campagne \/ session/.test(x.label));return c&&!c.ok&&c.level==='critical'&&!qualityChecksFor({network:'RCO',station:'x'}).some(x=>/obligatoire EL/.test(x.label))}),'circuit qualité : session manquante = anomalie critique pour l’EL (et pour l’EL seulement)');
     ok(e19.length===0,'aucune erreur JavaScript (session EL obligatoire) '+JSON.stringify(e19));
     await c19.close();
+  }
+  // --- W : EL — codes SANDRE dans la caractérisation, marée et coefficient de marée (MEC et MET) ---
+  {
+    const c20=await browser.newContext({serviceWorkers:'block'});await c20.route('https://unpkg.com/**',r=>r.abort());await c20.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c20.newPage();const e20=[],msgs=[];p.on('pageerror',e=>e20.push(e.message));p.on('dialog',d=>{msgs.push(d.message());d.accept()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const pickEL=type=>p.evaluate(type=>{const st=DATA.EL_STATIONS.find(s=>s.type===type);selectNetwork('EL');const ss=$('session');ss.value=ss.options[1].value;ss.dispatchEvent(new Event('change',{bubbles:true}));const s=$('station');s.value=st.nom;s.dispatchEvent(new Event('change',{bubbles:true}));return st.nom},type);
+    await pickEL('MET');await p.waitForTimeout(400);
+    const met=await p.evaluate(()=>({maree:[...($('elMaree')?.options||[])].map(o=>o.value).filter(Boolean),coef:!!$('elCoefMaree'),limp:[...$('limpidite').options].map(o=>o.textContent),meteo0:$('meteo').value,codes:[...document.querySelectorAll('#siteCard .sandreCode')].map(x=>x.textContent)}));
+    ok(met.maree.join('/')==='Montante/Descendante/Étal'&&met.coef,'EL MET : marée (montante / descendante / étal) et coefficient de marée (auparavant absents)');
+    ok(met.limp.includes('[1] Limpide')&&met.limp.includes('[2] Légèrement trouble')&&met.meteo0===''&&met.codes.includes('SANDRE 1422')&&met.codes.includes('SANDRE 1425'),'EL : caractérisation avec les listes et codes SANDRE (météo non présélectionnée)');
+    await pickEL('MEC');await p.waitForTimeout(400);
+    ok(await p.evaluate(()=>!!$('elMer')&&!!$('elMaree')&&!!$('elCoefMaree')&&[...$('meteo').options].some(o=>o.textContent==='[8] Fortement nuageux')),'EL MEC : état de la mer, marée, coefficient et météo SANDRE');
+    // Coefficient impossible : enregistrement bloqué
+    await p.fill('#elCoefMaree','150');await p.click('#save');await p.waitForTimeout(400);
+    ok(msgs.some(m=>/Enregistrement impossible[^]*Coefficient de marée/.test(m)),'EL : coefficient de marée hors 20–120 refusé');
+    // Ancienne fiche EL (libellés) : conversion exacte en codes, valeurs ambiguës conservées
+    await p.evaluate(()=>{const st=DATA.EL_STATIONS.find(s=>s.type==='MET');records.push({id:'WL',network:'EL',session:DATA.EL_SESSIONS[0].label,station:st.nom,stationInfo:st,date:'2026-09-10',savedAt:'2026-09-10T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{},sample:{},conditions:{meteo:'Couvert',limpidite:'Limpide',teinte:'Marron',elMaree:'Etal',ombre:'Faible',irisations:'Non'}});saveLS(LS,records);state.editing=null;loadRecord('WL')});await p.waitForTimeout(700);
+    const leg=await p.evaluate(()=>({limp:$('limpidite').value,teinte:$('teinte').value,teinteTxt:$('teinte').selectedOptions[0]?.textContent,maree:$('elMaree').value,meteo:$('meteo').value,ombre:$('ombre').value,iris:$('irisations').value}));
+    ok(leg.limp==='1'&&leg.ombre==='2'&&leg.iris==='2'&&leg.maree==='Étal','ancienne fiche EL : valeurs converties en codes SANDRE quand l’équivalence est exacte '+JSON.stringify(leg));
+    ok(leg.teinte==='Marron'&&/ancienne saisie/.test(leg.teinteTxt)&&leg.meteo==='Couvert','ancienne fiche EL : valeur sans équivalent exact conservée (« ancienne saisie »), jamais effacée');
+    // CRT : libellé SANDRE et conditions maritimes pour une MET
+    await p.evaluate(()=>{const st=DATA.EL_STATIONS.find(s=>s.type==='MET');records.push({id:'WC',network:'EL',session:DATA.EL_SESSIONS[0].label,station:st.nom,stationInfo:st,date:'2026-09-11',savedAt:'2026-09-11T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{},sample:{},conditions:{limpidite:'2',meteo:'1',elMaree:'Montante',elCoefMaree:'95'}});saveLS(LS,records)});
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='WC';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    const crt=await p.textContent('#crtPreviewBox');
+    ok(crt.includes('Légèrement trouble (code SANDRE 2)')&&crt.includes('Ensoleillé (code SANDRE 1)')&&/Marée : Montante/.test(crt)&&/Coefficient de marée : 95/.test(crt),'CRT EL : libellés SANDRE, marée et coefficient (station MET)');
+    ok(e20.length===0,'aucune erreur JavaScript (caractérisation EL) '+JSON.stringify(e20));
+    await c20.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

@@ -174,7 +174,7 @@ function applyFormSnapshot(s){
   if(!s||typeof s!=='object')return;
   Object.entries(s.v||{}).forEach(([id,value])=>{
     const e=$(id);if(!e||!inFiche(e)||SNAPSHOT_SKIP.has(id)||e.type==='file'||e.value!=='')return;
-    if(e.tagName==='SELECT'&&![...e.options].some(o=>o.value===value))return;
+    if(e.tagName==='SELECT'){setSelectKeep(e,value);return}
     e.value=value;
   });
   Object.keys(s.c||{}).forEach(k=>{
@@ -753,19 +753,11 @@ function elSelect(id, options, selected=''){
   o.value=selected;return o;
 }
 // Listes déroulantes reprises du classeur FT_EL_2024-2025_v2 (onglet « Liste paramètres »).
-const EL_METEO=['Ensoleillé','Couvert','Crachin','Averse'];
 const EL_MER=['Belle','Peu agitée','Agitée'];
-const EL_MAREE=['Montante','Etal','Descendante'];
+const EL_MAREE=['Montante','Descendante','Étal'];
 const EL_MOYEN_ECH=['Btle NISKIN ou équivalent','Autre'];
 const EL_CONSERVATION=['Glacière réfrigérée','Réfrigérateur','Bloc','Autre'];
 const EL_ACTIVITES=['Port maritime','Port de plaisance','Pêche','Dragage'];
-const EL_TEINTE=['Marron','Bleu','Vert','Jaune','Gris','Noir','Blanc'];
-const EL_HYDRO=['Basse eau','Moyenne eau','Haute eau','Crue débordante'];
-const EL_INTENSITE=['Peu colorée','Très colorée','Incolore'];
-const EL_ASPECT=['Propre','Sale'];
-const EL_TYPEPREL=['Rive','Pont','Embarcation'];
-const EL_LIMP=['Limpide','Peu trouble','Trouble'];
-const EL_OMBRE=['Absente','Faible','Importante'];
 const EL_INC=['Oui','Non'];
 /* Codes des appareils repris de l’onglet « Liste paramètres » du modèle Excel EL. */
 const EL_PROBES={
@@ -823,31 +815,54 @@ function restoreSandreSite(){
   const c=$('siteCard');if(!c||!SANDRE_SITE)return;
   c.innerHTML='';while(SANDRE_SITE.firstChild)c.appendChild(SANDRE_SITE.firstChild);SANDRE_SITE=null;
 }
+// Caractérisation du site EL : listes SANDRE officielles (mêmes nomenclatures et codes de paramètre que les
+// autres réseaux — W et S ci-dessus), marée et coefficient de marée pour toutes les stations (MEC et MET :
+// les estuaires sont soumis à la marée). État de la mer, marée, activités et incidence n'ont pas de liste
+// SANDRE dans l'application : listes du modèle EL, sans code.
 function buildELSite(){
   const c=$('siteCard');if(!c)return;
   if(!SANDRE_SITE){SANDRE_SITE=document.createElement('div');while(c.firstChild)SANDRE_SITE.appendChild(c.firstChild)}
   const mec=elStationType()==='MEC';
+  const sel=(id,label,code)=>`<div class="field"><label>${label}${code?`<span class="sandreCode">SANDRE ${code}</span>`:''}</label><select id="${id}"></select></div>`;
+  const plain=(id,label,list,first)=>`<div class="field"><label>${label}</label><select id="${id}"><option value="">${first||''}</option>${list.map(x=>`<option>${x}</option>`).join('')}</select></div>`;
   c.innerHTML=`<h2>${mec?'7 · Conditions du site — MEC':'7 · Conditions du site — MET'}</h2>
   <div class="elSectionTitle">Conditions générales</div>
-  <div class="grid2"><div class="field"><label>Météo</label><select id="meteo">${EL_METEO.map(x=>`<option>${x}</option>`).join('')}</select>
-  </div>${mec?`<div class="field"><label>État de la mer</label><select id="elMer"><option></option>${EL_MER.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Marée</label><select id="elMaree"><option></option>${EL_MAREE.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Coefficient de marée</label><input id="elCoefMaree" type="number" step="any"></div>`:
-  `<div class="field"><label>Situation hydrologique</label><select id="hydro"><option></option>${EL_HYDRO.map(x=>`<option>${x}</option>`).join('')}</select></div>`}</div>
-  ${mec?`<div class="elSectionTitle">Contexte du prélèvement</div><div class="grid2"><div class="field"><label>Activités anthropiques</label><select id="elActivites"><option value="">— sélectionner —</option>${EL_ACTIVITES.map(x=>`<option>${x}</option>`).join('')}</select></div></div>`:
+  <div class="grid2">${sel('meteo','Météo pendant le prélèvement',1425)}
+  ${mec?plain('elMer','État de la mer',EL_MER):sel('hydro','Situation hydrologique apparente',1726)}
+  ${plain('elMaree','Marée',EL_MAREE)}
+  <div class="field"><label>Coefficient de marée</label><input id="elCoefMaree" type="number" step="1" min="20" max="120" inputmode="numeric" placeholder="20 à 120"></div></div>
+  ${mec?`<div class="elSectionTitle">Contexte du prélèvement</div><div class="grid2">${plain('elActivites','Activités anthropiques',EL_ACTIVITES,'— sélectionner —')}</div>`:
   `<div class="elSectionTitle">Observations de l'eau et des abords</div><div class="grid2">
-  <div class="field"><label>Limpidité de l'eau</label><select id="limpidite"><option></option>${EL_LIMP.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Teinte de l'eau</label><select id="teinte"><option></option>${EL_TEINTE.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Irisation sur l'eau</label><select id="irisations"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Mousse de détergent</label><select id="mousse"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Boues organiques flottantes</label><select id="boues"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Intensité</label><select id="elIntensite"><option></option>${EL_INTENSITE.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Ombre</label><select id="ombre"><option></option>${EL_OMBRE.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Type de prélèvement</label><select id="typePrelSandre"><option></option>${EL_TYPEPREL.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Feuilles, branches, litière</label><select id="feuilles"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Aspect des abords</label><select id="aspect"><option></option>${EL_ASPECT.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Incidence activité humaine</label><select id="elIncidence"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div></div>`}
+  ${sel('limpidite','Limpidité',1422)}${sel('teinte',"Teinte de l'eau",1739)}${sel('elIntensite','Coloration apparente (intensité)',1428)}
+  ${sel('irisations','Irisations',1411)}${sel('mousse','Mousse de détergent',1412)}${sel('boues','Boues organiques flottantes',1423)}
+  ${sel('feuilles','Produits ligneux/herbacés',1413)}${sel('ombre','Ombrage',1415)}${sel('typePrelSandre','Type de prélèvement',1947)}
+  ${sel('aspect','Aspect des abords',1410)}${plain('elIncidence','Incidence activité humaine',EL_INC)}</div>`}
   <div class="field"><label>Observations</label><textarea id="siteObs"></textarea></div>`;
+  fill('meteo',W);
+  [['hydro','hydro'],['limpidite','limpidite'],['teinte','teinte'],['elIntensite','coloration'],['irisations','yn0'],['mousse','yn0'],['boues','yn0'],['feuilles','yn0'],['ombre','ombre'],['typePrelSandre','type'],['aspect','aspect']].forEach(([id,list])=>{if($(id))fill(id,S[list])});
+}
+// Anciennes fiches EL (listes du modèle EL, avant les codes SANDRE) : valeur convertie en code SANDRE
+// seulement quand l'équivalence est exacte ; sinon (Marron, Couvert, Crachin, Averse, Haute eau…) elle
+// est conservée telle quelle (voir setSelectKeep).
+const EL_LEGACY_SANDRE={
+  meteo:{'Ensoleillé':'1'},
+  hydro:{'Basse eau':'3','Moyenne eau':'4','Crue débordante':'6'},
+  limpidite:{'Limpide':'1','Peu trouble':'2','Trouble':'3'},
+  teinte:{'Bleu':'2','Vert':'4','Jaune':'6','Gris':'10','Noir':'11','Blanc':'12'},
+  elIntensite:{'Incolore':'1','Peu colorée':'2','Très colorée':'3'},
+  irisations:{'Oui':'1','Non':'2'},mousse:{'Oui':'1','Non':'2'},boues:{'Oui':'1','Non':'2'},feuilles:{'Oui':'1','Non':'2'},
+  ombre:{'Absente':'1','Faible':'2','Importante':'3'},
+  typePrelSandre:{'Rive':'1','Pont':'3','Embarcation':'4'},
+  aspect:{'Propre':'1','Sale':'2'},
+  elMaree:{'Etal':'Étal'}
+};
+function elLegacyValue(k,v){const m=EL_LEGACY_SANDRE[k];return m&&v!=null&&Object.prototype.hasOwnProperty.call(m,v)?m[v]:v}
+// Valeur enregistrée remise dans une liste : si elle ne figure plus parmi les choix (ancienne liste), elle
+// est ajoutée telle quelle, marquée « ancienne saisie », au lieu d'être effacée sans prévenir.
+function setSelectKeep(el,v){
+  v=v==null?'':String(v);
+  if(el.tagName==='SELECT'&&v&&![...el.options].some(o=>o.value===v)){const o=document.createElement('option');o.value=v;o.textContent=v+' (ancienne saisie)';el.appendChild(o)}
+  el.value=v;
 }
 function buildELSample(){
   const h=$('sample');if(!h)return;const mec=elStationType()==='MEC';
@@ -1517,7 +1532,7 @@ function loadRecord(id){
     });
   }
   const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
-  Object.entries(mainMap).forEach(([k,v])=>{if($(k))$(k).value=v||''});
+  Object.entries(mainMap).forEach(([k,v])=>{const e=$(k);if(!e)return;if(f.network==='EL')v=elLegacyValue(k,v);if(e.tagName==='SELECT')setSelectKeep(e,v);else e.value=v||''});
   renderOrgOptions(f.organisme);renderPre();
   radioSet('qc',f.qc);
   if(f.sample){

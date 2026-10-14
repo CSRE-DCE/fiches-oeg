@@ -109,7 +109,7 @@
         limpidite:'Limpidité de l’eau',odeur:'Odeur',ombre:'Ombrage',berge:'Distance berge (m)',debitTendance:'Tendance du débit',
         macro:'Recouvrement macrophytes (%)',largeur:'Largeur du cours d’eau (m)',profMoy:'Profondeur moyenne (m)',siteObs:'Observations du site',
         elMer:'État de la mer',elMaree:'Marée',elCoefMaree:'Coefficient de marée',elActivites:'Activités anthropiques',
-        elIntensite:'Intensité',elIncidence:'Incidence activité humaine',elDepth:'Profondeur totale (m)',
+        elIntensite:'Coloration apparente (intensité)',elIncidence:'Incidence activité humaine',elDepth:'Profondeur totale (m)',
         // Libellés repris à l'identique du formulaire (auparavant plusieurs ne correspondaient pas :
         // « Laboratoire destinataire » pour la date d'arrivée au laboratoire, etc.)
         fishLot:'Identification du lot (référence unique)',fishDateOp:'Date / heure de l’opération',fishMethod:'Méthode de capture employée',fishDuration:'Durée de l’opération',
@@ -367,8 +367,9 @@
 
       // Conditions SANDRE : la fiche enregistre le code (« 3 ») ; le CRT imprime le libellé suivi du
       // code (« Basses eaux (code SANDRE 3) ») d'après les listes du formulaire (W et S, app-core.js).
-      // Les fiches EL enregistrent directement le libellé : rien à traduire.
-      const SANDRE_LIST={meteo:'meteo',seuil:'seuil',typePrelSandre:'type',hydro:'hydro',aspect:'aspect',irisations:'yn0',mousse:'yn0',feuilles:'yn0',boues:'yn0',autresCorps:'yn',teinte:'teinte',coloration:'coloration',limpidite:'limpidite',odeur:'odeur',ombre:'ombre',debitTendance:'debit'};
+      // Fiches EL : codes SANDRE depuis la version 50 ; les anciennes fiches EL (libellé enregistré) sont
+      // imprimées telles quelles (sandreLabel ne traduit qu'un code connu).
+      const SANDRE_LIST={elIntensite:'coloration',meteo:'meteo',seuil:'seuil',typePrelSandre:'type',hydro:'hydro',aspect:'aspect',irisations:'yn0',mousse:'yn0',feuilles:'yn0',boues:'yn0',autresCorps:'yn',teinte:'teinte',coloration:'coloration',limpidite:'limpidite',odeur:'odeur',ombre:'ombre',debitTendance:'debit'};
       function sandreLabel(k,v){
         const n=SANDRE_LIST[k];if(!n||blank(v))return v;
         const list=n==='meteo'?(typeof W!=='undefined'?W:[]):((typeof S!=='undefined'&&S[n])||[]);
@@ -376,9 +377,8 @@
         return hit?hit[1]+' (code SANDRE '+hit[0]+')':v;
       }
       function fmtConditions(cond,network){
-        if(network!=='EL')return fmt(Object.fromEntries(Object.entries(cond||{}).map(([k,v])=>[k,sandreLabel(k,v)])));
-        const filtered=Object.fromEntries(Object.entries(cond||{}).filter(([k])=>!['elMer','elMaree','elCoefMaree'].includes(k)));
-        return fmt(filtered);
+        const list=Object.entries(cond||{}).filter(([k])=>network!=='EL'||!['elMer','elMaree','elCoefMaree'].includes(k)); // EL : mer / marée à part
+        return fmt(Object.fromEntries(list.map(([k,v])=>[k,sandreLabel(k,v)])));
       }
       function sommaire(r){
         const hasChloro=r.network==='EL';
@@ -598,7 +598,8 @@
         const mapLink=mapLinkParts.join(' · ');
         const title=cm.objet||'Mise en œuvre de la DCE en Guyane — Rapport de terrain';
         const graphBlock=r.network==='EL'?'<div class="crtGraphLegend"><b>Profil vertical in situ.</b> Chaque courbe relie les valeurs mesurées aux niveaux réellement saisis sur la fiche terrain. La turbidité affichée correspond uniquement à la moyenne des trois répétitions.</div><div class="crtGraphGrid">'+elCards(ins)+'</div>'+elDataTable(ins):'<div class="crtGraphLegend"><b>Mesures in situ.</b> Présentation harmonisée des valeurs enregistrées sur la fiche terrain, avec conservation des unités et des informations appareil.</div>'+genericMetrics(ins)+genericDataTable(ins);
-        const elMaritime=r.network==='EL'?'<br><br><b>Conditions maritimes</b><br>État de la mer : '+esc(r.conditions?.elMer||'—')+'<br>Marée : '+esc(r.conditions?.elMaree||'—')+(r.conditions?.elCoefMaree?' (coefficient '+esc(r.conditions.elCoefMaree)+')':''):'';
+        // EL (MEC et MET) : marée et coefficient de marée ; état de la mer pour les MEC
+        const cd=r.conditions||{},elMaritime=r.network==='EL'?'<br><br><b>Conditions maritimes</b>'+(cd.elMer?'<br>État de la mer : '+esc(cd.elMer):'')+'<br>Marée : '+esc(cd.elMaree==='Etal'?'Étal':(cd.elMaree||'—'))+'<br>Coefficient de marée : '+esc(cd.elCoefMaree||'—'):'';
         const sample=r.sample||{};
         const chloroBlock=(r.network==='EL'&&station.type==='MEC')?'<h2>Chlorophylle</h2><table class="crtTable"><tr><th>Prélèvement chlorophylle</th><td>'+esc(sample.elChloro||'—')+'</td><th>Filtre utilisé</th><td>'+esc(sample.elFiltreChloro||'—')+'</td></tr><tr><th>Volume filtré</th><td colspan="3">'+(sample.elVfChloro?esc(sample.elVfChloro)+' mL':'—')+'</td></tr></table>':'';
         return '<section class="crtPage crtCover" data-report="'+esc(code)+' — '+esc(r.station)+'"><img src="img/logo-oeg.png" alt="Office de l\'Eau de Guyane" class="crtCoverLogo"><div class="crtKicker">OFFICE DE L’EAU DE GUYANE</div><h1>COMPTE RENDU TECHNIQUE</h1><h2>'+esc(title)+'</h2><div class="crtSession">'+esc(r.session||'Session non renseignée')+'</div><div class="crtCoverStation"><b>'+esc(code)+' — '+esc(r.station)+'</b><br><span>'+esc(bassin||(bassinLabel+' non renseigné'+(eso?'e':'')))+'</span></div><div class="crtCoverMeta"><div><b>Organisme</b>'+esc(r.organisme||'—')+'</div><div><b>Préleveur(s)</b>'+esc(operators)+'</div><div><b>Date de la visite</b>'+esc(frDate(r.date))+'</div><div><b>Référence CRT</b>'+esc(cm.ref||'—')+'</div><div><b>Date du rapport</b>'+esc(reportDate(r))+'</div><div><b>Rédacteur</b>'+esc(cm.author||'—')+'</div></div><div class="crtSynthesis">'+synthesis(r,ins,sample)+'</div>'+(r.lifecycle?.status==='Validée'?'':'<div class="crtDraftBand">DOCUMENT PROVISOIRE — fiche terrain non validée ('+esc(r.lifecycle?.status||'À contrôler')+')</div>')+'</section>'+
