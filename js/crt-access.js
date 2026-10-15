@@ -348,7 +348,8 @@
       }
       function historyBlock(r,ins){
         const network=r.network,defs=paramDefsFor(network);
-        const history=records.filter(x=>x.station===r.station&&x.network===network).slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+        // Visites « prélèvement non réalisé » exclues : leurs valeurs saisies avant l'abandon ne sont pas des mesures
+        const history=records.filter(x=>x.station===r.station&&x.network===network&&x.prelevementRealise!=='Non').slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
         if(history.length<2)return '';
         if(network==='EL'&&typeof EL_DEPTHS!=='undefined'){ // EL_DEPTHS / depthMarkerSvg : js/suivi-el.js (sinon histogramme habituel)
           const cards=defs.map(([k,label,unit])=>{const svg=elHistorySvg(history,k,unit,r.id);return svg?'<div class="crtGraphCard"><h3>'+esc(label)+' <span class="crtSmall">('+esc(unit)+')</span></h3>'+svg+'</div>':''}).filter(Boolean).join('');

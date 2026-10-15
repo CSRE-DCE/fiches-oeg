@@ -605,8 +605,12 @@ function restoreFicheValues(list){
       return;
     }
     const e=$(x.key);
-    if(e&&e.value===''){e.value=x.v;e.dispatchEvent(new Event('input',{bubbles:true}))}
+    // Liste : valeur absente des nouvelles options (ancienne saisie EL, appareil d'une autre tablette) gardée
+    // avec sa mention, comme à l'ouverture d'une fiche (auparavant remise à vide sans prévenir)
+    if(e&&e.value===''){if(e.tagName==='SELECT')setSelectKeep(e,x.v,/^(insituBoitier|ig_|el_probe_)/.test(x.key)?EQ_KEEP:undefined);else e.value=x.v;e.dispatchEvent(new Event('input',{bubbles:true}))}
   });
+  // Nom / n° de série / statut du boîtier et badges métrologiques des sondes remis à jour
+  refreshBoitierInfo();refreshProbeBadges();
 }
 $('station').onchange=()=>{
   state.station=val('station');
@@ -890,6 +894,8 @@ function buildELSample(){
 // Tableau des mesures in situ harmonisé (BIO, RCO, Chimie, ESO) sur la présentation du tableau EL : bandeau,
 // cases de saisie visibles, nom / n° de série / échéance de l'appareil affichés, turbidité M1 M2 M3 + moyenne.
 function insituHead(){return `<div class="elHead insituHead"><div><b>MESURES IN SITU — ${escapeHTML(netLabel(state.network)||state.network||'')}</b><div class="hint" style="color:#fff">Valeur, mode et sonde pour chaque paramètre · turbidité sur 3 mesures · le code GMAO renseigne le nom, le n° de série et l’échéance</div></div></div>`}
+// Badges métrologiques des sondes (lignes du tableau in situ) après un remplissage par programme
+function refreshProbeBadges(){document.querySelectorAll('select[id^="ig_"]').forEach(s=>{if(s._renderBadge)s._renderBadge()})}
 function refreshBoitierInfo(){
   const sel=$('insituBoitier'),box=$('insituBoitierInfo');if(!sel||!box)return;
   if(!sel.value){box.textContent='';box.className='eqInfoLine';return}
@@ -945,7 +951,7 @@ function buildInsitu(){
     const p=sel.id.slice(3);let badge=document.getElementById('ims_'+p);if(!badge){badge=document.createElement('div');badge.id='ims_'+p;sel.parentElement.appendChild(badge)}
     // Statut métrologique seulement quand un code est choisi (« Non référencé » s'affichait sur chaque ligne vide)
     const render=()=>{if(!sel.value){badge.className='';badge.textContent='';return}const st=equipStatus(equipmentByGmao(sel.value));badge.className='metrologyStatus '+st.cls;badge.textContent=st.label;};
-    sel.addEventListener('change',render);render();
+    sel._renderBadge=render;sel.addEventListener('change',render);render();
   });
   /* Colonne "Mode" (in-situ / seau) par sonde, ajoutée après coup (ancien correctif) */
   setTimeout(()=>{
@@ -1302,6 +1308,7 @@ function collectSpecific(){
   // ex. RCO « Eau prélevée ? », « Invertébrés… », « Diatomées… » — ou enregistrés avec la valeur
   // de leur attribut même non cochés quand ils en avaient un).
   const o={};document.querySelectorAll('#specific input,#specific select,#specific textarea').forEach(e=>{
+    if(e.closest('.riverFields'))return; // macrophytes / largeur / profondeur moyenne : enregistrés dans les conditions du site
     if(e.type==='radio'){if(e.checked&&e.name)o[e.name]=e.value;return}
     if(e.id)o[e.id]=e.type==='checkbox'?e.checked:e.value;
   });return o;
@@ -1578,7 +1585,7 @@ function loadRecord(id){
   const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
   Object.entries(mainMap).forEach(([k,v])=>{const e=$(k);if(!e)return;if(f.network==='EL')v=elLegacyValue(k,v);if(e.tagName==='SELECT')setSelectKeep(e,v);else e.value=v||''});
   if(f.insituBoitier)setSelectKeep($('insituBoitier'),f.insituBoitier,EQ_KEEP); // boîtier / appareil multiparamètre
-  refreshBoitierInfo();
+  refreshBoitierInfo();refreshProbeBadges(); // sonde à l'étalonnage expiré signalée aussi à la réouverture
   renderOrgOptions(f.organisme);renderPre();
   radioSet('qc',f.qc);
   radioSet('prelevementRealise',f.prelevementRealise||'Oui');applyRealise();

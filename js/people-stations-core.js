@@ -166,13 +166,20 @@ function clearFormNoConfirm(opts){if(state?.editing&&window.clearEditDraft)windo
   }
   function showEditDraftBanner(id,d){
     if(q('editDraftBanner_'+id))return;
-    const orig=records.find(x=>x.id===id),r=d.record,when=new Date(d.savedAt).toLocaleString('fr-FR');
+    const r=d.record,when=new Date(d.savedAt).toLocaleString('fr-FR');
     const label=[r.station,r.network,r.date].filter(Boolean).join(' · ');
     const div=document.createElement('div');div.id='editDraftBanner_'+id;div.className='banner info';
     div.innerHTML='📝 Modifications non enregistrées retrouvées pour la fiche '+escapeHTML(label||id)+' (le '+escapeHTML(when)+'). <button type="button" class="btn primary small" style="margin-left:8px" data-a="restore">Reprendre</button> <button type="button" class="btn ghost small" data-a="discard">Ignorer</button>';
     const host=q('new');if(host)host.insertBefore(div,host.firstChild);
     div.querySelector('[data-a="restore"]').onclick=()=>{
       if(state.editing&&state.editing!==id&&!(window.leaveEditedFiche&&window.leaveEditedFiche()))return;
+      // Fiche relue au moment du clic : elle a pu être remplacée depuis l'affichage du bandeau (version plus
+      // récente récupérée sur Drive, import) — auparavant rien n'était restauré, avec un message de réussite
+      const orig=records.find(x=>x.id===id);
+      // Fiche enregistrée modifiée après ces modifications (autre tablette, import) : reprendre les
+      // modifications remplacerait cette version plus récente à l'enregistrement — on prévient
+      const saved=orig&&typeof recordStamp==='function'?Date.parse(recordStamp(orig)):NaN;
+      if(orig&&saved>Date.parse(d.savedAt)&&!confirm('La fiche « '+(label||id)+' » a été modifiée depuis ces modifications non enregistrées (le '+new Date(saved).toLocaleString('fr-FR')+', sur une autre tablette ou par un import).\n\nReprendre vos modifications puis enregistrer remplacera cette version plus récente. Reprendre quand même ?'))return;
       document.querySelector('[data-tab="new"]')?.click();
       if(orig){
         // La fiche enregistrée est remplacée le temps du chargement par sa version modifiée : le formulaire
@@ -181,6 +188,8 @@ function clearFormNoConfirm(opts){if(state?.editing&&window.clearEditDraft)windo
       }else{
         // Fiche supprimée entre-temps : les modifications sont reprises comme une nouvelle fiche
         records.push(r);loadRecord(id);records.splice(records.indexOf(r),1);state.editing=null;$('save').textContent='💾 Enregistrer la fiche';
+        // Désormais une fiche nouvelle (couverte par le brouillon de saisie) : le bandeau ne revient plus à chaque démarrage
+        window.clearEditDraft(id);
       }
       editDirtyId=state.editing;div.remove();toast('Modifications restaurées ✓ — pensez à enregistrer');
     };
