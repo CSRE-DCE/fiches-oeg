@@ -872,7 +872,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(()=>elRange([0,10])[0]===0&&elRange([5,10])[0]>0),'graphes EL : axe jamais négatif pour des valeurs positives');
     // Autre réseau : pas de barre EL
     await p.evaluate(()=>{records.push({id:'TR',network:'RCO',station:'RCO T',date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{ph:{value:'7'}}});saveLS(LS,records);renderSuivi();const n=$('suiviNetwork');n.value='RCO';n.dispatchEvent(new Event('change'));const s=$('suiviStation');s.value='RCO T';s.dispatchEvent(new Event('change'))});await p.waitForTimeout(200);
-    ok(await p.evaluate(()=>!$('suiviElBar')),'suivi RCO : pas de choix de vue EL');
+    ok(await p.evaluate(()=>[...document.querySelectorAll('#suiviElBar .suiviElTab')].map(b=>b.dataset.v).join(',')==='evolution,bassin'&&document.querySelectorAll('#suiviParamGrid .suiviParamCard').length===1&&!document.querySelector('#suiviParamGrid .suiviParamCard[data-param]')),'suivi RCO : choix Évolution / Profil du bassin, graphes d’évolution habituels');
     ok(e17.length===0,'aucune erreur JavaScript (profils EL) '+JSON.stringify(e17));
     await c17.close();
   }
@@ -1095,6 +1095,61 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(Object.values(res).every(r=>/Multi 3630/.test(r.info)&&/SB-1/.test(r.info)),'boîtier : nom, n° de série et statut affichés');
     ok(e24.length===0,'aucune erreur JavaScript (tableau in situ) '+JSON.stringify(e24));
     await c24.close();
+  }
+  // --- AB : profil longitudinal du bassin versant pour RCO, Chimie et BIO (comme l'estuaire EL) ---
+  {
+    const c25=await browser.newContext({serviceWorkers:'block'});await c25.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c25.newPage();const e25=[];p.on('pageerror',e=>e25.push(e.message));
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const by=n=>[...DATA.RCO13,...DATA.RCO_BIO12].find(s=>s.nom===n),m={lifecycle:{status:'À contrôler'},photos:[],auditRefs:[]};let k=0;
+      const ses=SUIVI_SESSION_ORDER.RCO;
+      // Bassin du Mahury (9 stations RCO au référentiel) : 3 stations mesurées, volontairement dans le désordre
+      [[0,'2026-10-10'],[1,'2026-12-10']].forEach(([si,date])=>['Boulanger aval','Degrad Mouflet','Crique Affluent Orapu'].forEach((n,i)=>records.push({id:'AB'+(k++),network:'RCO',station:n,stationInfo:by(n),session:ses[si],date,savedAt:date+'T08:00:00Z',...m,insitu:{ph:{value:String(6+i+si/10)},temp:{value:String(25+i)}}})));
+      // Une visite non réalisée ne compte pas
+      records.push({id:'ABNR',network:'RCO',station:'Boulanger amont',stationInfo:by('Boulanger amont'),session:ses[0],date:'2026-10-11',savedAt:'2026-10-11T08:00:00Z',...m,prelevementRealise:'Non',insitu:{ph:{value:'9'}}});
+      // Autre bassin (Mana)
+      records.push({id:'ABMA',network:'RCO',station:'Crique Sakoura',stationInfo:by('Crique Sakoura'),session:ses[0],date:'2026-10-12',savedAt:'2026-10-12T08:00:00Z',...m,insitu:{ph:{value:'5.5'}}});
+      // BIO, bassin du Maroni : 11 stations mesurées (noms écrits en biais)
+      const bio=[...DATA.BIO_CE,...DATA.BIO_FISH].filter(s=>s.bv==='Maroni'),seen=new Set();
+      bio.forEach((s,i)=>{if(seen.has(s.nom))return;seen.add(s.nom);records.push({id:'ABB'+i,network:'BIO',station:s.nom,stationInfo:s,session:'Campagne biologique 2026',date:'2026-11-0'+(1+i%9),savedAt:'2026-11-01T08:00:00Z',...m,insitu:{o2mg:{value:String(6+i/10)}}})});
+      // ESO : pas de profil
+      records.push({id:'ABE',network:'ESO',station:DATA.ESO[0].nom,stationInfo:DATA.ESO[0],session:'Juillet 2026',date:'2026-07-10',savedAt:'2026-07-10T08:00:00Z',...m,insitu:{ph:{value:'6'}}});
+      saveLS(LS,records);
+    });
+    await p.click('.tab[data-tab="suivi"]');await p.waitForTimeout(300);
+    const pick=(n,s)=>p.evaluate(([n,s])=>{const a=$('suiviNetwork');a.value=n;a.dispatchEvent(new Event('change'));const b=$('suiviStation');b.value=s;b.dispatchEvent(new Event('change'))},[n,s]);
+    await pick('RCO','Degrad Mouflet');await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>document.querySelector('#suiviElBar .suiviElTab.on')?.dataset.v==='evolution'&&document.querySelectorAll('#suiviParamGrid .suiviParamCard').length===2),'suivi RCO : vue Évolution par défaut (graphes habituels)');
+    await p.click('.suiviElTab[data-v="bassin"]');await p.waitForTimeout(300);
+    const prof=()=>p.evaluate(()=>{const c=document.querySelector('.suiviParamCard[data-param="ph"]');return {label:document.querySelector('#suiviElBar .suiviElOpts label').textContent,basin:$('suiviElEstuary').value,depth:!!$('suiviElDepth'),
+      cols:[...c.querySelectorAll('thead th')].slice(1).map(t=>t.textContent),hi:[...c.querySelectorAll('thead th.suiviElHi')].map(t=>t.textContent),rows:[...c.querySelectorAll('tbody tr')].map(tr=>[...tr.children].map(td=>td.textContent.trim()).join(' | ')),
+      note:c.querySelector('.suiviElCardNote')?.textContent||'',legend:c.querySelector('.suiviDepthLegend').textContent,cards:[...document.querySelectorAll('#suiviParamGrid .suiviParamCard')].map(x=>x.dataset.param).join(',')}});
+    let r=await prof();
+    ok(r.label==='Bassin versant'&&r.basin==='Mahury'&&!r.depth,'profil du bassin RCO : bassin de la station choisi, pas de choix de profondeur');
+    ok(r.cols.join(' > ')==='Crique Affluent Orapu > Degrad Mouflet > Boulanger aval'&&r.hi.join()==='Degrad Mouflet','profil du bassin RCO : stations mesurées de l’amont vers l’aval, station choisie surlignée '+r.cols.join(' > '));
+    ok(r.rows.length===2&&/^S1 - Octobre 2026 \| 8\.00 \| 7\.00 \| 6\.00$/.test(r.rows[0])&&/^S2 - Décembre 2026 \| 8\.10 \| 7\.10 \| 6\.10$/.test(r.rows[1]),'profil du bassin RCO : une ligne par session, visite non réalisée ignorée '+JSON.stringify(r.rows));
+    ok(/6 station\(s\) du bassin sans mesure/.test(r.note)&&/S1 · Octobre 2026/.test(r.legend)&&r.cards==='temp,ph','profil du bassin RCO : stations non mesurées signalées, légende par session, un graphe par paramètre '+r.note);
+    ok(await p.evaluate(()=>{const cv=document.querySelector('.suiviParamCard[data-param="ph"] canvas'),d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;const has=([R,G,B])=>{for(let i=0;i<d.length;i+=4)if(Math.abs(d[i]-R)<12&&Math.abs(d[i+1]-G)<12&&Math.abs(d[i+2]-B)<12)return true;return false};return has([0x62,0x50,0xd6])&&has([0xe3,0x49,0x48])}),'profil du bassin RCO : S1 et S2 tracées dans leurs couleurs de session');
+    await p.selectOption('#suiviElEstuary','Mana');await p.waitForTimeout(250);r=await prof();
+    ok(r.basin==='Mana'&&r.cols.join()==='Crique Sakoura'&&!r.hi.length,'profil du bassin RCO : changement de bassin versant');
+    await pick('RCO','Crique Sakoura');await p.waitForTimeout(250);
+    await pick('RCO','Boulanger aval');await p.waitForTimeout(250);
+    ok(await p.evaluate(()=>$('suiviElEstuary').value==='Mahury'&&document.querySelector('.suiviElTab.on').dataset.v==='bassin'),'profil du bassin : la vue reste choisie, le bassin suit la station');
+    // BIO : 11 stations, noms en biais ; libellé de campagne abrégé
+    await pick('BIO','Twenke');await p.waitForTimeout(250);
+    ok(await p.evaluate(()=>document.querySelector('.suiviElTab.on').dataset.v==='evolution'),'suivi : la vue est mémorisée par réseau');
+    await p.click('.suiviElTab[data-v="bassin"]');await p.waitForTimeout(300);
+    const bio=await p.evaluate(()=>{const c=document.querySelector('.suiviParamCard[data-param="o2mg"]');return {basin:$('suiviElEstuary').value,n:c.querySelectorAll('thead th').length-1,first:c.querySelector('thead th:nth-child(2)').textContent,h:c.querySelector('canvas').style.height,code:netProfileData('BIO','Maroni','o2mg',true).sessions[0].si.code}});
+    ok(bio.basin==='Maroni'&&bio.n===11&&bio.first==='Twenke'&&bio.h==='260px'&&bio.code==='Camp. 2026','profil du bassin BIO : 11 stations du Maroni (noms en biais), de Twenke à l’aval '+JSON.stringify(bio));
+    // Chimie : sessions abrégées (« Sept.26 ») dans l'ordre chronologique
+    ok(await p.evaluate(()=>elOrderSessions(['S2 - Déc.26','2026-10-15','S1 - Sept.26','S4 - Juin.27','S3 - Fév.27'],'Chimie').infos.map(x=>x.code).join(' ')==='S1 15/10/26 S2 S3 S4'),'sessions Chimie : ordre chronologique avec les mois abrégés');
+    ok(await p.evaluate(()=>elSessionInfo('S1 - Sept.26','Chimie').name==='S1 · Sept.26'&&elSessionInfo('S2 - Déc.26','Chimie').color===EL_SESSION_COLORS[1]),'sessions Chimie : nom et couleur de session');
+    // ESO : pas de barre de vues
+    await pick('ESO',await p.evaluate(()=>DATA.ESO[0].nom));await p.waitForTimeout(250);
+    ok(await p.evaluate(()=>!$('suiviElBar')&&document.querySelectorAll('#suiviParamGrid .suiviParamCard').length===1),'suivi ESO : pas de profil longitudinal (forages, piézomètres)');
+    ok(e25.length===0,'aucune erreur JavaScript (profil du bassin) '+JSON.stringify(e25));
+    await c25.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

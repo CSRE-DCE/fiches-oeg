@@ -1750,9 +1750,9 @@ function renderSuivi(){
   $('suiviStationTitle').textContent=s;
   $('suiviStationMeta').textContent=[sample?.stationInfo?.code_me?'Masse d’eau '+sample.stationInfo.code_me:'',sample?.stationInfo?.bassin||'',sample?.stationInfo?.pressions||''].filter(Boolean).join(' · ')||'Aperçu de la station';
   $('suiviStationBadge').textContent=(sample?.stationInfo?.code||'Station');
-  // EL : trois vues (évolution par profondeur, profil de profondeur, profil de l'estuaire), js/suivi-el.js
-  if(n==='EL'&&typeof renderSuiviEL==='function'){renderSuiviEL(n,s,grid);return}
-  if(typeof clearSuiviEL==='function')clearSuiviEL();
+  // Vues du suivi (js/suivi-el.js) : EL (évolution par profondeur, profil de profondeur, profil de l'estuaire),
+  // RCO / Chimie / BIO (évolution ci-dessous ou profil longitudinal du bassin versant), ESO (évolution seule)
+  if(typeof renderSuiviViews==='function'&&renderSuiviViews(n,s,grid))return;
   grid.innerHTML='';
   params.forEach(p=>{
     const series=suiviSeries(n,s,p),all=series.flatMap(x=>x.values); if(!all.length)return;

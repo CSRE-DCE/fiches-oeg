@@ -1,9 +1,12 @@
-/* Suivi EL (onglet Suivi, réseau EL) — trois vues au choix :
- *  1. Évolution par session : un graphe par paramètre, surface / intermédiaire / fond superposés ;
- *  2. Profil de profondeur : la profondeur (m) en ordonnée, une courbe par session ;
- *  3. Profil longitudinal de l'estuaire : les stations de l'estuaire de l'amont vers la mer
- *     (classées du sud vers le nord, les fleuves coulant vers l'océan), une courbe par session,
- *     à la profondeur choisie.
+/* Suivi (onglet Suivi) — vues au choix au-dessus des graphes :
+ *  EL : 1. Évolution par session : un graphe par paramètre, surface / intermédiaire / fond superposés ;
+ *       2. Profil de profondeur : la profondeur (m) en ordonnée, une courbe par session ;
+ *       3. Profil longitudinal de l'estuaire : les stations de l'estuaire de l'amont vers la mer
+ *          (classées du sud vers le nord, les fleuves coulant vers l'océan), une courbe par session,
+ *          à la profondeur choisie.
+ *  RCO, Chimie, BIO : évolution par session (graphes d'app-core.js) ou profil longitudinal du bassin
+ *       versant (stations mesurées classées de l'amont vers l'aval, une courbe par session).
+ *  ESO : pas de profil (forages et piézomètres : ni amont ni aval).
  * Chaque profondeur a sa couleur et sa forme de point ; les sessions ont leur propre palette, qui
  * ne commence pas par les couleurs des profondeurs (pas de confusion d'un graphe à l'autre).
  * Palettes vérifiées pour les daltoniens (écart de couleur suffisant entre courbes voisines) ;
@@ -19,7 +22,8 @@ const EL_SUIVI_DEFS=[['temp','Température de l’eau','°C'],['ph','pH','u.pH']
 // soit la vue ou les sessions présentes : une session garde toujours la même couleur.
 const EL_SESSION_COLORS=['#6250d6','#e34948','#eda100','#008300','#e87ba4','#2a78d6','#eb6834','#1baf7a'];
 const EL_MAX_SESSIONS=8;
-let elSuiviView='evolution',elEstuary='',elEstuaryStation='',elEstuaryDepth='surf';
+// Vue choisie, bassin (estuaire pour l'EL) affiché et station qui l'a fixé, par réseau ; profondeur du profil EL
+const suiviView={},suiviBasin={},suiviBasinAnchor={};let elEstuaryDepth='surf';
 
 // ---------- Outils communs ----------
 // Point de légende / de tableau (forme + couleur de la profondeur), en SVG
@@ -35,28 +39,41 @@ function sessionKeySvg(si){
 function elMean(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:null}
 function elFmt(v){return v==null?'—':Number(v).toFixed(2)}
 const EL_NO_SESSION='#6e7b82';
-const EL_MOIS={janvier:1,'février':2,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,'août':8,aout:8,septembre:9,octobre:10,novembre:11,'décembre':12,decembre:12};
-// Ordre chronologique d'une session : mois et année lus dans le libellé (« Septembre 2026 » -> 2026-09),
-// date pour une visite sans session ; l'ordre du calendrier EL départage. Auparavant une session d'une
-// autre campagne (2025, ou la campagne suivante) était classée après toutes celles en cours.
-function elChronoKey(k){
-  const s=String(k||''),m=/([a-zéèûô]+)\.?\s+(\d{4})/i.exec(s),mo=m&&EL_MOIS[m[1].toLowerCase()];
-  return (mo?m[2]+'-'+String(mo).padStart(2,'0'):(/^\d{4}-\d{2}(-\d{2})?/.exec(s)||['~'])[0])+'|'+suiviSortKey(s,'EL');
+const SUIVI_MOIS=['janvier','fevrier','mars','avril','mai','juin','juillet','aout','septembre','octobre','novembre','decembre'];
+// Mois d'un mot, en entier ou abrégé (« Septembre », « Sept. », « Déc. ») ; 0 si ce n'est pas un mois ou si
+// l'abréviation est ambiguë (« Jui »)
+function suiviMonthOf(word){
+  const w=String(word).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();if(w.length<3)return 0;
+  const hits=SUIVI_MOIS.map((m,i)=>m.startsWith(w)?i+1:0).filter(Boolean);return hits.length===1?hits[0]:0;
+}
+// Ordre chronologique d'une session : mois et année lus dans le libellé (« Septembre 2026 » -> 2026-09,
+// « Sept.26 » -> 2026-09), date pour une visite sans session, année seule à défaut (« Campagne biologique
+// 2026 ») ; l'ordre du calendrier du réseau départage. Auparavant une session d'une autre campagne (2025,
+// ou la campagne suivante) était classée après toutes celles en cours.
+function elChronoKey(k,net){
+  const s=String(k||'');let ym='';
+  for(const m of s.matchAll(/([A-Za-zÀ-ÿ]{3,})\.?\s*(\d{4}|\d{2})(?!\d)/g)){const mo=suiviMonthOf(m[1]);if(mo){ym=(m[2].length===2?'20'+m[2]:m[2])+'-'+String(mo).padStart(2,'0');break}}
+  if(!ym){const d=/^\d{4}-\d{2}(-\d{2})?/.exec(s),y=/(?:^|\D)(\d{4})(?!\d)/.exec(s);ym=d?d[0]:y?y[1]+'-00':'~'}
+  return ym+'|'+suiviSortKey(s,net||'EL');
 }
 function elSessionCmp(a,b){return elChronoKey(a).localeCompare(elChronoKey(b),'fr')}
-function elSessionInfo(label){
-  const list=DATA.EL_SESSIONS||[],i=list.findIndex(x=>x.label===label);
-  const code=(/^(S\d+)\s*-/.exec(label||'')||[])[1]||'',d=/^(\d{4})-(\d{2})-(\d{2})/.exec(label||'');
+// Sessions du calendrier d'un réseau (EL : DATA.EL_SESSIONS ; autres réseaux : SUIVI_SESSION_ORDER)
+function suiviSessionList(net){return net==='EL'?(DATA.EL_SESSIONS||[]).map(x=>x.label):(SUIVI_SESSION_ORDER[net]||[])}
+function elSessionInfo(label,net){
+  const list=suiviSessionList(net||'EL'),i=list.indexOf(label),t=String(label||'');
+  const code=(/^(S\d+)\s*-/.exec(t)||[])[1]||'',d=/^(\d{4})-(\d{2})-(\d{2})/.exec(t);
   const slot=i>=0?i:(code?Number(code.slice(1))-1:-1);
-  // Nom affiché : « S1 · Septembre 2026 » (mois et année lus dans le libellé si la session n'est pas au calendrier
-  // en cours), « Visite du 10/09/26 » pour une fiche sans session
-  const mois=i>=0?list[i].mois:((/([A-Za-zÀ-ÿ]+\s+\d{4})/.exec(label||'')||[])[1]||'');
-  return {label,code:code||(d?d[3]+'/'+d[2]+'/'+d[1].slice(2):String(label||'').slice(0,10)),name:code?(code+(mois?' · '+mois:'')):(d?'Visite du '+d[3]+'/'+d[2]+'/'+d[1].slice(2)+' (sans session)':String(label||'')),color:slot>=0?EL_SESSION_COLORS[slot%EL_SESSION_COLORS.length]:EL_NO_SESSION,dash:false};
+  // Nom affiché : « S1 · Septembre 2026 » (libellé sans le code ni la saison), « Visite du 10/09/26 » pour une
+  // fiche sans session ; code court sur les graphes : « S1 », date, ou « Camp. 2026 » pour un libellé long
+  const mois=t.replace(/^S\d+\s*-\s*/,'').replace(/\s*\(.*\)\s*$/,'').trim();
+  const year=(/(\d{4})(?!.*\d{4})/.exec(t)||[])[1];
+  const short=code||(d?d[3]+'/'+d[2]+'/'+d[1].slice(2):t.length<=12?t:year?t.split(/\s+/)[0].slice(0,4)+'. '+year:t.slice(0,10)+'…');
+  return {label,code:short,name:code?(code+(mois?' · '+mois:'')):(d?'Visite du '+d[3]+'/'+d[2]+'/'+d[1].slice(2)+' (sans session)':t),color:slot>=0?EL_SESSION_COLORS[slot%EL_SESSION_COLORS.length]:EL_NO_SESSION,dash:false};
 }
 // Sessions dans l'ordre chronologique ; au-delà de 8, seules les plus récentes sont tracées (signalé)
-function elOrderSessions(keys){
-  const sorted=[...new Set(keys)].sort(elSessionCmp);
-  const shown=sorted.slice(-EL_MAX_SESSIONS),infos=shown.map(elSessionInfo),seen=new Set();
+function elOrderSessions(keys,net){
+  const sorted=[...new Set(keys)].sort((a,b)=>elChronoKey(a,net).localeCompare(elChronoKey(b,net),'fr'));
+  const shown=sorted.slice(-EL_MAX_SESSIONS),infos=shown.map(k=>elSessionInfo(k,net)),seen=new Set();
   // Visites sans session (clé = date) : couleurs de la palette non prises par les sessions affichées
   // (auparavant toutes grises et en pointillé)
   const used=new Set(infos.filter(x=>x.color!==EL_NO_SESSION).map(x=>x.color)),free=EL_SESSION_COLORS.filter(c=>!used.has(c));let k=0;
@@ -258,35 +275,56 @@ function renderElDepthProfiles(s,grid){
   return count;
 }
 
-// ---------- 3. Profil longitudinal de l'estuaire (stations de l'amont vers la mer) ----------
-function elStationsAll(){
+// ---------- 3. Profil longitudinal (EL : estuaire ; RCO, Chimie, BIO : bassin versant) ----------
+// Listes du référentiel de chaque réseau ; l'ESO (forages, piézomètres) n'a ni amont ni aval : pas de profil.
+const SUIVI_PROFILE_NETS={
+  EL:{data:['EL_STATIONS'],place:'Estuaire',down:'mer →'},
+  RCO:{data:['RCO13','RCO_BIO12'],place:'Bassin versant',down:'aval →'},
+  Chimie:{data:['CH_STATIONS'],place:'Bassin versant',down:'aval →'},
+  BIO:{data:['BIO_CE','BIO_FISH','BIO_PHYTO','BIO_ADNE'],place:'Bassin versant',down:'aval →'}
+};
+// Paramètres in situ des cours d'eau, dans l'ordre des graphes
+const RIVER_PROFILE_PARAMS=['temp','ph','cond','condms','sal','o2mg','o2pc','turb','air'];
+function netStationsAll(net){
   // Référentiel, stations ajoutées, puis stations connues seulement par les fiches (station ajoutée sur une
   // autre tablette, supprimée ici, ou renommée) — le référentiel l'emporte en cas de même nom
-  const m=new Map();[...(DATA.EL_STATIONS||[]),...(custom.stations||[]).filter(s=>s.network==='EL'),...records.filter(r=>r.network==='EL'&&r.station).map(r=>({...(r.stationInfo||{}),nom:r.station}))].forEach(s=>{if(s&&s.nom&&!m.has(s.nom))m.set(s.nom,s)});
+  const m=new Map();[...(SUIVI_PROFILE_NETS[net]?.data||[]).flatMap(k=>DATA[k]||[]),...(custom.stations||[]).filter(s=>s.network===net),...records.filter(r=>r.network===net&&r.station).map(r=>({...(r.stationInfo||{}),nom:r.station}))].forEach(s=>{if(s&&s.nom&&!m.has(s.nom))m.set(s.nom,s)});
   return [...m.values()];
 }
-function elBassinOf(s){return String(s?.bassin||s?.bv||'').trim()}
-function elEstuaries(){return [...new Set(elStationsAll().map(elBassinOf).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'))}
-// Amont -> mer : du sud vers le nord (ordonnée UTM croissante)
-function elEstuaryStations(bassin){
+function elStationsAll(){return netStationsAll('EL')}
+function elBassinOf(s){return String(s?.bassin||s?.bv||s?.bassinVersant||'').trim()}
+function netBasins(net){return [...new Set(netStationsAll(net).map(elBassinOf).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'))}
+function elEstuaries(){return netBasins('EL')}
+// Amont -> aval (mer) : du sud vers le nord (ordonnée UTM croissante), les fleuves de Guyane coulant vers le nord
+function netBasinStations(net,bassin){
   const y=s=>{const p=typeof stationXY22==='function'?stationXY22(s):null;return p?p[1]:Infinity};
-  return elStationsAll().filter(s=>elBassinOf(s)===bassin).sort((a,b)=>y(a)-y(b)||String(a.nom).localeCompare(String(b.nom),'fr'));
+  return netStationsAll(net).filter(s=>elBassinOf(s)===bassin).sort((a,b)=>y(a)-y(b)||String(a.nom).localeCompare(String(b.nom),'fr'));
 }
-function elEstuaryData(bassin,base,depthKey){
-  const sts=elEstuaryStations(bassin),names=sts.map(s=>s.nom),bySes=new Map();
-  records.filter(r=>r.network==='EL'&&names.includes(r.station)).forEach(r=>{
-    const key=suiviDateKey(r),v=numOrNull(suiviValueFor(r,base+'_'+depthKey));if(!key||v===null)return;
+function elEstuaryStations(bassin){return netBasinStations('EL',bassin)}
+// Valeurs d'un paramètre par session et par station du bassin. measuredOnly : seules les stations mesurées
+// (et la station `keep`) sont gardées — un bassin versant compte jusqu'à 11 stations au référentiel.
+function netProfileData(net,bassin,param,measuredOnly,keep){
+  let sts=netBasinStations(net,bassin);const bySes=new Map();
+  records.filter(r=>r.network===net&&sts.some(st=>st.nom===r.station)).forEach(r=>{
+    const key=suiviDateKey(r),v=numOrNull(suiviValueFor(r,param));if(!key||v===null)return;
     const m=bySes.get(key)||new Map(),a=m.get(r.station)||[];a.push(v);m.set(r.station,a);bySes.set(key,m);
   });
-  const {infos,dropped}=elOrderSessions([...bySes.keys()]);
-  return {stations:sts,dropped,sessions:infos.map(si=>{const m=bySes.get(si.label);return {si,vals:names.map(n=>{const a=m.get(n);return a?{v:elMean(a),n:a.length}:null})}})};
+  const total=sts.length;
+  if(measuredOnly)sts=sts.filter(st=>st.nom===keep||[...bySes.values()].some(m=>m.has(st.nom)));
+  const names=sts.map(s=>s.nom),{infos,dropped}=elOrderSessions([...bySes.keys()],net);
+  return {stations:sts,hidden:total-sts.length,dropped,sessions:infos.map(si=>{const m=bySes.get(si.label);return {si,vals:names.map(n=>{const a=m.get(n);return a?{v:elMean(a),n:a.length}:null})}})};
 }
+function elEstuaryData(bassin,base,depthKey){return netProfileData('EL',bassin,base+'_'+depthKey)}
 // Stations à intervalles réguliers en abscisse, une courbe par session (interrompue là où une
-// station n'a pas été mesurée), station sélectionnée surlignée.
-function drawElEstuary(canvas,data,unit,highlight){
+// station n'a pas été mesurée), station sélectionnée surlignée. Noms en biais quand les stations
+// sont trop serrées pour les écrire à plat.
+function drawElEstuary(canvas,data,unit,highlight,down){
   const vals=data.sessions.flatMap(s=>s.vals.filter(Boolean).map(x=>x.v));if(!vals.length)return null;
-  const {c,w,h}=elPrepCanvas(canvas,220);
-  const [min,max]=elRange(vals),n=data.stations.length,pad={l:elAxisPad(c,min,max,42),r:30,t:16,b:46},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,ins=10;
+  const n=data.stations.length,w0=Math.max(280,canvas.getBoundingClientRect().width||420),tilt=n>1&&(w0-100)/(n-1)<58;
+  const {c,w,h}=elPrepCanvas(canvas,tilt?260:220);
+  // Marge droite assez large pour l'étiquette de session en bout de courbe (« Camp. 2026 » recouvrait le dernier point)
+  c.font='bold 9px Arial';const codeW=data.sessions.length<=5?Math.max(0,...data.sessions.map(x=>c.measureText(x.si.code).width)):0;
+  const [min,max]=elRange(vals),pad={l:elAxisPad(c,min,max,42),r:Math.max(30,Math.ceil(codeW)+12),t:16,b:tilt?86:46},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,ins=10;
   const xAt=i=>pad.l+ins+(n===1?(pw-2*ins)/2:i*((pw-2*ins)/(n-1))),yAt=v=>pad.t+(max-v)*(ph/(max-min)),gap=n>1?(pw-2*ins)/(n-1):pw;
   const hi=data.stations.findIndex(s=>s.nom===highlight);
   if(hi>=0){c.fillStyle='rgba(0,61,122,.07)';const bw=Math.min(44,gap*.8);c.fillRect(xAt(hi)-bw/2,pad.t,bw,ph)}
@@ -295,12 +333,21 @@ function drawElEstuary(canvas,data,unit,highlight){
   c.strokeStyle='#c3cdd2';c.beginPath();c.moveTo(pad.l,pad.t+ph);c.lineTo(w-pad.r,pad.t+ph);c.stroke();
   c.fillStyle='#6e7b82';c.textAlign='left';c.fillText(unit,pad.l,10);
   data.stations.forEach((s,i)=>{
-    const has=data.sessions.some(x=>x.vals[i]);c.font=(i===hi?'bold ':'')+'8.5px Arial';c.fillStyle=i===hi?'#003d7a':has?'#52626e':'#a9b4ba';c.textAlign='center';
+    const has=data.sessions.some(x=>x.vals[i]);c.font=(i===hi?'bold ':'')+'8.5px Arial';c.fillStyle=i===hi?'#003d7a':has?'#52626e':'#a9b4ba';
+    if(tilt){
+      // En biais (45°) vers le bas à gauche, raccourci pour ne sortir ni du canevas ni de la marge du bas
+      const maxL=Math.min((xAt(i)-4)*Math.SQRT2,(pad.b-14)*Math.SQRT2);let t=String(s.nom);
+      while(t.length>1&&c.measureText(t).width>maxL)t=t.slice(0,-2)+'…';
+      c.save();c.translate(xAt(i)+3,pad.t+ph+9);c.rotate(-Math.PI/4);c.textAlign='right';c.fillText(t,0,0);c.restore();return;
+    }
     // Nom centré sous la station, recalé pour rester entier au bord du graphe (auparavant rogné côté mer)
+    c.textAlign='center';
     const L=elWrap(c,s.nom,Math.max(40,Math.min(gap-4,110)),2),tw=Math.max(...L.map(l=>c.measureText(l).width)),x=Math.min(w-2-tw/2,Math.max(2+tw/2,xAt(i)));
     L.forEach((l,k)=>c.fillText(l,x,pad.t+ph+13+k*10));
   });
-  c.font='8.5px Arial';c.fillStyle='#8a979e';c.textAlign='left';c.fillText('amont',pad.l,h-3);c.textAlign='right';c.fillText('mer →',w-pad.r,h-3);
+  c.font='8.5px Arial';c.fillStyle='#8a979e';
+  if(tilt){c.textAlign='right';c.fillText('← amont · '+(down||'mer →'),w-pad.r,10)}
+  else{c.textAlign='left';c.fillText('amont',pad.l,h-3);c.textAlign='right';c.fillText(down||'mer →',w-pad.r,h-3)}
   const ends=[];
   data.sessions.forEach(({si,vals:V})=>{
     c.strokeStyle=si.color;c.lineWidth=2;c.lineJoin='round';c.setLineDash(si.dash?[5,4]:[]);c.beginPath();let open=false;
@@ -309,49 +356,65 @@ function drawElEstuary(canvas,data,unit,highlight){
     let last=null;V.forEach((x,i)=>{if(x){drawDepthMarker(c,'circle',xAt(i),yAt(x.v),si.color);last={i,y:yAt(x.v)}}});
     if(last)ends.push({si,x:xAt(last.i),y:last.y});
   });
-  if(ends.length<=5){c.font='bold 9px Arial';c.textAlign='left';c.fillStyle='#17212b';elSpread(ends,11,pad.t,pad.t+ph).forEach(e=>c.fillText(e.si.code,Math.min(e.x+7,w-24),e.y+3))}
+  if(ends.length<=5){c.font='bold 9px Arial';c.textAlign='left';c.fillStyle='#17212b';elSpread(ends,11,pad.t,pad.t+ph).forEach(e=>c.fillText(e.si.code,Math.min(e.x+7,w-c.measureText(e.si.code).width-2),e.y+3))}
   return {xAt,n,padB:pad.b};
 }
-function renderElEstuary(s,grid){
-  const depth=EL_DEPTHS.find(d=>d.key===elEstuaryDepth)||EL_DEPTHS[0];let count=0;
-  const sts=elEstuaryStations(elEstuary);
-  if(!sts.length){grid.insertAdjacentHTML('beforeend','<div class="suiviElEmpty">Aucune station EL rattachée à cet estuaire.</div>');return 0}
-  EL_SUIVI_DEFS.forEach(([base,label,unit])=>{
-    const data=elEstuaryData(elEstuary,base,depth.key);if(!data.sessions.length)return;count++;
+function renderNetProfile(net,s,grid){
+  const isEL=net==='EL',cfg=SUIVI_PROFILE_NETS[net],bassin=suiviBasin[net]||'';let count=0;
+  const depth=isEL?(EL_DEPTHS.find(d=>d.key===elEstuaryDepth)||EL_DEPTHS[0]):null;
+  if(!netBasinStations(net,bassin).length){grid.insertAdjacentHTML('beforeend','<div class="suiviElEmpty">'+(isEL?'Aucune station EL rattachée à cet estuaire.':'Aucune station '+escapeHTML(net)+' rattachée à ce bassin versant.')+'</div>');return 0}
+  const defs=isEL?EL_SUIVI_DEFS.map(([base,label,unit])=>({base,param:base+'_'+depth.key,label,unit})):RIVER_PROFILE_PARAMS.filter(k=>SUIVI_PARAMS[k]).map(k=>({base:k,param:k,label:SUIVI_PARAMS[k].label,unit:SUIVI_PARAMS[k].unit}));
+  defs.forEach(({base,param,label,unit})=>{
+    const data=netProfileData(net,bassin,param,!isEL,s);if(!data.sessions.length)return;count++;
     const table='<table class="suiviTrendTable"><thead><tr><th>Session</th>'+data.stations.map(st=>'<th'+(st.nom===s?' class="suiviElHi"':'')+'>'+escapeHTML(st.nom)+'</th>').join('')+'</tr></thead><tbody>'+
       data.sessions.map(({si,vals})=>'<tr><td>'+sessionKeySvg(si)+' '+escapeHTML(si.label)+'</td>'+vals.map((x,i)=>'<td'+(data.stations[i].nom===s?' class="suiviElHi"':'')+'>'+(x?elFmt(x.v)+(x.n>1?' <small>(n='+x.n+')</small>':''):'—')+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
-    const note=data.dropped?escapeHTML(data.dropped+' session(s) plus ancienne(s) non tracée(s) (8 au maximum).'):'';
-    const card=elCard(base,label,unit,data.sessions.map(({si})=>'<span>'+sessionKeySvg(si)+' '+escapeHTML(si.name)+'</span>').join(''),label+' le long de l’estuaire '+elEstuary+' ('+depth.label.toLowerCase()+'), une courbe par session',table,note);
-    card.querySelector('.suiviParamUnit').insertAdjacentHTML('beforeend',(unit?' · ':'')+depthMarkerSvg(depth,10)+' '+escapeHTML(depth.label));
+    const note=[data.hidden?data.hidden+' station(s) du bassin sans mesure de ce paramètre, non affichée(s).':'',data.dropped?data.dropped+' session(s) plus ancienne(s) non tracée(s) (8 au maximum).':''].filter(Boolean).join(' ');
+    const what=isEL?label+' le long de l’estuaire '+bassin+' ('+depth.label.toLowerCase()+'), une courbe par session':label+' le long du bassin versant '+bassin+', de l’amont vers l’aval, une courbe par session';
+    const card=elCard(base,label,unit,data.sessions.map(({si})=>'<span>'+sessionKeySvg(si)+' '+escapeHTML(si.name)+'</span>').join(''),what,table,escapeHTML(note));
+    if(isEL)card.querySelector('.suiviParamUnit').insertAdjacentHTML('beforeend',(unit?' · ':'')+depthMarkerSvg(depth,10)+' '+escapeHTML(depth.label));
     grid.appendChild(card);
-    const canvas=card.querySelector('canvas'),geo=drawElEstuary(canvas,data,unit,s);
+    const canvas=card.querySelector('canvas'),geo=drawElEstuary(canvas,data,unit,s,cfg.down);
     if(geo)card.querySelector('.suiviCross').style.bottom=geo.padB+'px'; // la ligne de repère s'arrête à l'axe, au-dessus des noms
     if(geo)elBindTip(card.querySelector('.suiviDepthWrap'),canvas,x=>{
       let i=0,best=Infinity;for(let k=0;k<geo.n;k++){const dd=Math.abs(geo.xAt(k)-x);if(dd<best){best=dd;i=k}}
-      return {cx:geo.xAt(i),html:'<b>'+escapeHTML(data.stations[i].nom)+'</b> <span class="suiviTipN">('+escapeHTML(depth.label.toLowerCase())+')</span>'+data.sessions.map(({si,vals})=>{const x=vals[i];return '<div>'+sessionKeySvg(si)+' '+escapeHTML(si.code)+' : <b>'+(x?elFmt(x.v)+(unit?' '+escapeHTML(unit):''):'—')+'</b>'+(x&&x.n>1?' <span class="suiviTipN">(moyenne de '+x.n+' visites)</span>':'')+'</div>'}).join('')};
+      return {cx:geo.xAt(i),html:'<b>'+escapeHTML(data.stations[i].nom)+'</b>'+(isEL?' <span class="suiviTipN">('+escapeHTML(depth.label.toLowerCase())+')</span>':'')+data.sessions.map(({si,vals})=>{const x=vals[i];return '<div>'+sessionKeySvg(si)+' '+escapeHTML(si.code)+' : <b>'+(x?elFmt(x.v)+(unit?' '+escapeHTML(unit):''):'—')+'</b>'+(x&&x.n>1?' <span class="suiviTipN">(moyenne de '+x.n+' visites)</span>':'')+'</div>'}).join('')};
     });
   });
-  if(!count)grid.insertAdjacentHTML('beforeend','<div class="suiviElEmpty">Aucune mesure '+escapeHTML(depth.label.toLowerCase())+' enregistrée sur les stations de cet estuaire.</div>');
+  if(!count)grid.insertAdjacentHTML('beforeend','<div class="suiviElEmpty">'+(isEL?'Aucune mesure '+escapeHTML(depth.label.toLowerCase())+' enregistrée sur les stations de cet estuaire.':'Aucune mesure in situ enregistrée sur les stations '+escapeHTML(net)+' de ce bassin versant.')+'</div>');
   return count;
 }
 
-// ---------- Barre de choix de la vue (au-dessus des graphes EL) ----------
+// ---------- Barre de choix de la vue (au-dessus des graphes) ----------
 function clearSuiviEL(){const b=$('suiviElBar');if(b)b.remove()}
-function renderSuiviEL(n,s,grid){
-  // Estuaire : par défaut celui de la station choisie (réinitialisé quand on change de station)
-  if(elEstuaryStation!==s){elEstuaryStation=s;const st=elStationsAll().find(x=>x.nom===s)||records.find(r=>r.network==='EL'&&r.station===s)?.stationInfo;elEstuary=elBassinOf(st)||elEstuaries()[0]||''}
+const SUIVI_VIEWS={
+  EL:[['evolution','📈 Évolution par session','Surface, intermédiaire et fond sur le même graphe, session après session.'],
+      ['profondeur','⬇️ Profil de profondeur','Profondeur (m) en ordonnée : une courbe par session, de la surface au fond.'],
+      ['estuaire','↔️ Profil longitudinal de l’estuaire','Stations de l’estuaire de l’amont vers la mer (classées du sud au nord), une courbe par session, à la profondeur choisie. La station sélectionnée est surlignée.']],
+  river:[['evolution','📈 Évolution par session','Un graphe par paramètre, session après session.'],
+      ['bassin','↔️ Profil longitudinal du bassin','Stations mesurées du bassin versant de l’amont vers l’aval (classées du sud au nord, les fleuves de Guyane coulant vers la mer ; les affluents se placent selon leur latitude), une courbe par session. La station sélectionnée est surlignée.']]
+};
+// Affiche la barre de vues du réseau et, sauf pour l'évolution des cours d'eau (graphes d'app-core.js),
+// les graphes de la vue choisie. Renvoie true si les graphes sont tracés ici.
+function renderSuiviViews(n,s,grid){
+  const cfg=SUIVI_PROFILE_NETS[n];
+  if(!cfg){clearSuiviEL();return false} // ESO : pas de profil longitudinal
+  // Bassin (estuaire) : par défaut celui de la station choisie (réinitialisé quand on change de station)
+  if(suiviBasinAnchor[n]!==s){suiviBasinAnchor[n]=s;const st=netStationsAll(n).find(x=>x.nom===s)||records.find(r=>r.network===n&&r.station===s)?.stationInfo;suiviBasin[n]=elBassinOf(st)||netBasins(n)[0]||''}
+  const views=SUIVI_VIEWS[n==='EL'?'EL':'river'],profile=n==='EL'?'estuaire':'bassin';
+  let view=suiviView[n];if(!views.some(v=>v[0]===view))view=suiviView[n]='evolution';
   let bar=$('suiviElBar');
   if(!bar){bar=document.createElement('div');bar.id='suiviElBar';bar.className='suiviElBar';grid.parentNode.insertBefore(bar,grid)}
-  const views=[['evolution','📈 Évolution par session'],['profondeur','⬇️ Profil de profondeur'],['estuaire','↔️ Profil longitudinal de l’estuaire']];
-  const help={evolution:'Surface, intermédiaire et fond sur le même graphe, session après session.',profondeur:'Profondeur (m) en ordonnée : une courbe par session, de la surface au fond.',estuaire:'Stations de l’estuaire de l’amont vers la mer (classées du sud au nord), une courbe par session, à la profondeur choisie. La station sélectionnée est surlignée.'};
-  bar.innerHTML='<div class="suiviElSeg" role="tablist">'+views.map(([v,l])=>'<button type="button" role="tab" class="suiviElTab'+(elSuiviView===v?' on':'')+'" aria-selected="'+(elSuiviView===v)+'" data-v="'+v+'">'+l+'</button>').join('')+'</div>'+
-    (elSuiviView==='estuaire'?'<div class="suiviElOpts"><div class="field"><label>Estuaire</label><select id="suiviElEstuary">'+elEstuaries().map(b=>'<option'+(b===elEstuary?' selected':'')+'>'+escapeHTML(b)+'</option>').join('')+'</select></div><div class="field"><label>Profondeur</label><select id="suiviElDepth">'+EL_DEPTHS.map(d=>'<option value="'+d.key+'"'+(d.key===elEstuaryDepth?' selected':'')+'>'+escapeHTML(d.label)+'</option>').join('')+'</select></div></div>':'')+
-    '<div class="suiviElHelp">'+escapeHTML(help[elSuiviView])+'</div>';
-  bar.querySelectorAll('.suiviElTab').forEach(b=>b.onclick=()=>{elSuiviView=b.dataset.v;renderSuivi()});
-  const es=$('suiviElEstuary');if(es)es.onchange=()=>{elEstuary=es.value;renderSuivi()};
+  bar.innerHTML='<div class="suiviElSeg" role="tablist">'+views.map(([v,l])=>'<button type="button" role="tab" class="suiviElTab'+(view===v?' on':'')+'" aria-selected="'+(view===v)+'" data-v="'+v+'">'+l+'</button>').join('')+'</div>'+
+    (view===profile?'<div class="suiviElOpts"><div class="field"><label>'+escapeHTML(cfg.place)+'</label><select id="suiviElEstuary">'+netBasins(n).map(b=>'<option'+(b===suiviBasin[n]?' selected':'')+'>'+escapeHTML(b)+'</option>').join('')+'</select></div>'+
+      (n==='EL'?'<div class="field"><label>Profondeur</label><select id="suiviElDepth">'+EL_DEPTHS.map(d=>'<option value="'+d.key+'"'+(d.key===elEstuaryDepth?' selected':'')+'>'+escapeHTML(d.label)+'</option>').join('')+'</select></div>':'')+'</div>':'')+
+    '<div class="suiviElHelp">'+escapeHTML(views.find(v=>v[0]===view)[2])+'</div>';
+  bar.querySelectorAll('.suiviElTab').forEach(b=>b.onclick=()=>{suiviView[n]=b.dataset.v;renderSuivi()});
+  const es=$('suiviElEstuary');if(es)es.onchange=()=>{suiviBasin[n]=es.value;renderSuivi()};
   const ed=$('suiviElDepth');if(ed)ed.onchange=()=>{elEstuaryDepth=ed.value;renderSuivi()};
+  if(n!=='EL'&&view==='evolution')return false;
   grid.innerHTML='';
-  if(elSuiviView==='profondeur')return renderElDepthProfiles(s,grid);
-  if(elSuiviView==='estuaire')return renderElEstuary(s,grid);
-  return renderElEvolution(n,s,grid);
+  if(view===profile)renderNetProfile(n,s,grid);
+  else if(view==='profondeur')renderElDepthProfiles(s,grid);
+  else renderElEvolution(n,s,grid);
+  return true;
 }
