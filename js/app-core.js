@@ -1181,12 +1181,28 @@ function buildSpecific(){
 }
 
 function buildAll(){
+  homeRiverFields(); // avant toute reconstruction : ces champs ne doivent jamais être détruits avec un panneau
   if(isEL()){
     buildELInsitu();buildELSample();buildSpecific();buildELSite();initCanvases();
     const s=getStation(); if(s&&$('elDepth')){$('elDepth').value=s.type==='MEC'?'10':'';refreshELDepthLevels();}
     return;
   }
-  restoreSandreSite();buildInsitu();buildSample();buildSpecific();initCanvases()
+  restoreSandreSite();buildInsitu();buildSample();buildSpecific();initCanvases();
+  placeRiverFields();
+}
+// Recouvrement macrophytes, largeur et profondeur moyenne du cours d'eau : dans « Échantillonnage de
+// sédiments » quand la fiche en comporte un (RCO, Chimie S1), sinon dans les conditions du site (BIO,
+// Chimie S2-S4…). Mêmes identifiants : rien ne change dans les fiches enregistrées.
+const RIVER_FIELDS=['macro','largeur','profMoy'],riverHome={};
+function homeRiverFields(){
+  RIVER_FIELDS.forEach(id=>{const f=$(id)?.closest('.field');const ph=riverHome[id];if(f&&ph&&ph.parentNode&&f.previousSibling!==ph)ph.after(f)});
+  document.querySelectorAll('.riverFields').forEach(b=>{if(!b.querySelector('input'))b.remove()});
+}
+function placeRiverFields(){
+  const panel=document.querySelector('#specific .sedimentPanel,#sample .sedimentPanel');if(!panel)return;
+  let box=panel.querySelector('.riverFields');
+  if(!box){box=document.createElement('div');box.className='riverFields grid2';(panel.querySelector('.sedimentTitle')||panel.firstChild).after(box)}
+  RIVER_FIELDS.forEach(id=>{const f=$(id)?.closest('.field');if(!f)return;if(!riverHome[id]){riverHome[id]=document.createComment('emplacement '+id);f.before(riverHome[id])}box.appendChild(f)});
 }
 
 function collectSimple(ids){

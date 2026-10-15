@@ -248,3 +248,5 @@ body.nonRealise #obsCard>*:not(h2):not(.obsKeep){display:none!important}
 body.nonRealise .lblReal{display:none}
 body.nonRealise .lblNonReal{display:inline;color:#a3261f}
 #prelevementRealiseWrap{border:1.5px solid var(--brand);border-radius:10px;padding:8px 10px;background:var(--soft)}
+/* Champs du cours d'eau (macrophytes, largeur, profondeur moyenne) dans le panneau sédiments */
+.riverFields{padding:6px 10px 2px;border-bottom:1px solid var(--line);background:#fff}

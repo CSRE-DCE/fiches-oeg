@@ -1053,6 +1053,27 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e22.length===0,'aucune erreur JavaScript (prélèvement non réalisé) '+JSON.stringify(e22));
     await c22.close();
   }
+  // --- Z : macrophytes, largeur et profondeur moyenne dans « Échantillonnage de sédiments » ---
+  {
+    const c23=await browser.newContext({serviceWorkers:'block'});await c23.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c23.newPage();const e23=[];p.on('pageerror',e=>e23.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const pick=async(net,sessionIdx=1)=>{await p.evaluate(([net,i])=>{clearFormNoConfirm({keepDraft:true});selectNetwork(net);for(const id of ['session','activity','bioOperation']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].filter(o=>o.value);if(o.length){s.value=(id==='session'?o[Math.min(i-1,o.length-1)]:o[0]).value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const st=$('station');st.value=[...st.options].find(o=>o.value).value;st.dispatchEvent(new Event('change',{bubbles:true}))},[net,sessionIdx]);await p.waitForTimeout(300)};
+    const where=()=>p.evaluate(()=>['macro','largeur','profMoy'].map(id=>{const e=$(id);return !e?'absent':e.closest('.sedimentPanel')?(e.closest('#specific')?'sédiments (spécifique)':'sédiments (prélèvement)'):e.closest('#siteCard')?'site':'ailleurs'}));
+    await pick('RCO');
+    ok((await where()).every(w=>w==='sédiments (spécifique)'),'RCO : macrophytes, largeur et profondeur moyenne dans « Échantillonnage de sédiments » '+(await where()).join());
+    await p.fill('#macro','35');await p.fill('#largeur','12');await p.fill('#profMoy','1.4');
+    ok(await p.evaluate(()=>{const c=collectConditions();return c.macro==='35'&&c.largeur==='12'&&c.profMoy==='1.4'}),'RCO : valeurs toujours enregistrées dans les conditions (fiches existantes inchangées)');
+    await pick('Chimie',1);ok((await where()).every(w=>w==='sédiments (prélèvement)'),'Chimie S1 : champs dans le panneau sédiments '+(await where()).join());
+    await pick('Chimie',2);ok((await where()).every(w=>w==='site'),'Chimie S2 (sans sédiments) : champs dans les conditions du site '+(await where()).join());
+    await pick('EL');await pick('BIO');ok((await where()).every(w=>w==='site'),'BIO (après un passage par EL) : champs dans les conditions du site, jamais perdus '+(await where()).join());
+    await pick('RCO');ok((await where()).every(w=>w==='sédiments (spécifique)'),'retour RCO : champs de nouveau dans les sédiments');
+    // Fiche rouverte : valeurs retrouvées dans le panneau sédiments
+    await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records.push({id:'ZR',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{},sample:{},specific:{},conditions:{macro:'20',largeur:'8',profMoy:'0.9'}});saveLS(LS,records);clearFormNoConfirm({keepDraft:true});loadRecord('ZR')});await p.waitForTimeout(600);
+    ok(await p.evaluate(()=>$('macro').value==='20'&&$('largeur').value==='8'&&$('profMoy').value==='0.9'&&!!$('macro').closest('.sedimentPanel')),'fiche rouverte : valeurs retrouvées dans le panneau sédiments');
+    ok(e23.length===0,'aucune erreur JavaScript (champs du cours d’eau) '+JSON.stringify(e23));
+    await c23.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
