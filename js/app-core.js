@@ -887,6 +887,16 @@ function buildELSample(){
   <h3>Transport / remise</h3><div class="grid2"><div class="field"><label>Moyen de refroidissement</label><select id="transportFroid"><option></option><option>Glacières + blocs eutectiques</option><option>Véhicule réfrigéré</option><option>Autre</option></select></div><div class="field"><label>Suivi température</label><select id="transportSuivi"><option></option><option>Pastilles min/max</option><option>Thermomètre flacon</option><option>Enregistreur</option></select></div><div class="field"><label>Organisme récepteur</label><input id="recepteur"></div><div class="field"><label>Date / heure remise</label><input id="remise" type="datetime-local"></div></div>`;
   setTimeout(()=>receivers('recepteur'),0);
 }
+// Tableau des mesures in situ harmonisé (BIO, RCO, Chimie, ESO) sur la présentation du tableau EL : bandeau,
+// cases de saisie visibles, nom / n° de série / échéance de l'appareil affichés, turbidité M1 M2 M3 + moyenne.
+function insituHead(){return `<div class="elHead insituHead"><div><b>MESURES IN SITU — ${escapeHTML(netLabel(state.network)||state.network||'')}</b><div class="hint" style="color:#fff">Valeur, mode et sonde pour chaque paramètre · turbidité sur 3 mesures · le code GMAO renseigne le nom, le n° de série et l’échéance</div></div></div>`}
+function refreshBoitierInfo(){
+  const sel=$('insituBoitier'),box=$('insituBoitierInfo');if(!sel||!box)return;
+  if(!sel.value){box.textContent='';box.className='eqInfoLine';return}
+  const e=equipmentByGmao(sel.value),st=equipStatus(e);
+  box.className='eqInfoLine';box.innerHTML=e?escapeHTML([e.nom,e.serie?'n° '+e.serie:'',e.echeance?'échéance '+e.echeance.split('-').reverse().join('/'):''].filter(Boolean).join(' · '))+' <span class="metrologyStatus '+st.cls+'">'+escapeHTML(st.label)+'</span>':'<span class="metrologyStatus metrologyBad">Non référencé sur cette tablette</span>';
+}
+window.refreshBoitierInfo=refreshBoitierInfo;
 function buildInsitu(){
   (function buildInsituCore(){
   const h=$('insitu');h.innerHTML='';
@@ -902,9 +912,9 @@ function buildInsitu(){
   ps.splice(3,0,['sal','Salinité','','sonde',null]);
   ps.push(['redox','Potentiel redox','mV/ENH','sonde',null]);
   if(state.network==='ESO'){
-    h.innerHTML=`<div class="note">Mode de mesure commun à toutes les sondes.</div>
-      <div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('eso_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}</div></div>
-      <table class="table"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody id="esoSensorTable"></tbody></table>`;
+    h.innerHTML=`${insituHead()}<div class="note">Mode de mesure commun à toutes les sondes.</div>
+      <div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('eso_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}<div id="insituBoitierInfo" class="eqInfoLine"></div></div></div>
+      <table class="table insituTable"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody id="esoSensorTable"></tbody></table>`;
     const tb=$('esoSensorTable');
     ps.filter(x=>x[0]!=='air').forEach(p=>{
       const tr=document.createElement('tr');
@@ -922,17 +932,19 @@ function buildInsitu(){
     });
     return;
   }
-  let t=`<div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('global_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}</div></div><table class="table"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody>`;
+  let t=`${insituHead()}<div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('global_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}<div id="insituBoitierInfo" class="eqInfoLine"></div></div></div><table class="table insituTable"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody>`;
   ps.filter(p=>p[0]!=='redox').forEach(p=>t+=`<tr><td><b>${escapeHTML(p[1])}</b><br><span class="paramUnit">${escapeHTML(p[2])}</span>${p[4]?`<br><span class="sandreCode">SANDRE ${p[4]}</span>`:''}</td><td><input id="iv_${p[0]}" type="number" step="any"><span id="ivs_${p[0]}"></span></td><td>${eqSelect('ig_'+p[0],'sonde')}</td><td><input class="readonly" id="ign_${p[0]}" readonly></td><td><input class="readonly" id="igs_${p[0]}" readonly></td><td><input id="ic_${p[0]}" type="date"></td><td><select id="iq_${p[0]}"><option></option><option>Oui</option><option>Non</option></select></td></tr>`);
   t+='</tbody></table>';h.innerHTML+=t;
   ps.filter(p=>p[0]!=='redox').forEach(p=>{
     const el=$('ig_'+p[0]);if(el)el.onchange=()=>{const e=equipmentByGmao(el.value);$('ign_'+p[0]).value=e?.nom||'';$('igs_'+p[0]).value=e?.serie||''};
   });
   })();
+  if($('insituBoitier')){$('insituBoitier').addEventListener('change',refreshBoitierInfo);refreshBoitierInfo()}
   /* Badge métrologique après sélection GMAO (ancien correctif) */
   document.querySelectorAll('select[id^="ig_"]').forEach(sel=>{
     const p=sel.id.slice(3);let badge=document.getElementById('ims_'+p);if(!badge){badge=document.createElement('div');badge.id='ims_'+p;sel.parentElement.appendChild(badge)}
-    const render=()=>{const st=equipStatus(equipmentByGmao(sel.value));badge.className='metrologyStatus '+st.cls;badge.textContent=st.label;};
+    // Statut métrologique seulement quand un code est choisi (« Non référencé » s'affichait sur chaque ligne vide)
+    const render=()=>{if(!sel.value){badge.className='';badge.textContent='';return}const st=equipStatus(equipmentByGmao(sel.value));badge.className='metrologyStatus '+st.cls;badge.textContent=st.label;};
     sel.addEventListener('change',render);render();
   });
   /* Colonne "Mode" (in-situ / seau) par sonde, ajoutée après coup (ancien correctif) */
@@ -949,13 +961,13 @@ function buildInsitu(){
     base.style.display='none';
     const status=$('ivs_turb'); if(status)status.style.display='none';
     const wrap=document.createElement('div');wrap.className='turbReplicates';wrap.style.cssText='display:grid;grid-template-columns:repeat(3,minmax(70px,1fr));gap:6px;margin-top:4px';
-    ['1','2','3'].forEach(n=>{const lab=document.createElement('label');lab.className='turbMeas';lab.innerHTML='Mesure '+n+'<input id="iv_turb_'+n+'" type="number" step="any" inputmode="decimal" placeholder="NTU" aria-label="Turbidité mesure '+n+'" required>';wrap.appendChild(lab)});
+    ['1','2','3'].forEach(n=>{const lab=document.createElement('label');lab.className='turbMeas';lab.innerHTML='<input id="iv_turb_'+n+'" type="number" step="any" inputmode="decimal" placeholder="M'+n+'" aria-label="Turbidité mesure '+n+'" required>';wrap.appendChild(lab)});
     cell.insertBefore(wrap,base);
-    const avg=document.createElement('div');avg.id='iv_turb_moyenne';avg.className='turbAvg';avg.style.marginTop='4px';avg.textContent='Moyenne des 3 mesures : —';
+    const avg=document.createElement('div');avg.id='iv_turb_moyenne';avg.className='turbAvg';avg.style.marginTop='4px';avg.textContent='Moyenne : —';
     cell.insertBefore(avg,base);
     function refreshTurbAverage(){
       const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n))).filter(v=>v!==null);
-      avg.textContent='Moyenne des 3 mesures : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');
+      avg.textContent='Moyenne : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');
     }
     ['1','2','3'].forEach(n=>$('iv_turb_'+n).addEventListener('input',refreshTurbAverage));
     const existing=state.editing&&records.find(r=>r.id===state.editing)?.insitu?.turb;
@@ -1543,7 +1555,7 @@ function loadRecord(id){
     const tm=f.insitu.turb.mesures||[];
     [1,2,3].forEach((n,i)=>{if($('iv_turb_'+n))$('iv_turb_'+n).value=(tm[i]!=null?tm[i]:'')});
     const avg=$('iv_turb_moyenne');
-    if(avg){const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n))).filter(v=>v!==null);avg.textContent='Moyenne des 3 mesures : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');}
+    if(avg){const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n))).filter(v=>v!==null);avg.textContent='Moyenne : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');}
   }
   if(f.network==='EL' && f.insitu?.params){
     const d=f.insitu;
@@ -1566,6 +1578,7 @@ function loadRecord(id){
   const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
   Object.entries(mainMap).forEach(([k,v])=>{const e=$(k);if(!e)return;if(f.network==='EL')v=elLegacyValue(k,v);if(e.tagName==='SELECT')setSelectKeep(e,v);else e.value=v||''});
   if(f.insituBoitier)setSelectKeep($('insituBoitier'),f.insituBoitier,EQ_KEEP); // boîtier / appareil multiparamètre
+  refreshBoitierInfo();
   renderOrgOptions(f.organisme);renderPre();
   radioSet('qc',f.qc);
   radioSet('prelevementRealise',f.prelevementRealise||'Oui');applyRealise();

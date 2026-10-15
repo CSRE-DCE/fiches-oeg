@@ -250,3 +250,19 @@ body.nonRealise .lblNonReal{display:inline;color:#a3261f}
 #prelevementRealiseWrap{border:1.5px solid var(--brand);border-radius:10px;padding:8px 10px;background:var(--soft)}
 /* Champs du cours d'eau (macrophytes, largeur, profondeur moyenne) dans le panneau sédiments */
 .riverFields{padding:6px 10px 2px;border-bottom:1px solid var(--line);background:#fff}
+/* Mesures in situ BIO / RCO / Chimie / ESO : même présentation que le tableau EL (cases de saisie visibles —
+   « .table input » les rendait invisibles —, en-têtes centrés, paramètre en gras) */
+.insituHead{margin-bottom:10px}
+.insituTable th{background:#e8f6f4;color:#003d7a;text-align:center;font-size:10.5px;vertical-align:middle}
+.insituTable td{vertical-align:middle}
+.insituTable td:first-child{font-weight:800;color:#003d7a;min-width:110px}
+.insituTable td:first-child b{color:#003d7a}
+.insituTable input:not([type=radio]):not([type=checkbox]),.insituTable select{border:1px solid #cfdde0;border-radius:8px;background:#fffef7;padding:7px 8px;font-size:12.5px;width:100%;min-width:72px}
+.insituTable input[readonly]:not([type=radio]):not([type=checkbox]){border:0;background:transparent;color:#52626e;padding:4px 2px;min-width:70px}
+.insituTable .turbReplicates input:not([type=radio]):not([type=checkbox]){min-width:0;padding:7px 5px}
+.insituTable select[id^="ig_"]{min-width:118px}
+.insituTable .turbReplicates{display:grid!important;grid-template-columns:repeat(3,minmax(52px,1fr))!important;gap:4px!important;margin-top:0!important}
+.insituTable .turbMeas{display:block}
+.insituTable .turbAvg{font-weight:900;color:#003d7a;font-size:10.5px;margin-top:5px;padding-top:4px;border-top:1px solid #dbe6e7}
+.eqInfoLine{font-size:11px;color:#52626e;margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.eqInfoLine:empty{display:none}

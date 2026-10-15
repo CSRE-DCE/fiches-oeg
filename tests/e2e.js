@@ -1074,6 +1074,28 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e23.length===0,'aucune erreur JavaScript (champs du cours d’eau) '+JSON.stringify(e23));
     await c23.close();
   }
+  // --- AA : tableau « Mesures in situ » harmonisé (BIO, RCO, Chimie) sur la présentation EL ---
+  {
+    const c24=await browser.newContext({serviceWorkers:'block'});await c24.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c24.newPage();const e24=[];p.on('pageerror',e=>e24.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{custom.equipements=[{type:'boitier',gmao:'BX-1',nom:'Multi 3630',serie:'SB-1',echeance:'2099-01-01'},{type:'sonde',gmao:'SD-1',nom:'Sonde pH',serie:'SS-1',echeance:'2099-01-01'}];saveLS(LSC,custom)});
+    const res={};
+    for(const net of ['BIO','RCO','Chimie']){
+      await p.evaluate(net=>{clearFormNoConfirm({keepDraft:true});selectNetwork(net);for(const id of ['session','activity','bioOperation']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const st=$('station');st.value=[...st.options].find(o=>o.value).value;st.dispatchEvent(new Event('change',{bubbles:true}))},net);
+      await p.waitForTimeout(400);
+      res[net]=await p.evaluate(()=>{const b=$('insituBoitier');b.value='BX-1';b.dispatchEvent(new Event('change'));
+        return {head:!!document.querySelector('#insitu .insituHead'),cols:[...document.querySelectorAll('#insitu .insituTable thead th')].map(t=>t.textContent).join('|'),rows:document.querySelectorAll('#insitu .insituTable tbody tr').length,
+          border:getComputedStyle($('iv_ph')).borderTopWidth,badges:[...document.querySelectorAll('#insitu [id^="ims_"]')].filter(x=>x.textContent.trim()).length,info:$('insituBoitierInfo').textContent}});
+    }
+    const same=JSON.stringify(res.BIO.cols)===JSON.stringify(res.RCO.cols)&&res.RCO.cols===res.Chimie.cols&&res.BIO.rows===res.RCO.rows&&res.RCO.rows===res.Chimie.rows;
+    ok(same&&Object.values(res).every(r=>r.head&&r.cols==='Paramètre|Mode|Valeur|Code GMAO sonde/capteur|Nom|N° série|Étalonnage|Contrôle'&&r.rows===8),'mesures in situ : même tableau (bandeau, colonnes, paramètres) pour BIO, RCO et Chimie '+JSON.stringify(res.RCO.cols));
+    ok(Object.values(res).every(r=>parseFloat(r.border)>0),'mesures in situ : cases de saisie visibles (auparavant sans bordure ni fond)');
+    ok(Object.values(res).every(r=>r.badges===0),'mesures in situ : plus de « Non référencé » sur les lignes sans appareil');
+    ok(Object.values(res).every(r=>/Multi 3630/.test(r.info)&&/SB-1/.test(r.info)),'boîtier : nom, n° de série et statut affichés');
+    ok(e24.length===0,'aucune erreur JavaScript (tableau in situ) '+JSON.stringify(e24));
+    await c24.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
