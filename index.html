@@ -737,7 +737,8 @@
     <button class="btn ghost small" id="pullDriveBtn">⬇️ Récupérer l'historique complet depuis Drive</button>
   </div>
   <p class="note">"Alléger le stockage" retire les photos, dessins et signatures du stockage du navigateur pour les fiches déjà confirmées sauvegardées dans le dossier local et/ou sur Drive — utile si un message "stockage saturé" apparaît. Rien n'est perdu : le contenu original reste dans les fichiers déjà écrits, récupérable via "Importer JSON" ou "Récupérer l'historique depuis Drive".</p>
-  <p class="note">"Récupérer l'historique" va chercher, sur Google Drive, les fiches enregistrées par les autres tablettes connectées au même compte Google, et les ajoute à celles déjà présentes ici — utile avant de générer un CRT pour que le suivi historique d'une station soit complet.</p>
+  <p class="note"><b>Partage entre tablettes</b> (toutes connectées au même compte Google) : chaque tablette reçoit automatiquement — au démarrage, après chaque enregistrement, puis toutes les 5 minutes — les fiches, le référentiel (opérateurs, équipements GMAO, stations ajoutées, accès, programme de marché) et les données qualité (non-conformités, journal d'audit, configuration, informations CRT) des autres tablettes. Pour un même élément modifié sur deux tablettes, la modification la plus récente l'emporte ; une fiche modifiée des deux côtés est conservée en deux exemplaires (copie de conflit à examiner) ; une fiche supprimée ne revient pas. L'autorisation Google dure une heure : passé ce délai, touchez « Synchroniser maintenant ».</p>
+  <p class="note">"Récupérer l'historique complet" relit tous les fichiers du dossier Drive (plus long) : utile pour rendre leurs photos aux fiches allégées.</p>
   </div><div class="card" 
 id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 <div class="banner info">Les opérateurs et équipements ajoutés ici deviennent disponibles immédiatement dans les fiches. Le code GMAO d’une sonde renseigne automatiquement son nom et son numéro de série. Les préleveurs sont sélectionnables par cases à cocher multiples.</div>
@@ -813,7 +814,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <body>
 
-<script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/suivi-el.js"></script><script src="js/fiche-print.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script><script src="js/terrain.js"></script>
+<script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/suivi-el.js"></script><script src="js/fiche-print.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/partage.js"></script><script src="js/sync.js"></script><script src="js/terrain.js"></script>
 <script src="version.js"></script>
 <script>
 window.APP_BUILD=(self.OEG_BUILD_DATE||'?')+' · build '+(self.OEG_BUILD||'?');

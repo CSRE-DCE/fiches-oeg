@@ -1267,6 +1267,81 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e27.length===0,'aucune erreur JavaScript (corrections de relecture) '+JSON.stringify(e27));
     await c27.close();
   }
+  // --- AE : partage entre tablettes via Drive (réception automatique, référentiel, qualité, suppressions) ---
+  {
+    let acct={folders:new Map(),files:new Map()},nid=1,media=0;
+    const part=body=>{const parts=body.split(/--oegboundary[^\r\n]*/);return {meta:JSON.parse(parts[1].split('\r\n\r\n')[1]),txt:parts[2].split('\r\n\r\n').slice(1).join('\r\n\r\n').replace(/\r\n$/,'')}};
+    const ctxs=[];
+    async function tablet(){
+      const c=await browser.newContext({serviceWorkers:'block'});ctxs.push(c);await c.route('https://unpkg.com/**',r=>r.abort());
+      await c.route('https://accounts.google.com/**',r=>r.fulfill({contentType:'text/javascript',body:'window.google={accounts:{oauth2:{initTokenClient:o=>({requestAccessToken(){this.callback({access_token:"tok",expires_in:3600})}})}}}'}));
+      await c.route('https://www.googleapis.com/**',async r=>{const u=new URL(r.request().url()),m=r.request().method(),body=r.request().postData()||'';let mm;
+        if(m==='GET'&&u.pathname==='/drive/v3/files'){const q=u.searchParams.get('q')||'';if(q.includes('vnd.google-apps.folder'))return r.fulfill({json:{files:[...acct.folders.values()].map(f=>({id:f.id,name:f.name}))}});const pm=q.match(/'([^']+)' in parents/);return r.fulfill({json:{files:[...acct.files].filter(([id,f])=>!pm||f.parent===pm[1]).map(([id,f])=>({id,name:f.name,version:String(f.v)}))}})}
+        if(m==='POST'&&u.pathname==='/drive/v3/files'){const j=JSON.parse(body);const id='D'+(nid++);acct.folders.set(id,{id,name:j.name});return r.fulfill({json:{id}})}
+        if(m==='GET'&&(mm=u.pathname.match(/^\/drive\/v3\/files\/(.+)$/))){const id=mm[1];if(acct.folders.has(id))return r.fulfill({json:{id,trashed:false}});const f=acct.files.get(id);if(!f)return r.fulfill({status:404,json:{}});if(u.searchParams.get('alt')==='media'){media++;return r.fulfill({body:f.text,contentType:'application/json'})}return r.fulfill({json:{version:String(f.v)}})}
+        if(m==='POST'&&u.pathname.startsWith('/upload')){const {meta,txt}=part(body);if(!acct.folders.has(meta.parents?.[0]))return r.fulfill({status:404,json:{}});const id='f'+(nid++);acct.files.set(id,{name:meta.name,text:txt,v:1,parent:meta.parents[0]});return r.fulfill({json:{id,version:'1'}})}
+        if(m==='PATCH'&&(mm=u.pathname.match(/files\/(.+)$/))){const f=acct.files.get(mm[1]);if(!f)return r.fulfill({status:404,json:{}});const {meta,txt}=part(body);f.name=meta.name;f.text=txt;f.v++;return r.fulfill({json:{id:mm[1],version:String(f.v)}})}
+        r.fulfill({status:500})});
+      const p=await c.newPage();p.errs=[];p.on('pageerror',e=>p.errs.push(e.message));p.on('dialog',d=>d.accept());
+      await p.addInitScript(()=>{if(!localStorage.getItem('oeg_sync_drive_cfg_v1'))localStorage.setItem('oeg_sync_drive_cfg_v1',JSON.stringify({clientId:'x',folderId:'',connected:true}))});
+      await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);return p;
+    }
+    const A=await tablet(),B=await tablet();
+    const mk=(id,extra={})=>Object.assign({id,network:'RCO',station:'ST'+id,date:'2026-10-01',savedAt:'2026-10-01T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-01T08:00:00.000Z'},auditRefs:[],photos:[]},extra);
+    const sync=async p=>{await p.evaluate(()=>OEGSync.manualSyncNow());await p.waitForTimeout(1800);await p.evaluate(()=>OEGSync.manualSyncNow())};
+    await A.evaluate(([r1,r2])=>{custom.preleveurs.push({nom:'Durand',prenom:'Léa',organisme:'HYDRECO'});custom.equipements.push({type:'sonde',gmao:'SD-9',nom:'Sonde pH',serie:'S9',echeance:'2026-12-01'});custom.nonConformites.push({id:'NC1',recordId:'R1',status:'Ouverte',severity:'Majeure'});custom.qualityConfig.maxDelayHours=24;custom.crtMeta={R2:{ref:'CRT-1'}};custom.stationOverrides={RCO13:[{code:'09141515',nom:'Ineri (import)'}]};records.push(r1,r2);saveLS(LS,records);saveLS(LSC,custom)},[mk('R1'),mk('R2')]);
+    await sync(A);
+    ok([...acct.files.values()].filter(f=>/^_referentiel.*_T[A-Z0-9]+\.json$/.test(f.name)).length===1,'partage : un fichier de référentiel propre à la tablette');
+    await sync(B);
+    let b=await B.evaluate(()=>({recs:records.map(r=>r.id).sort().join(),op:custom.preleveurs.some(o=>o.nom==='Durand'),eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance,nc:custom.nonConformites.find(n=>n.id==='NC1')?.status,cfg:custom.qualityConfig.maxDelayHours,crt:custom.crtMeta?.R2?.ref,ov:DATA.RCO13.find(s=>s.code==='09141515')?.nom,opUI:$('operatorData').textContent.includes('Durand')}));
+    ok(b.recs==='R1,R2','partage : fiches de l’autre tablette reçues');
+    ok(b.op&&b.opUI&&b.eq==='2026-12-01'&&b.ov==='Ineri (import)','partage : référentiel reçu (opérateur, équipement, programme de marché) et affiché '+JSON.stringify(b));
+    ok(b.nc==='Ouverte'&&b.cfg===24&&b.crt==='CRT-1','partage : données qualité reçues (non-conformité, configuration, informations CRT)');
+    // Modifications et suppressions sur B, réception automatique sur A
+    await B.evaluate(()=>{custom.equipements.find(e=>e.gmao==='SD-9').echeance='2027-06-01';custom.nonConformites.find(n=>n.id==='NC1').status='Clôturée';records=records.filter(r=>r.id!=='R1');OEGShare.noteRecordDeleted('R1');saveLS(LS,records);saveLS(LSC,custom)});
+    await sync(B);
+    media=0;await A.evaluate(()=>OEGSync.autoPull());
+    let a=await A.evaluate(()=>({recs:records.map(r=>r.id).sort().join(),eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance,nc:custom.nonConformites.find(n=>n.id==='NC1')?.status}));
+    ok(a.eq==='2027-06-01'&&a.nc==='Clôturée','réception automatique : équipement réétalonné et non-conformité clôturée sur l’autre tablette '+JSON.stringify(a));
+    ok(a.recs==='R2','réception automatique : fiche supprimée sur l’autre tablette retirée ici');
+    media=0;await A.evaluate(()=>OEGSync.autoPull());
+    ok(media===0,'réception automatique : rien de nouveau, aucun fichier téléchargé (seuls les fichiers modifiés le sont)');
+    await A.evaluate(()=>OEGSync.pullFromDrive());
+    ok(await A.evaluate(()=>!records.some(r=>r.id==='R1')),'fiche supprimée : ne revient pas avec « Récupérer l’historique complet »');
+    // Suppression d'un opérateur sur A, propagée à B ; organisme et signataire en cours conservés sur B
+    await B.evaluate(()=>{const o=$('org');o.value=[...o.options].find(x=>x.value==='HYDRECO')?.value||o.value;o.dispatchEvent(new Event('change'));});
+    const orgB=await B.evaluate(()=>$('org').value);
+    await A.evaluate(()=>{custom.preleveurs=custom.preleveurs.filter(o=>o.nom!=='Durand');saveLS(LSC,custom)});await sync(A);
+    await B.evaluate(()=>OEGSync.autoPull());
+    ok(await B.evaluate(()=>!custom.preleveurs.some(o=>o.nom==='Durand')&&!$('operatorData').textContent.includes('Durand')),'partage : suppression d’un opérateur propagée');
+    ok(await B.evaluate(()=>$('org').value)===orgB,'partage : organisme choisi dans la fiche en cours conservé à la réception');
+    // Fiche modifiée sur les deux tablettes : version la plus récente + copie de conflit
+    await A.evaluate(()=>{const r=records.find(r=>r.id==='R2');r.comment='A';r.lifecycle.updatedAt='2026-10-05T08:00:00.000Z';saveLS(LS,records)});
+    await B.evaluate(()=>{const r=records.find(r=>r.id==='R2');r.comment='B';r.lifecycle.updatedAt='2026-10-06T08:00:00.000Z';saveLS(LS,records)});
+    await sync(A);await sync(B);await sync(A);
+    a=await A.evaluate(()=>records.filter(r=>r.id.startsWith('R2')).map(r=>r.id.replace(/_conflit_.*/,'_conflit')+':'+r.comment).sort().join());
+    ok(/R2:B/.test(a)&&/R2_conflit:A/.test(a),'fiche modifiée des deux côtés : la plus récente l’emporte, l’autre est gardée en copie de conflit '+a);
+    // Fichier d'une tablette pas encore à jour (ancien format) : ajouté sans rien remplacer
+    acct.files.set('old1',{name:'_referentiel_operateurs_equipements_stations.json',text:JSON.stringify({type:'referentiel_operateurs_equipements_stations',preleveurs:['MB',{nom:'Old',prenom:'Ana',organisme:'OEG'}],equipements:[{gmao:'SD-9',echeance:'2000-01-01'}],stations:[],stationAccess:{}}),v:1,parent:[...acct.folders.keys()][0]});
+    await A.evaluate(()=>OEGSync.autoPull());
+    a=await A.evaluate(()=>({old:custom.preleveurs.some(o=>o.nom==='Old'),mb:custom.preleveurs.find(o=>o.nom==='MB')?.organisme,eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance}));
+    ok(a.old&&a.eq==='2027-06-01'&&(a.mb===undefined||a.mb==="Office de l'Eau de Guyane"),'ancien format : opérateurs ajoutés (initiales converties), équipement plus récent non remplacé '+JSON.stringify(a));
+    // Pas d'allers-retours sans fin
+    await sync(A);await sync(B);await A.waitForTimeout(1800);
+    const snap=new Map([...acct.files].map(([id,f])=>[id,f.v]));
+    await sync(A);await sync(B);await sync(A);await A.waitForTimeout(1800);
+    const moved=[...acct.files].filter(([id,f])=>snap.get(id)!==f.v).map(([id,f])=>f.name);
+    ok(moved.length===0,'partage stable : aucun fichier réécrit sans changement '+JSON.stringify(moved));
+    // Autorisation Google expirée : pas de fenêtre ouverte en arrière-plan, état affiché
+    await A.evaluate(()=>{localStorage.setItem('oeg_sync_drive_token_v1',JSON.stringify({token:'old',exp:Date.now()-1000}))});
+    await A.reload();await A.evaluate(()=>window.OEGRecordsReady);await A.waitForTimeout(300);
+    ok(await A.evaluate(async()=>(await OEGSync.backupStatus()).driveNeedsAuth&&/Synchroniser maintenant/.test($('driveStatus').textContent)),'autorisation expirée : « Synchroniser maintenant » proposé (réception automatique en pause)');
+    await B.evaluate(()=>{localStorage.setItem('oeg_sync_drive_token_v1',JSON.stringify({token:'tok',exp:Date.now()+3000000}))});
+    await B.reload();await B.evaluate(()=>window.OEGRecordsReady);
+    ok(await B.evaluate(async()=>!(await OEGSync.backupStatus()).driveNeedsAuth),'autorisation de moins d’une heure : réception automatique reprise après rechargement');
+    ok(A.errs.length===0&&B.errs.length===0,'aucune erreur JavaScript (partage entre tablettes) '+JSON.stringify(A.errs.concat(B.errs)));
+    for(const c of ctxs)await c.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

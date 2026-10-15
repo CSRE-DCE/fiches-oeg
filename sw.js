@@ -37,6 +37,7 @@ const APP_SHELL = [
   './js/people-stations-core.js',
   './js/crt-access.js',
   './js/stations-map.js',
+  './js/partage.js',
   './js/sync.js',
   './js/terrain.js'
 ];

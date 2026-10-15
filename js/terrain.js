@@ -176,6 +176,7 @@
       }
       const sub=[];
       if(!navigator.onLine)sub.push('hors ligne');
+      else if(st&&st.driveNeedsAuth)sub.push('Drive : touchez « Synchroniser maintenant »');
       try{
         const est=await navigator.storage?.estimate?.();
         if(est&&est.usage!=null){
