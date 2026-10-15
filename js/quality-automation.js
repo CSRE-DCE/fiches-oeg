@@ -146,6 +146,16 @@
     checks.push({label:'Signature présente',ok:!!(r?.signature&&r.signature.length>100),level:'critical'});
     const gps=gpsChecks(r);checks.push(...gps);
     const dup=duplicateCheck(r);checks.push({label:'Absence de doublon exact',ok:dup.ok,level:'critical',detail:dup.detail});
+    // Prélèvement non réalisé : ni mesures, ni échantillon, ni chaîne du froid à contrôler ; le motif, les photos
+    // et les coordonnées terrain (contrôlées ci-dessus) sont exigés.
+    if(r?.prelevementRealise==='Non'){
+      checks.push({label:'Prélèvement non réalisé : motif renseigné',ok:!!String(r?.obs||'').trim(),level:'critical'});
+      checks.push({label:'Prélèvement non réalisé : photo(s) du site',ok:(r?.photos||[]).length>0||!!r?._archived,level:'critical'});
+      if(!gps.some(c=>/terrain/.test(c.label)))checks.push({label:'Coordonnées GPS terrain numériques',ok:qcNum(r?.xTerrain)!=null&&qcNum(r?.yTerrain)!=null,level:'critical'});
+      const ncs0=openNCsFor(r?.id);checks.push({label:'Aucune NC critique ouverte',ok:ncs0.every(n=>n.severity!=='Critique'),level:'critical'});
+      checks.push({label:'Empreinte d’intégrité présente',ok:!!r?.lifecycle?.integrityHash,level:'critical'});
+      return checks;
+    }
     checks.push(...insituChecks(r));
     checks.push(...atypicalChecks(r));
     checks.push(...filtrationCheck(r));

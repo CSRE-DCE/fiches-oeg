@@ -86,6 +86,10 @@
 </div>
 
 <div class="card hide" id="missionCard"><h2>3 · Mission, date, horaires et GPS</h2>
+<div class="field" id="prelevementRealiseWrap"><label>Prélèvement réalisé ?</label>
+<div class="radioGrid"><label class="radio"><input type="radio" name="prelevementRealise" value="Oui"> Oui</label><label class="radio"><input type="radio" name="prelevementRealise" value="Non"> Non</label></div>
+</div>
+<div id="nonRealiseNote" class="banner warn">⛔ <b>Prélèvement non réalisé</b> : prenez au moins une photo, relevez les coordonnées terrain (bouton « Géolocalise-moi ») et indiquez le motif dans « Motif du prélèvement non réalisé » (rubrique 9). Les rubriques de mesures, de prélèvement et de caractérisation sont masquées.</div>
 <div class="grid2">
   <div class="field"><label>Date</label>
   <input type="date" id="date">
@@ -319,7 +323,7 @@
         <input id="qcType">
         </div>
         </div>
-        <div class="field"><label>Observations concernant le prélèvement</label>
+        <div class="field obsKeep"><label><span class="lblReal">Observations concernant le prélèvement</span><span class="lblNonReal">Motif du prélèvement non réalisé — pourquoi le prélèvement n’a pas pu être fait (obligatoire)</span></label>
         <textarea id="obs">
         </textarea>
         </div>

@@ -1010,6 +1010,49 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e21.length===0,'aucune erreur JavaScript (aucune saisie perdue) '+JSON.stringify(e21));
     await c21.close();
   }
+  // --- Y : « Prélèvement réalisé ? » — Non : photos, coordonnées et motif seulement ---
+  {
+    const c22=await browser.newContext({serviceWorkers:'block'});await c22.route('https://unpkg.com/**',r=>r.abort());await c22.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c22.newPage();const e22=[],msgs=[];p.on('pageerror',e=>e22.push(e.message));p.on('dialog',d=>{msgs.push(d.message());d.accept()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.waitForTimeout(300);
+    const vis=id=>p.evaluate(id=>getComputedStyle($(id)).display!=='none',id);
+    ok(await p.evaluate(()=>radioValue('prelevementRealise')==='Oui')&&await vis('insituCard')&&await vis('sampleCard'),'nouvelle fiche : « Prélèvement réalisé ? » Oui par défaut, fiche complète');
+    await p.fill('#iv_ph','7.4'); // saisie faite avant de constater que le prélèvement est impossible
+    await p.click('input[name="prelevementRealise"][value="Non"]');await p.waitForTimeout(200);
+    const hid=await p.evaluate(()=>['siteCard','insituCard','sampleCard','specificCard'].map(id=>getComputedStyle($(id)).display));
+    ok(hid.every(d=>d==='none')&&await vis('mediaCard')&&await vis('missionCard')&&await vis('signCard'),'Non : caractérisation, mesures, prélèvement et données spécifiques masqués ; photos, mission et signature restent '+hid.join());
+    ok(await p.evaluate(()=>getComputedStyle(document.querySelector('#obsCard .lblNonReal')).display!=='none'&&getComputedStyle($('qcType').closest('.grid2')).display==='none'),'Non : le champ observation devient « Motif du prélèvement non réalisé », le contrôle qualité est masqué');
+    await p.click('#save');await p.waitForTimeout(400);
+    const m=msgs.at(-1)||'';
+    ok(/Enregistrement impossible/.test(m)&&/Motif du prélèvement non réalisé/.test(m)&&/Au moins une photo/.test(m)&&/Coordonnées terrain/.test(m),'Non : motif, photo et coordonnées obligatoires');
+    await p.fill('#obs','Crique à sec, accès impossible');await p.fill('#xT','352000');await p.fill('#yT','540000');
+    await p.evaluate(()=>{const c=document.createElement('canvas');c.width=40;c.height=30;state.photos.push({data:c.toDataURL('image/jpeg'),group:'Amont'});drawPhotoGroups()});
+    const n0=await p.evaluate(()=>records.length);
+    await p.click('#save');await p.waitForTimeout(1500);
+    const r=await p.evaluate(n0=>records.length===n0+1?records.at(-1):null,n0);
+    ok(r&&r.prelevementRealise==='Non'&&r.obs==='Crique à sec, accès impossible','Non : fiche enregistrée sans mesure (la turbidité n’est plus exigée)');
+    ok(await p.evaluate(()=>!document.body.classList.contains('nonRealise')),'après enregistrement : formulaire revenu à l’état normal');
+    // Rouverte : Non restauré, saisie antérieure conservée si l'on repasse à Oui
+    await p.evaluate(id=>{loadRecord(id);showTab('new')},r.id);await p.waitForTimeout(700);
+    ok(await p.evaluate(()=>radioValue('prelevementRealise')==='Non'&&document.body.classList.contains('nonRealise')),'fiche rouverte : « non réalisé » restauré');
+    await p.click('input[name="prelevementRealise"][value="Oui"]');await p.waitForTimeout(200);
+    ok(await vis('insituCard')&&await p.inputValue('#iv_ph')==='7.4','repasser à Oui : les rubriques réapparaissent avec la saisie antérieure (rien n’est perdu)');
+    await p.evaluate(()=>clearFormNoConfirm());
+    // Circuit qualité, suivi, CSV, CRT
+    ok(await p.evaluate(id=>{const c=qualityChecksFor(records.find(x=>x.id===id));return !c.some(x=>/Mesures in situ|Turbidité|froid/i.test(x.label))&&c.find(x=>/motif renseigné/.test(x.label))?.ok&&c.find(x=>/photo/.test(x.label))?.ok},r.id),'circuit qualité : ni mesures ni chaîne du froid exigées, motif et photos contrôlés');
+    ok(await p.evaluate(id=>suiviValueFor(records.find(x=>x.id===id),'ph')===undefined&&flatRecordForCsv(records.find(x=>x.id===id)).prelevementRealise==='Non',r.id),'suivi : aucune mesure prise en compte ; export CSV : colonne prélèvement réalisé');
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(id=>{const s=$('crtRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}))},r.id);await p.waitForTimeout(300);
+    const crt=await p.textContent('#crtPreviewBox');
+    ok(/PRÉLÈVEMENT NON RÉALISÉ/.test(crt)&&crt.includes('Crique à sec, accès impossible')&&!/Contrôle qualité|Visualisation des données in situ/i.test(crt),'CRT : « prélèvement non réalisé » avec le motif, sans pages de mesures');
+    await p.click('.tab[data-tab="list"]');await p.waitForTimeout(200);
+    ok(/Prélèvement non réalisé/.test(await p.textContent('#records')),'liste des fiches : « prélèvement non réalisé » signalé');
+    ok(e22.length===0,'aucune erreur JavaScript (prélèvement non réalisé) '+JSON.stringify(e22));
+    await c22.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

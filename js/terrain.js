@@ -107,6 +107,13 @@
     if(!val('date')){blocking.push('Date de la visite');fields.push('date')}
     if(!val('start')){warnings.push('Heure de début');fields.push('start')}
     if(!(state.preleveurs||[]).length){warnings.push('Préleveur(s)');fields.push('preleveurs')}
+    // Prélèvement non réalisé : motif, photo(s) et coordonnées obligatoires ; pas de contrôle des mesures (masquées)
+    if(typeof isNonRealise==='function'&&isNonRealise()){
+      if(!val('obs').trim()){blocking.push('Motif du prélèvement non réalisé (rubrique 9)');fields.push('obs')}
+      if(!(state.photos||[]).length){blocking.push('Au moins une photo du site');fields.push('mediaCard')}
+      if(!val('xT')||!val('yT')){blocking.push('Coordonnées terrain (X / Y) — bouton « Géolocalise-moi »');fields.push('xT','yT')}
+      return {blocking,warnings,fields};
+    }
     if(!val('xT')||!val('yT')){warnings.push('Coordonnées terrain (X / Y) — utilisez le bouton GPS si possible');fields.push('xT','yT')}
     measureInputs().forEach(i=>{
       const r=checkValue(i.id,i.value);if(!r||r.level==='ok')return;

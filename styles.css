@@ -238,3 +238,13 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
 /* Info-bulle : jamais plus large que le graphe (téléphone), lignes coupées entre les éléments */
 .suiviTip{max-width:100%}
 .suiviTip div{flex-wrap:wrap}
+/* Prélèvement non réalisé : seules l'identification, la mission (date, préleveurs, coordonnées), les photos,
+   le motif (observation) et la signature restent à remplir */
+#nonRealiseNote{display:none;margin:6px 0 10px}
+body.nonRealise #nonRealiseNote{display:block}
+body.nonRealise #siteCard,body.nonRealise #insituCard,body.nonRealise #sampleCard,body.nonRealise #specificCard{display:none!important}
+body.nonRealise #obsCard>*:not(h2):not(.obsKeep){display:none!important}
+.lblNonReal{display:none}
+body.nonRealise .lblReal{display:none}
+body.nonRealise .lblNonReal{display:inline;color:#a3261f}
+#prelevementRealiseWrap{border:1.5px solid var(--brand);border-radius:10px;padding:8px 10px;background:var(--soft)}

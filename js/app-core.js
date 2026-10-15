@@ -614,7 +614,16 @@ $('station').onchange=()=>{
   const kept=snapshotFicheValues();
   renderAuto();refreshSiteFields();showForm();buildAll();
   restoreFicheValues(kept);
+  if(!radioValue('prelevementRealise'))radioSet('prelevementRealise','Oui'); // par défaut : prélèvement réalisé
+  applyRealise();
 };
+// « Prélèvement réalisé ? » Non : seules l'identification, la mission (date, préleveurs, coordonnées), les
+// photos, le motif (champ observation) et la signature restent à remplir ; les autres rubriques sont masquées
+// (CSS body.nonRealise). Les valeurs déjà saisies y sont conservées (rien n'est perdu si on revient à Oui).
+function isNonRealise(){return !!state.network&&radioValue('prelevementRealise')==='Non'}
+function applyRealise(){document.body.classList.toggle('nonRealise',isNonRealise())}
+window.applyRealise=applyRealise;
+document.querySelectorAll('input[name="prelevementRealise"]').forEach(r=>r.addEventListener('change',applyRealise));
 
 function dedupeProgram(v){
   const s=String(v||'').trim().replace(/\s+/g,' ');
@@ -1452,6 +1461,7 @@ function collectRecord(){
     xTheorique:(stationXY22(s)?.[0]??s?.x)??'',yTheorique:(stationXY22(s)?.[1]??s?.y)??'',xTerrain:val('xT'),yTerrain:val('yT'),ecartM:$('distance').textContent,
     conditions:collectConditions(),insitu:collectInsitu(),sample:collectSample(),specific:collectSpecific(),
     photos:(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p),projection:val('projection'),schemaLegend:{ecoulement:!!$('legendeEcoulement')?.checked,prelevement:!!$('legendePrelevement')?.checked,berges:!!$('legendeBerges')?.checked,acces:!!$('legendeAcces')?.checked,autre:val('legendeAutre')},dessin:canvasData('draw'),signature:canvasData('signature'),signName:val('signName'),
+    prelevementRealise:radioValue('prelevementRealise')||'Oui',
     qc:radioValue('qc'),qcType:val('qcType'),obs:val('obs'),comment:val('comment'),insituBoitier:val('insituBoitier'),formValues:snapshotForm(),savedAt:new Date().toISOString(),
     appBuild:window.APP_BUILD||''
   };
@@ -1542,6 +1552,7 @@ function loadRecord(id){
   if(f.insituBoitier)setSelectKeep($('insituBoitier'),f.insituBoitier,EQ_KEEP); // boîtier / appareil multiparamètre
   renderOrgOptions(f.organisme);renderPre();
   radioSet('qc',f.qc);
+  radioSet('prelevementRealise',f.prelevementRealise||'Oui');applyRealise();
   if(f.sample){
     Object.entries(f.sample).forEach(([k,v])=>{
       if($(k))$(k).value=v||'';
@@ -1626,7 +1637,7 @@ const SUIVI_SESSION_ORDER={
    retenue comme valeur de suivi, coherente avec les autres reseaux ; la turbidite EL utilise
    la moyenne des 3 repetitions de surface, comme dans le CRT. */
 function suiviValueFor(record,param){
-  const ins=record.insitu; if(!ins)return undefined;
+  const ins=record.insitu; if(!ins||record.prelevementRealise==='Non')return undefined; // prélèvement non réalisé : aucune mesure
   if(record.network==='EL'){
     // EL mesure sur 3 profondeurs : on utilise exclusivement les variantes _surf/_inter/_fond
     // (voir extension de SUIVI_PARAMS ci-dessous) pour ne perdre aucune des 3 séries.
