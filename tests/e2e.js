@@ -10,7 +10,7 @@
 const { chromium } = require('playwright');
 const http=require('http'),fs=require('fs'),path=require('path');
 const ROOT=path.join(__dirname,'..');
-const TYPES={'.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.html':'text/html'};
+const TYPES={'.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.html':'text/html','.svg':'image/svg+xml','.woff2':'font/woff2'};
 const srv=http.createServer((q,s)=>{let p=path.join(ROOT,decodeURIComponent(q.url.split('?')[0]));if(p.endsWith('/'))p+='index.html';fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);return s.end()}s.writeHead(200,{'Content-Type':TYPES[path.extname(p)]||'application/octet-stream'});s.end(d)})}).listen(8765);
 const ok=(c,m)=>{console.log((c?'PASS ':'FAIL ')+m);if(!c)process.exitCode=1};
 const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01',savedAt:upd,lifecycle:{status:'À contrôler',version:1,createdAt:upd,updatedAt:upd},auditRefs:[],photos:[],...extra});
@@ -775,9 +775,9 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.click('.tab[data-tab="new"]');await p.click('#networks .chip[data-n="EL"]');
     await p.evaluate(()=>{for(const id of ['session','activity']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const s=$('station');s.value=[...s.options].filter(o=>o.value)[0].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
     await p.waitForTimeout(400);await p.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));await p.emulateMedia({media:'print'});
-    const tools=await p.evaluate(()=>[...document.querySelectorAll('label.btn,#drawEraser,[id^="rxAdd_"],.swatch')].filter(e=>e.getBoundingClientRect().width>0).length);
+    const tools=await p.evaluate(()=>[...document.querySelectorAll('label.btn,#drawEraser,[id^="rxAdd_"],.swatch,#fichePrint button,#fichePrint input,#fichePrint select')].filter(e=>e.getBoundingClientRect().width>0).length);
     ok(tools===0,'fiche imprimée : sans boutons photo, palette / gomme du schéma ni « ajouter un organisme »');
-    ok(/EL — suivi littoral/.test(await p.textContent('#printHeaderTitle')),'fiche imprimée : réseau en toutes lettres dans l’en-tête');
+    ok(/EL — suivi littoral/.test(await p.textContent('#fichePrint .fpOrgSub')),'fiche imprimée : réseau en toutes lettres dans l’en-tête');
     await p.emulateMedia({media:'screen'});
     // Téléphone (390 px) : aucune page plus large que l'écran, bouton Enregistrer visible
     await p.setViewportSize({width:390,height:844});await p.waitForTimeout(300);
@@ -1150,6 +1150,67 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(()=>!$('suiviElBar')&&document.querySelectorAll('#suiviParamGrid .suiviParamCard').length===1),'suivi ESO : pas de profil longitudinal (forages, piézomètres)');
     ok(e25.length===0,'aucune erreur JavaScript (profil du bassin) '+JSON.stringify(e25));
     await c25.close();
+  }
+  // --- AC : fiche terrain imprimée au modèle des rapports OEG (js/fiche-print.js) ---
+  {
+    const c26=await browser.newContext({serviceWorkers:'block'});await c26.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c26.newPage();const e26=[];p.on('pageerror',e=>e26.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{custom.equipements=[{type:'boitier',gmao:'BX-1',nom:'Multi 3630',serie:'SB-1',echeance:'2099-01-01'}];saveLS(LSC,custom)});
+    await p.click('#networks .chip[data-n="RCO"]');
+    await p.evaluate(()=>{for(const id of ['session','activity']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const s=$('station');s.value=[...s.options].filter(o=>o.value)[0].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    await p.waitForTimeout(400);
+    await p.evaluate(()=>{
+      const mk=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');g.fillStyle='#3a7';g.fillRect(0,0,w,h);return c.toDataURL('image/jpeg',.6)};
+      state.photos=[{data:mk(1200,900),group:'Amont'},{data:mk(900,1200),group:'Aval'},{data:mk(800,600),group:'Rive gauche'}];drawPhotoGroups();
+      $('date').value='2026-10-15';$('meteo').value=$('meteo').options[2].value;
+      const b=$('insituBoitier');b.value='BX-1';b.dispatchEvent(new Event('change'));
+      // Ancienne valeur absente des listes : gardée à l'écran avec sa mention, imprimée sans
+      setSelectKeep($('hydro'),'Crue ancienne');
+      const g=$('draw').getContext('2d');g.lineWidth=4;g.beginPath();g.moveTo(10,10);g.lineTo(200,90);g.stroke();
+    });
+    const clickRadio=(name,v)=>p.evaluate(([name,v])=>{const r=document.querySelector('input[name="'+name+'"][value="'+v+'"]');r.checked=true;r.dispatchEvent(new Event('change',{bubbles:true}))},[name,v]);
+    await clickRadio('consOui','Oui');
+    const pr=()=>p.evaluate(()=>{startFichePrint();const f=$('fichePrint'),T=f.textContent,kv=k=>{const th=[...f.querySelectorAll('.fpKv th')].find(t=>t.firstChild&&t.firstChild.nodeValue.trim()===k);return th?th.nextElementSibling.textContent.trim():null};
+      return {T,bars:[...f.querySelectorAll('.fpBar')].map(b=>b.textContent),reseau:kv('Réseau / marché'),realise:kv('Prélèvement réalisé ?'),meteo:kv('Météo pendant le prélèvement'),hydro:kv('Situation hydrologique apparente'),boitier:kv('Boîtier / appareil multiparamètre'),
+        controls:f.querySelectorAll('input,select,textarea,button').length,photos:f.querySelectorAll('.fpPhoto img').length,draw:!!f.querySelector('.fpDraw img'),code:[...f.querySelectorAll('.fpCode')].map(x=>x.textContent).join('|'),alert:!!f.querySelector('.fpAlert')}});
+    let r=await pr();
+    ok(r.bars[0]==='1. Réseau, marché et station'&&r.bars.includes('8. Mesures in situ')&&r.bars.includes('10. Signature opérateur'),'fiche imprimée : rubriques numérotées sur bandeau '+JSON.stringify(r.bars));
+    ok(r.reseau==='RCO','fiche imprimée : réseau / marché rempli en haut de la fiche (auparavant vide)');
+    ok(r.controls===0&&r.realise==='Oui'&&r.meteo===await p.evaluate(()=>$('meteo').selectedOptions[0].text),'fiche imprimée : réponses en texte, sans bouton radio ni case à cocher '+JSON.stringify([r.realise,r.meteo]));
+    ok(r.hydro==='Crue ancienne'&&!/ancienne saisie|non référencé|[✓✔]/i.test(r.T),'fiche imprimée : ni « non référencé », ni mention de saisie, ni coche');
+    ok(/Multi 3630/.test(r.boitier||'')&&/SB-1/.test(r.boitier||''),'fiche imprimée : boîtier avec nom et n° de série '+r.boitier);
+    ok(/SANDRE 1425/.test(r.code),'fiche imprimée : codes SANDRE des caractérisations');
+    ok(/Flaconnage du laboratoire 1/.test(r.T),'fiche imprimée : bloc déployé par « Oui » imprimé (agents de conservation)');
+    ok(!/À contrôler|Brouillon|Provisoire|Validée/i.test(r.T),'fiche imprimée : pas de statut de la fiche (il reste dans l’application)');
+    ok(r.photos===3&&r.draw,'fiche imprimée : photos et schéma');
+    await clickRadio('consOui','Non');r=await pr();
+    ok(!/Flaconnage du laboratoire 1/.test(r.T),'fiche imprimée : bloc replié par « Non » absent');
+    // Mise en page imprimée
+    await p.emulateMedia({media:'print'});
+    const lay=await p.evaluate(()=>{const cs=e=>getComputedStyle(e),f=$('fichePrint'),ph=f.querySelector('.fpPhoto img').getBoundingClientRect();
+      return {form:$('missionCard').getClientRects().length?'visible':'none',box:cs(f).display,head:cs(f.querySelector('.fpHead')).position,foot:cs(f.querySelector('.fpFoot')).backgroundImage,font:cs(f).fontFamily,logo:f.querySelector('.fpHead img').naturalWidth,slogan:f.querySelector('.fpSlogan').textContent,page:$('fichePrintPage')?.textContent||'',photoH:ph.height,bar:cs(f.querySelector('.fpBar')).backgroundColor}});
+    ok(lay.form==='none'&&lay.box==='block','fiche imprimée : seule la fiche mise en page est imprimée (pas le formulaire)');
+    ok(lay.head==='fixed'&&/bandeau-oeg\.svg/.test(lay.foot)&&/connaissance aujourd’hui/.test(lay.slogan)&&lay.logo>0,'fiche imprimée : en-tête (logo) et bandeau de pied de page répétés sur chaque page');
+    ok(/Barlow/.test(lay.font)&&lay.bar==='rgb(13, 54, 120)','fiche imprimée : police Barlow et bandeaux bleu marine du modèle');
+    ok(/counter\(page\)/.test(lay.page)&&lay.photoH>=240,'fiche imprimée : numéro de page, photos en grand ('+Math.round(lay.photoH)+' px de haut)');
+    await p.emulateMedia({media:'screen'});
+    // Prélèvement non réalisé : bandeau rouge, rubriques de mesure absentes, motif imprimé
+    await clickRadio('prelevementRealise','Non');await p.evaluate(()=>{$('obs').value='Crique en crue, accès impossible'});r=await pr();
+    ok(r.alert&&r.realise==='Non'&&!r.bars.includes('8. Mesures in situ')&&/Crique en crue/.test(r.T),'fiche imprimée : prélèvement non réalisé (bandeau, motif, sans mesures)');
+    // Bouton « Imprimer / PDF » : la fiche est construite puis l'impression ouverte
+    await p.evaluate(()=>{window.print=()=>{window.dispatchEvent(new Event('beforeprint'));window.__fp=(window.__fp||0)+1};endFichePrint()});
+    await p.click('#printBtn');await p.waitForFunction(()=>window.__fp>=1,null,{timeout:5000});
+    ok(await p.evaluate(()=>document.body.classList.contains('fpPrinting')&&$('fichePrint').querySelectorAll('.fpBar').length>3),'bouton Imprimer : fiche mise en page construite avant l’impression');
+    // Impression depuis un autre onglet (CRT) : la fiche et ses marges de page sont retirées
+    await p.click('.tab[data-tab="crt"]');await p.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));
+    ok(await p.evaluate(()=>!document.body.classList.contains('fpPrinting')&&!$('fichePrintPage')&&!$('fichePrint').innerHTML),'impression d’un autre onglet : fiche mise en page retirée (le CRT garde ses marges)');
+    // PDF réel (Chromium) : plusieurs pages, sans erreur
+    await p.click('.tab[data-tab="new"]');await p.evaluate(()=>startFichePrint());await p.emulateMedia({media:'print'});
+    const pdf=await p.pdf({preferCSSPageSize:true,printBackground:true});const pages=(pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g)||[]).length;
+    ok(pages>=2&&pages<=8,'fiche imprimée : PDF A4 de '+pages+' page(s)');
+    ok(e26.length===0,'aucune erreur JavaScript (fiche imprimée) '+JSON.stringify(e26));
+    await c26.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

@@ -79,7 +79,7 @@ q('routeUsePosition')?.addEventListener('click',()=>{if(!navigator.geolocation)r
 q('geolocateBtn')?.addEventListener('click',()=>{if(!navigator.geolocation)return toast('Géolocalisation non disponible sur cet appareil/navigateur');if(typeof latLonToUtm!=='function')return toast('Module de conversion GPS non chargé — rechargez la page.');navigator.geolocation.getCurrentPosition(p=>{const zone=/21/.test(val('projection'))?21:22;const [x,y]=latLonToUtm(p.coords.latitude,p.coords.longitude,zone);q('xT').value=x.toFixed(2);q('yT').value=y.toFixed(2);updateDistance();toast('Position GPS renseignée ✓')},err=>toast(geoErrorMessage(err)),{enableHighAccuracy:true,timeout:10000,maximumAge:0})});
 
 q('qualityRecord')?.addEventListener('change',()=>{if(q('qualityEditBtn'))return;const b=document.createElement('button');b.id='qualityEditBtn';b.className='btn ghost small';b.textContent='✏ Modifier la fiche';q('qualityChecks').parentElement.insertBefore(b,q('qualityChecks'));b.onclick=()=>{if(val('qualityRecord')){loadRecord(val('qualityRecord'));document.querySelector('[data-tab="new"]').click()}}});
-const pb=q('printBtn');if(pb)pb.onclick=()=>{if(window.preparePrint)window.preparePrint();window.print()};
+const pb=q('printBtn');if(pb)pb.onclick=()=>{if(window.preparePrint)window.preparePrint();if(window.printFiche)window.printFiche();else window.print()};
 // La navigation entre onglets est gérée par showTab() dans app-core.js (gestionnaire unique).
 window.clearFormNoConfirm=clearFormNoConfirm;window.saveQualityRecord=saveQualityRecord;
 // Vide TOUTE la fiche : les cartes mesures, prélèvement, site, observations et signature sont des

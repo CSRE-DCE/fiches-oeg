@@ -1470,7 +1470,7 @@ $('clearDraw').onclick=()=>{
   if(window.markDraftDirty)window.markDraftDirty();
 };
 $('clearSig').onclick=()=>{const c=$('signature'),x=c.getContext('2d');x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();state.signature=null;c._hasContent=false;if(window.markDraftDirty)window.markDraftDirty()};
-$('printBtn').onclick=()=>{preparePrint();window.print()};
+$('printBtn').onclick=()=>{preparePrint();if(window.printFiche)window.printFiche();else window.print()}; // fiche mise en page : js/fiche-print.js
 
 function compress(file){
   return new Promise(res=>{const fr=new FileReader(),im=new Image();fr.onload=()=>{im.onload=()=>{const max=1280,s=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.72))};im.src=fr.result};fr.readAsDataURL(file)})
