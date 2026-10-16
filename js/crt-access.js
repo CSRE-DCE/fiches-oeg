@@ -4,7 +4,7 @@
   const transportModes=['Voiture','4x4','À pied','Bateau motorisé','Bateau motorisé / pirogue','Canoë / kayak','Véhicule tout-terrain','Avion','Autre'];
   function ensureStationAccess(x){
     custom.stationAccess=custom.stationAccess||{};
-    const key=x?.code||x?.nom; if(!key)return {modes:[],etapes:'',pointDepart:'',difficulte:''};
+    const key=accessKey(x); if(!key)return {modes:[],etapes:'',pointDepart:'',difficulte:''};
     return custom.stationAccess[key]||{modes:(x?.transportModes&&x.transportModes.length?x.transportModes:(x?.transport?[x.transport]:[])),etapes:x?.itineraire||x?.acces||'',pointDepart:x?.pointDepart||'',marche:x?.marche||x?.market||'',bassin:x?.bassin||x?.bassinVersant||x?.bv||'',difficulte:x?.difficulte||''};
   }
   /* Accessibilite : 1 étoile = très facile … 5 étoiles = très difficile. Valeur stockée inchangée (1 = très difficile, 5 = très facile) pour conserver les saisies existantes. */
@@ -15,7 +15,7 @@
     return '★'.repeat(v)+'☆'.repeat(5-v)+' ('+v+'/5)';
   }
   function stationTransportDetailed(x){const a=ensureStationAccess(x);return (a.modes&&a.modes.length?a.modes:[stationTransport(x)]).filter(Boolean)}
-  function stationKey(x){return x?.code||x?.nom||''}
+  function stationKey(x){return accessKey(x)}
   function saveAccess(x,modes,etapes,depart,marche,difficulte){custom.stationAccess=custom.stationAccess||{};const prev=ensureStationAccess(x);custom.stationAccess[stationKey(x)]={...prev,modes,etapes,pointDepart:depart,marche,difficulte};saveLS(LSC,custom)}
   function openStationEnhanced(x){
     if(!x)return;
@@ -109,7 +109,7 @@
         limpidite:'Limpidité de l’eau',odeur:'Odeur',ombre:'Ombrage',berge:'Distance berge (m)',debitTendance:'Tendance du débit',
         macro:'Recouvrement macrophytes (%)',largeur:'Largeur du cours d’eau (m)',profMoy:'Profondeur moyenne (m)',siteObs:'Observations du site',
         elMer:'État de la mer',elMaree:'Marée',elCoefMaree:'Coefficient de marée',elActivites:'Activités anthropiques',
-        elIntensite:'Intensité',elIncidence:'Incidence activité humaine',elDepth:'Profondeur totale (m)',
+        elIntensite:'Coloration apparente (intensité)',elIncidence:'Incidence activité humaine',elDepth:'Profondeur totale (m)',
         // Libellés repris à l'identique du formulaire (auparavant plusieurs ne correspondaient pas :
         // « Laboratoire destinataire » pour la date d'arrivée au laboratoire, etc.)
         fishLot:'Identification du lot (référence unique)',fishDateOp:'Date / heure de l’opération',fishMethod:'Méthode de capture employée',fishDuration:'Durée de l’opération',
@@ -280,8 +280,9 @@
       }
       function histogramSvg(points){
         const W=640,H=230,L=60,R=16,T=22,B=40,iw=W-L-R,ih=H-T-B;
-        if(points.length<2)return '<div class="crtNoData">Historique insuffisant (au moins 2 relevés nécessaires).</div>';
-        const vals=points.map(p=>p.value);
+        // Visite « prélèvement non réalisé » : gardée à sa place dans l'historique (sans barre, signalée)
+        const vals=points.filter(p=>p.value!==null).map(p=>p.value);
+        if(vals.length<2)return '<div class="crtNoData">Historique insuffisant (au moins 2 relevés nécessaires).</div>';
         let vmin=Math.min(0,...vals),vmax=Math.max(...vals);if(vmax===vmin)vmax=vmin+1;
         const sy=v=>T+ih-(v-vmin)/(vmax-vmin)*ih;
         const gap=iw/points.length,bw=Math.min(34,gap*.55);
@@ -289,10 +290,11 @@
         let bars='',labels='',grid='';
         for(let i=0;i<=4;i++){const v=vmin+(vmax-vmin)*i/4,py=sy(v);grid+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#edf1f4"/><text x="'+(L-6)+'" y="'+(py+3).toFixed(1)+'" text-anchor="end" font-size="12" fill="#617180">'+esc(fmtv(v))+'</text>'}
         points.forEach((p,i)=>{
-          const cx=L+gap*i+gap/2,y=sy(p.value),h=(T+ih)-y;
+          const cx=L+gap*i+gap/2;
+          if(p.value!==null){const y=sy(p.value),h=(T+ih)-y;
           bars+='<rect x="'+(cx-bw/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,h).toFixed(1)+'" fill="#00AC97"/>';
-          bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-4).toFixed(1)+'" text-anchor="middle" font-size="12" font-weight="700" fill="#003D7A">'+esc(fmtv(p.value))+'</text>';
-          labels+='<text x="'+cx.toFixed(1)+'" y="'+(T+ih+15)+'" text-anchor="middle" font-size="11" fill="#617180">'+esc(p.label)+'</text>';
+          bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-4).toFixed(1)+'" text-anchor="middle" font-size="12" font-weight="700" fill="#003D7A">'+esc(fmtv(p.value))+'</text>';}
+          labels+='<text x="'+cx.toFixed(1)+'" y="'+(T+ih+15)+'" text-anchor="middle" font-size="11" fill="#617180">'+esc(p.label)+'</text>'+(p.nr?'<text x="'+cx.toFixed(1)+'" y="'+(T+ih+28)+'" text-anchor="middle" font-size="10" font-weight="700" fill="#b2261f">non réalisé</text>':'');
         });
         return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Historique des mesures"><rect width="100%" height="100%" fill="#fff"/>'+grid+'<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/><line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/>'+bars+labels+'</svg>';
       }
@@ -300,6 +302,7 @@
       // partagées avec l'onglet Suivi, EL_DEPTHS dans app-core.js). Auparavant : la surface seule,
       // en barres (et l'intermédiaire à sa place quand la surface manquait). ----
       function elDepthValue(rec,k,d){
+        if(rec.prelevementRealise==='Non')return null; // non réalisé : mesures éventuellement saisies avant « Non » ignorées
         const i=rec.insitu||{};
         if(k==='turb')return num(i.turbidite?.[d.key]?.moyenne);
         const p=i.params?.[k]||{};return num(d.field==='intermediaire'?(p.intermediaire??p.inter):p[d.field]);
@@ -330,7 +333,8 @@
         history.forEach((rec,i)=>{
           const dt=/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',ses=(/^(S\d+)\s*-/.exec(rec.session||'')||[])[1]||'';
           const bold=i===ci?' font-weight="700" fill="#003D7A"':' fill="#617180"';
-          g+=(ses?'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+16)+'" text-anchor="middle" font-size="12"'+bold+'>'+esc(ses)+'</text>':'')+'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+(ses?31:16))+'" text-anchor="middle" font-size="11"'+bold+'>'+esc(dt)+'</text>';
+          g+=(ses?'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+16)+'" text-anchor="middle" font-size="12"'+bold+'>'+esc(ses)+'</text>':'')+'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+(ses?31:16))+'" text-anchor="middle" font-size="11"'+bold+'>'+esc(dt)+'</text>'
+            +(rec.prelevementRealise==='Non'?'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+(ses?44:29))+'" text-anchor="middle" font-size="10" font-weight="700" fill="#b2261f">non réalisé</text>':''); // visite « prélèvement non réalisé » signalée
         });
         let lines='',marks='';const labs=[];
         series.forEach(({d,pts})=>{
@@ -357,8 +361,8 @@
           return '<h3 style="margin-top:5mm">📈 Suivi historique à la station ('+history.length+' visite(s))</h3><div class="crtGraphLegend">Valeurs mesurées lors des visites successives à cette station, pour chaque profondeur : '+key+'. La visite du présent rapport est surlignée, avec ses valeurs.</div><div class="crtGraphGrid">'+cards+'</div>';
         }
         const cards=defs.map(([k,label,unit])=>{
-          const points=history.map(rec=>({label:/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',value:paramValue(rec,network,k)})).filter(p=>p.value!==null);
-          if(points.length<2)return '';
+          const points=history.map(rec=>({label:/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',nr:rec.prelevementRealise==='Non',value:rec.prelevementRealise==='Non'?null:paramValue(rec,network,k)})).filter(p=>p.value!==null||p.nr);
+          if(points.filter(p=>p.value!==null).length<2)return '';
           return '<div class="crtGraphCard"><h3>'+esc(label)+' <span class="crtSmall">('+esc(unit)+')</span></h3>'+histogramSvg(points)+'</div>';
         }).filter(Boolean).join('');
         if(!cards)return '';
@@ -367,8 +371,9 @@
 
       // Conditions SANDRE : la fiche enregistre le code (« 3 ») ; le CRT imprime le libellé suivi du
       // code (« Basses eaux (code SANDRE 3) ») d'après les listes du formulaire (W et S, app-core.js).
-      // Les fiches EL enregistrent directement le libellé : rien à traduire.
-      const SANDRE_LIST={meteo:'meteo',seuil:'seuil',typePrelSandre:'type',hydro:'hydro',aspect:'aspect',irisations:'yn0',mousse:'yn0',feuilles:'yn0',boues:'yn0',autresCorps:'yn',teinte:'teinte',coloration:'coloration',limpidite:'limpidite',odeur:'odeur',ombre:'ombre',debitTendance:'debit'};
+      // Fiches EL : codes SANDRE depuis la version 50 ; les anciennes fiches EL (libellé enregistré) sont
+      // imprimées telles quelles (sandreLabel ne traduit qu'un code connu).
+      const SANDRE_LIST={elIntensite:'coloration',meteo:'meteo',seuil:'seuil',typePrelSandre:'type',hydro:'hydro',aspect:'aspect',irisations:'yn0',mousse:'yn0',feuilles:'yn0',boues:'yn0',autresCorps:'yn',teinte:'teinte',coloration:'coloration',limpidite:'limpidite',odeur:'odeur',ombre:'ombre',debitTendance:'debit'};
       function sandreLabel(k,v){
         const n=SANDRE_LIST[k];if(!n||blank(v))return v;
         const list=n==='meteo'?(typeof W!=='undefined'?W:[]):((typeof S!=='undefined'&&S[n])||[]);
@@ -376,13 +381,13 @@
         return hit?hit[1]+' (code SANDRE '+hit[0]+')':v;
       }
       function fmtConditions(cond,network){
-        if(network!=='EL')return fmt(Object.fromEntries(Object.entries(cond||{}).map(([k,v])=>[k,sandreLabel(k,v)])));
-        const filtered=Object.fromEntries(Object.entries(cond||{}).filter(([k])=>!['elMer','elMaree','elCoefMaree'].includes(k)));
-        return fmt(filtered);
+        const list=Object.entries(cond||{}).filter(([k])=>network!=='EL'||!['elMer','elMaree','elCoefMaree'].includes(k)); // EL : mer / marée à part
+        return fmt(Object.fromEntries(list.map(([k,v])=>[k,sandreLabel(k,v)])));
       }
       function sommaire(r){
         const hasChloro=r.network==='EL';
         const hasSed=r.network==='Chimie'||r.network==='RCO';
+        if(r.prelevementRealise==='Non')return '<div class="crtSommaireList">'+[['📍','Station & localisation','Identification, accès, carte, photographies'],['⛔','Prélèvement non réalisé','Motif, coordonnées relevées'],['📋','Observations & validation','Non-conformités, conclusion et validation']].map((it,i)=>'<div class="crtSommaireItem"><span class="crtSommaireIcon">'+it[0]+'</span><div><b>'+(i+2)+'. '+esc(it[1])+'</b><br><span class="crtSmall">'+esc(it[2])+'</span></div></div>').join('')+'</div>';
         const items=[
           ['📍','Station & localisation','Identification, accès, carte, photographies'+(r.network==='EL'?'':', schéma du lieu')],
           ['🧪','Mesures & échantillonnage','Conditions de terrain, mesures in situ, matériel de mesure, '+(r.network==='ESO'?'ouvrage et purge, ':'')+'échantillonnage, transport'+(hasChloro?', chlorophylle':'')+', traçabilité'],
@@ -407,6 +412,7 @@
         '</table>';
       }
       function synthesis(r,ins,sample){
+        if(r.prelevementRealise==='Non')return '<p class="crtSmall">Visite de terrain du '+esc(frDate(r.date))+' à la station <b>'+esc(r.station||'—')+'</b> ('+esc(netLabel(r.network)||r.network||'—')+'). <b>Prélèvement non réalisé</b>'+(String(r.obs||'').trim()?' — motif : '+esc(String(r.obs).trim()):'')+'.'+(r.lifecycle?.status?' Statut de la fiche : <b>'+esc(r.lifecycle.status)+'</b>.':'')+'</p>';
         const params=Object.keys(ins&&ins.params?ins.params:ins||{}).filter(k=>k!=='mode'&&ins[k]&&typeof ins[k]==='object').length||Object.keys(ins?.params||{}).length;
         const sedDone=(sample?.chimieSed==='Oui'||sample?.rcoSed==='Oui');
         const bits=[];
@@ -584,6 +590,7 @@
         return '<h2>⚠️ Non-conformités</h2>'+(open?'<p class="crtSmall"><b>'+open+' non-conformité(s) non clôturée(s) à la date du rapport.</b></p>':'')+'<table class="crtTable"><thead><tr><th>Gravité</th><th>Statut</th><th>Catégorie / description</th><th>Action immédiate</th><th>Action corrective</th><th>Échéance</th></tr></thead><tbody>'+list.map(n=>'<tr><td>'+cell(n.severity)+'</td><td>'+cell(n.status)+'</td><td>'+(blank(n.category)?'':'<b>'+esc(n.category)+'</b><br>')+cell(n.description)+'</td><td>'+cell(n.immediate)+'</td><td>'+cell(n.corrective)+'</td><td>'+cell(n.dueDate)+'</td></tr>').join('')+'</tbody></table>';
       }
       function buildFicheHtml(r){
+        const nonRealise=r.prelevementRealise==='Non';
         // Station : celle de même code que la station enregistrée dans la fiche (deux réseaux peuvent
         // avoir une station du même nom). Les ESO n'ont pas de code SANDRE mais un code BSS, et une
         // commune à la place du bassin versant (auparavant « Non défini » / « non renseigné »).
@@ -598,14 +605,15 @@
         const mapLink=mapLinkParts.join(' · ');
         const title=cm.objet||'Mise en œuvre de la DCE en Guyane — Rapport de terrain';
         const graphBlock=r.network==='EL'?'<div class="crtGraphLegend"><b>Profil vertical in situ.</b> Chaque courbe relie les valeurs mesurées aux niveaux réellement saisis sur la fiche terrain. La turbidité affichée correspond uniquement à la moyenne des trois répétitions.</div><div class="crtGraphGrid">'+elCards(ins)+'</div>'+elDataTable(ins):'<div class="crtGraphLegend"><b>Mesures in situ.</b> Présentation harmonisée des valeurs enregistrées sur la fiche terrain, avec conservation des unités et des informations appareil.</div>'+genericMetrics(ins)+genericDataTable(ins);
-        const elMaritime=r.network==='EL'?'<br><br><b>Conditions maritimes</b><br>État de la mer : '+esc(r.conditions?.elMer||'—')+'<br>Marée : '+esc(r.conditions?.elMaree||'—')+(r.conditions?.elCoefMaree?' (coefficient '+esc(r.conditions.elCoefMaree)+')':''):'';
+        // EL (MEC et MET) : marée et coefficient de marée ; état de la mer pour les MEC
+        const cd=r.conditions||{},elMaritime=r.network==='EL'?'<br><br><b>Conditions maritimes</b>'+(cd.elMer?'<br>État de la mer : '+esc(cd.elMer):'')+'<br>Marée : '+esc(cd.elMaree==='Etal'?'Étal':(cd.elMaree||'—'))+'<br>Coefficient de marée : '+esc(cd.elCoefMaree||'—'):'';
         const sample=r.sample||{};
         const chloroBlock=(r.network==='EL'&&station.type==='MEC')?'<h2>Chlorophylle</h2><table class="crtTable"><tr><th>Prélèvement chlorophylle</th><td>'+esc(sample.elChloro||'—')+'</td><th>Filtre utilisé</th><td>'+esc(sample.elFiltreChloro||'—')+'</td></tr><tr><th>Volume filtré</th><td colspan="3">'+(sample.elVfChloro?esc(sample.elVfChloro)+' mL':'—')+'</td></tr></table>':'';
         return '<section class="crtPage crtCover" data-report="'+esc(code)+' — '+esc(r.station)+'"><img src="img/logo-oeg.png" alt="Office de l\'Eau de Guyane" class="crtCoverLogo"><div class="crtKicker">OFFICE DE L’EAU DE GUYANE</div><h1>COMPTE RENDU TECHNIQUE</h1><h2>'+esc(title)+'</h2><div class="crtSession">'+esc(r.session||'Session non renseignée')+'</div><div class="crtCoverStation"><b>'+esc(code)+' — '+esc(r.station)+'</b><br><span>'+esc(bassin||(bassinLabel+' non renseigné'+(eso?'e':'')))+'</span></div><div class="crtCoverMeta"><div><b>Organisme</b>'+esc(r.organisme||'—')+'</div><div><b>Préleveur(s)</b>'+esc(operators)+'</div><div><b>Date de la visite</b>'+esc(frDate(r.date))+'</div><div><b>Référence CRT</b>'+esc(cm.ref||'—')+'</div><div><b>Date du rapport</b>'+esc(reportDate(r))+'</div><div><b>Rédacteur</b>'+esc(cm.author||'—')+'</div></div><div class="crtSynthesis">'+synthesis(r,ins,sample)+'</div>'+(r.lifecycle?.status==='Validée'?'':'<div class="crtDraftBand">DOCUMENT PROVISOIRE — fiche terrain non validée ('+esc(r.lifecycle?.status||'À contrôler')+')</div>')+'</section>'+
           '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'SOMMAIRE')+'<h2>📖 Sommaire du rapport</h2>'+sommaire(r)+'</section>'+
           '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'STATION · LOCALISATION')+'<h2>🆔 Identification de la station</h2>'+kvTable([[codeLabel,code],['Réseau',netLabel(r.network)||r.network],[bassinLabel,bassin],['Marché',m.m],['Date',frDate(r.date)],['Horaires',(r.heureDebut||'—')+' – '+(r.heureFin||'—')],eso?['Type de point',station.type_point||si.type_point]:null,eso?['Aquifère',station.aquifere||si.aquifere]:null])+'<h2>🚗 Description / accès</h2><p class="crtSmall">'+esc(desc||'Description à compléter dans les données station.')+'</p><div class="accessGrid"><div><b>Accessibilité</b><br>'+starRating(access.difficulte||station.difficulte)+'</div><div><b>Moyens</b><br>'+(modes.length?modes.map(x=>transportIcon(x)+' '+esc(x)).join(' · '):'—')+'</div><div><b>Départ / base</b><br>'+esc(access.pointDepart||'—')+'</div><div><b>Consignes</b><br>'+esc(access.etapes||'—')+'</div></div><h2>🗺️ Localisation</h2><div class="crtMapPlaceholder">'+(navigator.onLine?locationMap(mapPoints):'')+'<div class="crtMapFallback"'+(navigator.onLine?' hidden':'')+'>'+locationSvg(ll||llTerrain)+'</div></div><p class="crtSmall">'+(mapLink||'Coordonnées non disponibles')+(mapPoints.length?' · © contributeurs OpenStreetMap':'')+'</p>'+(mapPoints.length>1?'<p class="crtSmall"><span style="color:#003D7A;font-weight:800">● Théorique</span> = position de référence de la station · <span style="color:#00AC97;font-weight:800">● Terrain</span> = position GPS relevée sur place'+(r.ecartM?' (écart mesuré : '+esc(r.ecartM)+')':'')+'</p>':'')+'<h2>📷 Photographies</h2>'+photoHtml(r)+(r.network==='EL'?'':'<h2>✏️ Schéma de station</h2><div class="crtSchema">'+(r.dessin?'<img src="'+esc(r.dessin)+'" alt="Schéma du lieu d’échantillonnage">':'<span class="crtSmall">Aucun schéma enregistré.</span>')+'</div>')+'</section>'+
-          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'MESURES · ÉCHANTILLONNAGE')+'<h2>🌦️ Conditions de terrain</h2><div class="crtTwoCol"><div>'+fmtConditions(r.conditions,r.network)+'</div><div><b>Saison</b><br>'+esc(season)+'<br><br><b>Matrice(s)</b><br>'+esc(matrix(r))+elMaritime+'</div></div><h2>📊 Visualisation des données in situ</h2>'+graphBlock+historyBlock(r,ins)+equipmentSection(r)+(eso?esoSection(sample):'')+sampleSection(r,sample)+chloroBlock+traceSection(r)+'</section>'+
-          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'OBSERVATIONS · VALIDATION')+qualitySection(r)+obsSection(r)+'<h2>➕ Données complémentaires</h2><div>'+fmt(r.specific||{})+'</div>'+fishTable(r.specific)+(r.network==='Chimie'?sedimentSection(sample,'chimie'):r.network==='RCO'?sedimentSection(sample,'rco'):'')+ncSection(r)+'<h2>✅ Conclusion / synthèse</h2><div class="crtComment">'+(cm.conclusion?esc(cm.conclusion):synthesis(r,ins,sample))+'</div><h2>🖊️ Validation</h2><table class="crtTable"><tr><th>Rédacteur</th><td>'+esc(cm.author||'—')+'</td><th>Statut</th><td>'+esc(r.lifecycle?.status||'—')+'</td></tr><tr><th>Signataire de la fiche terrain</th><td>'+esc(r.signName||'—')+'</td><th>Signature</th><td>'+(r.signature?'<img class="crtSignature" src="'+esc(r.signature)+'" alt="Signature">':'<span class="crtSmall">Non signée</span>')+'</td></tr>'+((r.lifecycle?.validatedBy||r.lifecycle?.validatedAt)?'<tr><th>'+(r.lifecycle?.status==='Rejetée'?'Rejetée par':r.lifecycle?.status==='Validée'?'Validée par':'Validation antérieure (fiche modifiée depuis) par')+'</th><td>'+esc(r.lifecycle?.validatedBy||'—')+'</td><th>Le</th><td>'+esc(frDate(r.lifecycle?.validatedAt))+'</td></tr>'+(r.lifecycle?.validationComment?'<tr><th>Commentaire de validation</th><td colspan="3">'+esc(r.lifecycle.validationComment)+'</td></tr>':''):'')+'<tr><th>Organisme</th><td>'+esc(r.organisme||'—')+'</td><th>Référence</th><td>'+esc(cm.ref||'—')+'</td></tr><tr><th>Date du rapport</th><td colspan="3">'+esc(reportDate(r))+'</td></tr><tr><th>Identifiant fiche</th><td colspan="3" class="crtTraceId">'+esc(r.id||'—')+'</td></tr><tr><th>Version applicative</th><td colspan="3">'+esc(r.appBuild||'non enregistrée (fiche antérieure à ce suivi)')+'</td></tr></table><p class="crtSmall">Cet identifiant permet de retrouver la fiche source dans l’application (onglet « Liste des fiches »).</p><div class="crtLegendBlock"><b>Référentiel graphique</b><br><span class="crtSmall">Les valeurs, niveaux, unités et codes appareils affichés dans ce CRT proviennent de la fiche terrain enregistrée. Aucune donnée n’est recalculée hormis la moyenne des trois mesures de turbidité lorsque celle-ci est disponible ; les valeurs numériques sont arrondies à deux décimales. Les codes SANDRE sont accompagnés de leur libellé.</span></div></section>';
+          (nonRealise?'<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'PRÉLÈVEMENT NON RÉALISÉ')+'<h2>⛔ Prélèvement non réalisé</h2><div class="crtDraftBand" style="margin-top:2mm">PRÉLÈVEMENT NON RÉALISÉ</div><h3>Motif</h3><div class="crtComment">'+esc(String(r.obs||'').trim()||'Motif non renseigné')+'</div>'+kvTable([['Date de la visite',frDate(r.date)],['Horaires',(r.heureDebut||'—')+' – '+(r.heureFin||'—')],['Préleveur(s)',(r.preleveurs||[]).join(', ')],['Coordonnées terrain (X / Y)',(r.xTerrain||'—')+' / '+(r.yTerrain||'—')+(r.projection?' ('+r.projection+')':'')],['Écart au point théorique',r.ecartM],['Photographies',String((r.photos||[]).length)]])+'</section>':'<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'MESURES · ÉCHANTILLONNAGE')+'<h2>🌦️ Conditions de terrain</h2><div class="crtTwoCol"><div>'+fmtConditions(r.conditions,r.network)+'</div><div><b>Saison</b><br>'+esc(season)+'<br><br><b>Matrice(s)</b><br>'+esc(matrix(r))+elMaritime+'</div></div><h2>📊 Visualisation des données in situ</h2>'+graphBlock+historyBlock(r,ins)+equipmentSection(r)+(eso?esoSection(sample):'')+sampleSection(r,sample)+chloroBlock+traceSection(r)+'</section>')+
+          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'OBSERVATIONS · VALIDATION')+(nonRealise?(String(r.comment||'').trim()?'<h2>📝 Commentaires</h2><div class="crtComment">'+esc(String(r.comment).trim())+'</div>':''):qualitySection(r)+obsSection(r)+'<h2>➕ Données complémentaires</h2><div>'+fmt(r.specific||{})+'</div>'+fishTable(r.specific)+(r.network==='Chimie'?sedimentSection(sample,'chimie'):r.network==='RCO'?sedimentSection(sample,'rco'):''))+ncSection(r)+'<h2>✅ Conclusion / synthèse</h2><div class="crtComment">'+(cm.conclusion?esc(cm.conclusion):synthesis(r,ins,sample))+'</div><h2>🖊️ Validation</h2><table class="crtTable"><tr><th>Rédacteur</th><td>'+esc(cm.author||'—')+'</td><th>Statut</th><td>'+esc(r.lifecycle?.status||'—')+'</td></tr><tr><th>Signataire de la fiche terrain</th><td>'+esc(r.signName||'—')+'</td><th>Signature</th><td>'+(r.signature?'<img class="crtSignature" src="'+esc(r.signature)+'" alt="Signature">':'<span class="crtSmall">Non signée</span>')+'</td></tr>'+((r.lifecycle?.validatedBy||r.lifecycle?.validatedAt)?'<tr><th>'+(r.lifecycle?.status==='Rejetée'?'Rejetée par':r.lifecycle?.status==='Validée'?'Validée par':'Validation antérieure (fiche modifiée depuis) par')+'</th><td>'+esc(r.lifecycle?.validatedBy||'—')+'</td><th>Le</th><td>'+esc(frDate(r.lifecycle?.validatedAt))+'</td></tr>'+(r.lifecycle?.validationComment?'<tr><th>Commentaire de validation</th><td colspan="3">'+esc(r.lifecycle.validationComment)+'</td></tr>':''):'')+'<tr><th>Organisme</th><td>'+esc(r.organisme||'—')+'</td><th>Référence</th><td>'+esc(cm.ref||'—')+'</td></tr><tr><th>Date du rapport</th><td colspan="3">'+esc(reportDate(r))+'</td></tr><tr><th>Identifiant fiche</th><td colspan="3" class="crtTraceId">'+esc(r.id||'—')+'</td></tr><tr><th>Version applicative</th><td colspan="3">'+esc(r.appBuild||'non enregistrée (fiche antérieure à ce suivi)')+'</td></tr></table><p class="crtSmall">Cet identifiant permet de retrouver la fiche source dans l’application (onglet « Liste des fiches »).</p><div class="crtLegendBlock"><b>Référentiel graphique</b><br><span class="crtSmall">Les valeurs, niveaux, unités et codes appareils affichés dans ce CRT proviennent de la fiche terrain enregistrée. Aucune donnée n’est recalculée hormis la moyenne des trois mesures de turbidité lorsque celle-ci est disponible ; les valeurs numériques sont arrondies à deux décimales. Les codes SANDRE sont accompagnés de leur libellé.</span></div></section>';
       }
       // Tuile de fond de carte indisponible (hors connexion, réseau coupé) : on remplace la carte par
       // la carte schématique de la Guyane plutôt que d'imprimer un cadre vide.

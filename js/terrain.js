@@ -28,12 +28,14 @@
     o2mg: {label:'Oxygène dissous',unit:'mg/L',possible:[0,25]},
     o2pc: {label:'Saturation O₂',unit:'%',possible:[0,250]},
     turb: {label:'Turbidité',unit:'NTU',possible:[0,10000]},
-    redox:{label:'Potentiel redox',unit:'mV',possible:[-1000,1000]}
+    redox:{label:'Potentiel redox',unit:'mV',possible:[-1000,1000]},
+    coef: {label:'Coefficient de marée',unit:'',possible:[20,120]} // EL : coefficients de marée de 20 à 120
   };
   const PROFONDEURS={surf:'surface',inter:'intermédiaire',fond:'fond'};
 
   // Identifie le paramètre d'un champ de mesure : iv_ph, iv_turb_2, el_ph_surf, el_turb_fond_1...
   function paramOf(id){
+    if(id==='elCoefMaree')return {k:'coef',where:''};
     let m=id.match(/^iv_([a-z0-9]+?)(?:_\d)?$/);
     if(m&&PLAGES[m[1]])return {k:m[1],where:''};
     m=id.match(/^el_([a-z0-9]+)_(surf|inter|fond)(?:_\d)?$/);
@@ -49,7 +51,7 @@
     const n=num(value);if(n===null)return null;
     const z=PLAGES[p.k];
     if(Number.isNaN(n))return {level:'bad',text:'❌ nombre invalide'};
-    if(n<z.possible[0]||n>z.possible[1])return {level:'bad',text:`❌ impossible (${fmt(z.possible)} ${z.unit}) — vérifiez la saisie`};
+    if(n<z.possible[0]||n>z.possible[1])return {level:'bad',text:`❌ impossible (${fmt(z.possible)}${z.unit?' '+z.unit:''}) — vérifiez la saisie`};
     if(z.habituel&&(n<z.habituel[0]||n>z.habituel[1]))return {level:'warn',text:`⚠ inhabituel (habituel ${fmt(z.habituel)} ${z.unit})`};
     return {level:'ok',text:'✓'};
   }
@@ -66,16 +68,18 @@
   function refreshField(input){
     if(!input||!input.id||!paramOf(input.id))return;
     const r=checkValue(input.id,input.value),s=statusEl(input);
-    if(!r){s.className='';s.textContent='';input.classList.remove('valueBad','valueWarn');return}
-    s.className='valueStatus '+(r.level==='ok'?'ok':'alert');
-    s.textContent=r.text;
+    // Écriture seulement si le statut change : ce contrôle repasse toutes les 2 s, et réécrire le même
+    // texte modifiait la page à chaque fois (travail inutile, surtout sur téléphone)
+    const set=(cls,txt)=>{if(s.className!==cls)s.className=cls;if(s.textContent!==txt)s.textContent=txt};
+    if(!r){set('','');input.classList.remove('valueBad','valueWarn');return}
+    set('valueStatus '+(r.level==='ok'?'ok':'alert'),r.text);
     input.classList.toggle('valueBad',r.level==='bad');
     input.classList.toggle('valueWarn',r.level==='warn');
   }
   // Les cartes de la fiche (mesures in situ, prélèvement...) sont des enfants directs de <body>,
   // hors de #new : on utilise la même règle que inFiche() dans app-core.js.
   function inForm(el){return !!(el&&el.closest)&&(typeof inFiche==='function'?inFiche(el):!!el.closest('#new'))&&!el.closest('#endOfDayCard')}
-  function measureInputs(){return [...document.querySelectorAll('input[id^="iv_"],input[id^="el_"]')].filter(i=>paramOf(i.id)&&inForm(i))}
+  function measureInputs(){return [...document.querySelectorAll('input[id^="iv_"],input[id^="el_"],input#elCoefMaree')].filter(i=>paramOf(i.id)&&inForm(i))}
   function refreshAllFields(){measureInputs().forEach(refreshField)}
   document.addEventListener('input',e=>{const t=e.target;if(t&&t.id&&inForm(t)){refreshField(t);t.classList.remove('fieldMissing')}});
   // Virgule décimale : sur une tablette dont le navigateur n'est pas en français, un champ
@@ -105,6 +109,13 @@
     if(!val('date')){blocking.push('Date de la visite');fields.push('date')}
     if(!val('start')){warnings.push('Heure de début');fields.push('start')}
     if(!(state.preleveurs||[]).length){warnings.push('Préleveur(s)');fields.push('preleveurs')}
+    // Prélèvement non réalisé : motif, photo(s) et coordonnées obligatoires ; pas de contrôle des mesures (masquées)
+    if(typeof isNonRealise==='function'&&isNonRealise()){
+      if(!val('obs').trim()){blocking.push('Motif du prélèvement non réalisé (rubrique 9)');fields.push('obs')}
+      if(!(state.photos||[]).length){blocking.push('Au moins une photo du site');fields.push('mediaCard')}
+      if(!val('xT')||!val('yT')){blocking.push('Coordonnées terrain (X / Y) — bouton « Géolocalise-moi »');fields.push('xT','yT')}
+      return {blocking,warnings,fields};
+    }
     if(!val('xT')||!val('yT')){warnings.push('Coordonnées terrain (X / Y) — utilisez le bouton GPS si possible');fields.push('xT','yT')}
     measureInputs().forEach(i=>{
       const r=checkValue(i.id,i.value);if(!r||r.level==='ok')return;

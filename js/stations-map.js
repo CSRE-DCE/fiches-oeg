@@ -7,10 +7,12 @@
   function preList(org){if(fixedPre[org])return fixedPre[org].slice();if(org==="Office de l'Eau de Guyane")return legacyPre.slice();return [...new Set((custom.preleveurs||[]).filter(o=>operatorOrg(o)===org).map(operatorDisplay))]}
   function fillOrgSelect(id,selected){const h=q(id);if(!h)return;const cur=selected??h.value;h.innerHTML='<option value="">— sélectionner un organisme —</option>'+orgList().map(o=>'<option value="'+E(o)+'">'+E(o)+'</option>').join('');if(orgList().includes(cur))h.value=cur}
   function refreshPreUI(){
-    const org=q('org')?.value||''; const list=preList(org); const h=q('preleveurs'); if(h){const sel=new Set(state?.preleveurs||[]);h.innerHTML=list.map((p,i)=>'<label class="check"><input type="checkbox" id="pre_fixed_'+i+'" value="'+E(p)+'" '+(sel.has(p)?'checked':'')+'><span>'+E(p)+'</span></label>').join('');h.querySelectorAll('input').forEach(x=>x.onchange=()=>{state.preleveurs=[...h.querySelectorAll('input:checked')].map(a=>a.value);refreshSign()})}
+    // + préleveurs de la fiche absents de la liste de cette tablette (fiche d'une autre tablette) : affichés
+    // et conservés — ils disparaissaient au premier clic sur une autre case
+    const org=q('org')?.value||''; const list=[...new Set([...preList(org),...(state?.preleveurs||[])])]; const h=q('preleveurs'); if(h){const sel=new Set(state?.preleveurs||[]);h.innerHTML=list.map((p,i)=>'<label class="check"><input type="checkbox" id="pre_fixed_'+i+'" value="'+E(p)+'" '+(sel.has(p)?'checked':'')+'><span>'+E(p)+'</span></label>').join('');h.querySelectorAll('input').forEach(x=>x.onchange=()=>{state.preleveurs=[...h.querySelectorAll('input:checked')].map(a=>a.value);refreshSign()})}
     refreshSign();
   }
-  function refreshSign(){const h=q('signName');if(!h)return;const list=preList(q('org')?.value||'');const cur=h.value;h.innerHTML='<option value="">— sélectionner un opérateur —</option>'+list.map(x=>'<option value="'+E(x)+'">'+E(x)+'</option>').join('');if(list.includes(cur))h.value=cur;}
+  function refreshSign(){const h=q('signName');if(!h)return;const cur=h.value,list=[...new Set([...preList(q('org')?.value||''),...(cur?[cur]:[])])]; /* signataire déjà choisi conservé */h.innerHTML='<option value="">— sélectionner un opérateur —</option>'+list.map(x=>'<option value="'+E(x)+'">'+E(x)+'</option>').join('');if(list.includes(cur))h.value=cur;}
   // Keep the mission organism strictly named "Organisme préleveur" and provide the requested fixed organizations.
   window.orgList=orgList;window.preList=preList;window.fillOrgSelect=fillOrgSelect;window.refreshPreUI=refreshPreUI;
   

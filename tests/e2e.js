@@ -10,8 +10,9 @@
 const { chromium } = require('playwright');
 const http=require('http'),fs=require('fs'),path=require('path');
 const ROOT=path.join(__dirname,'..');
-const TYPES={'.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.html':'text/html'};
-const srv=http.createServer((q,s)=>{let p=path.join(ROOT,decodeURIComponent(q.url.split('?')[0]));if(p.endsWith('/'))p+='index.html';fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);return s.end()}s.writeHead(200,{'Content-Type':TYPES[path.extname(p)]||'application/octet-stream'});s.end(d)})}).listen(8765);
+const TYPES={'.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.html':'text/html','.svg':'image/svg+xml','.woff2':'font/woff2'};
+const OVERRIDES={}; // contenu servi à la place d'un fichier (simulation d'une nouvelle version publiée)
+const srv=http.createServer((q,s)=>{const u=decodeURIComponent(q.url.split('?')[0]);if(OVERRIDES[u]!=null){s.writeHead(200,{'Content-Type':TYPES[path.extname(u)]||'application/octet-stream'});return s.end(OVERRIDES[u])}let p=path.join(ROOT,u);if(p.endsWith('/'))p+='index.html';fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);return s.end()}s.writeHead(200,{'Content-Type':TYPES[path.extname(p)]||'application/octet-stream'});s.end(d)})}).listen(8765);
 const ok=(c,m)=>{console.log((c?'PASS ':'FAIL ')+m);if(!c)process.exitCode=1};
 const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01',savedAt:upd,lifecycle:{status:'À contrôler',version:1,createdAt:upd,updatedAt:upd},auditRefs:[],photos:[],...extra});
 (async()=>{
@@ -375,6 +376,8 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await cx.route('https://unpkg.com/**',r=>r.abort());
     const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
     await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Parc d'équipements renseigné : boîtier et sondes ont alors de vrais choix (sinon listes vides, jamais testées)
+    await p.evaluate(()=>{custom.equipements=[{type:'boitier',gmao:'BX-1',nom:'Multi 3630',serie:'SB-1',statut:'En service'},{type:'boitier',gmao:'BX-2',nom:'Multi 3620',serie:'SB-2',statut:'En service'},{type:'sonde',gmao:'SD-1',nom:'Sonde 1',serie:'SS-1',statut:'En service'},{type:'sonde',gmao:'SD-2',nom:'Sonde 2',serie:'SS-2',statut:'En service'}];saveLS(LSC,custom)});
     await p.click(`#networks .chip[data-n="${net}"]`);
     for(const id of ['session','activity','bioOperation'])await p.evaluate(id=>{const s=$(id);if(!s||s.closest('.hide'))return;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}},id);
     await p.evaluate(()=>{const s=$('station');s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))});
@@ -389,7 +392,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
           if(e.type==='checkbox'){if(!e.checked){e.checked=true;e.dispatchEvent(new Event('change',{bubbles:true}))}return}
           if(e.value!=='')return;
           if(e.tagName==='SELECT'){const o=[...e.options].filter(o=>o.value);if(o.length){e.value=o[o.length-1].value;e.dispatchEvent(new Event('change',{bubbles:true}))}return}
-          e.value=e.type==='number'?'3':e.type==='date'?'2026-10-08':e.type==='time'?'08:30':e.type==='datetime-local'?'2026-10-08T09:00':('T-'+(e.id||e.name||'x'));
+          e.value=e.type==='number'?(e.min&&+e.min>3?e.min:'3'):e.type==='date'?'2026-10-08':e.type==='time'?'08:30':e.type==='datetime-local'?'2026-10-08T09:00':('T-'+(e.id||e.name||'x'));
           e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));
         });
       });
@@ -532,9 +535,11 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.click('#qualityReject');await p.waitForTimeout(500);await p.click('#qualityControl');await p.waitForTimeout(500);
     ok(e9.length===before&&await p.evaluate(()=>records.find(r=>r.id==='M1').lifecycle.status==='À contrôler'),'onglet Qualité : rejeter puis remettre à contrôler sans erreur '+JSON.stringify(e9.slice(before)));
     // 7) Réinitialisation : l'appli redémarre proprement et une nouvelle fiche s'enregistre
+    await p.evaluate(()=>OEGStore.set('oeg_draft_edit_v1',{M1:{record:{id:'M1',network:'RCO',station:'x'},savedAt:new Date().toISOString()}})); // brouillon de modification en attente
     await p.click('.tab[data-tab="data"]');
     await Promise.all([p.waitForNavigation(),p.click('#reset')]);await p.evaluate(()=>window.OEGRecordsReady);
     ok(await p.evaluate(()=>records.length===0&&!JSON.parse(localStorage.getItem('oeg_sync_drive_cfg_v1')||'{}').connected),'réinitialisation : appareil vidé, Drive déconnecté');
+    ok(await p.evaluate(async()=>!(await OEGStore.get('oeg_draft_edit_v1'))&&!document.querySelector('[id^="editDraftBanner_"]')),'réinitialisation : brouillons de modification effacés (les fiches effacées ne reviennent pas)');
     await p.click('#networks .chip[data-n="RCO"]');
     for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
     await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
@@ -623,7 +628,8 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok((await p.textContent('#distance')).trim()==='—','coordonnées terrain vides : écart « — » (auparavant ≈ 600 km)');
     ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'RCO',station:'x',xTerrain:'',yTerrain:'',stationInfo:{x:'350000',y:'550000'}});const g=c.find(x=>/GPS terrain numériques/.test(x.label));return g&&!g.ok}),'contrôle qualité : coordonnées terrain manquantes signalées (et non un faux écart)');
     // Mise à jour de l'appli pendant une saisie : pas de rechargement, bandeau
-    await p.evaluate(()=>{window.__noReload=true;navigator.serviceWorker.dispatchEvent(new Event('controllerchange'))});await p.waitForTimeout(300);
+    // (page sans service worker : le 1er changement est l'installation, sans rechargement ; le 2e, une mise à jour)
+    await p.evaluate(()=>{window.__noReload=true;navigator.serviceWorker.dispatchEvent(new Event('controllerchange'));navigator.serviceWorker.dispatchEvent(new Event('controllerchange'))});await p.waitForTimeout(300);
     ok(await p.evaluate(()=>!!document.getElementById('updateBanner')&&window.__noReload===true),'nouvelle version pendant une saisie : bandeau, pas de rechargement (la saisie est préservée)');
     await Promise.all([p.waitForNavigation({timeout:8000}),p.evaluate(()=>clearFormNoConfirm())]);
     ok(true,'fiche enregistrée / vidée : la mise à jour se fait ensuite d’elle-même');
@@ -773,9 +779,9 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.click('.tab[data-tab="new"]');await p.click('#networks .chip[data-n="EL"]');
     await p.evaluate(()=>{for(const id of ['session','activity']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const s=$('station');s.value=[...s.options].filter(o=>o.value)[0].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
     await p.waitForTimeout(400);await p.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));await p.emulateMedia({media:'print'});
-    const tools=await p.evaluate(()=>[...document.querySelectorAll('label.btn,#drawEraser,[id^="rxAdd_"],.swatch')].filter(e=>e.getBoundingClientRect().width>0).length);
+    const tools=await p.evaluate(()=>[...document.querySelectorAll('label.btn,#drawEraser,[id^="rxAdd_"],.swatch,#fichePrint button,#fichePrint input,#fichePrint select')].filter(e=>e.getBoundingClientRect().width>0).length);
     ok(tools===0,'fiche imprimée : sans boutons photo, palette / gomme du schéma ni « ajouter un organisme »');
-    ok(/EL — suivi littoral/.test(await p.textContent('#printHeaderTitle')),'fiche imprimée : réseau en toutes lettres dans l’en-tête');
+    ok(/EL — suivi littoral/.test(await p.textContent('#fichePrint .fpOrgSub')),'fiche imprimée : réseau en toutes lettres dans l’en-tête');
     await p.emulateMedia({media:'screen'});
     // Téléphone (390 px) : aucune page plus large que l'écran, bouton Enregistrer visible
     await p.setViewportSize({width:390,height:844});await p.waitForTimeout(300);
@@ -870,7 +876,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(()=>elRange([0,10])[0]===0&&elRange([5,10])[0]>0),'graphes EL : axe jamais négatif pour des valeurs positives');
     // Autre réseau : pas de barre EL
     await p.evaluate(()=>{records.push({id:'TR',network:'RCO',station:'RCO T',date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{ph:{value:'7'}}});saveLS(LS,records);renderSuivi();const n=$('suiviNetwork');n.value='RCO';n.dispatchEvent(new Event('change'));const s=$('suiviStation');s.value='RCO T';s.dispatchEvent(new Event('change'))});await p.waitForTimeout(200);
-    ok(await p.evaluate(()=>!$('suiviElBar')),'suivi RCO : pas de choix de vue EL');
+    ok(await p.evaluate(()=>[...document.querySelectorAll('#suiviElBar .suiviElTab')].map(b=>b.dataset.v).join(',')==='evolution,bassin'&&document.querySelectorAll('#suiviParamGrid .suiviParamCard').length===1&&!document.querySelector('#suiviParamGrid .suiviParamCard[data-param]')),'suivi RCO : choix Évolution / Profil du bassin, graphes d’évolution habituels');
     ok(e17.length===0,'aucune erreur JavaScript (profils EL) '+JSON.stringify(e17));
     await c17.close();
   }
@@ -938,6 +944,345 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e19.length===0,'aucune erreur JavaScript (session EL obligatoire) '+JSON.stringify(e19));
     await c19.close();
   }
+  // --- W : EL — codes SANDRE dans la caractérisation, marée et coefficient de marée (MEC et MET) ---
+  {
+    const c20=await browser.newContext({serviceWorkers:'block'});await c20.route('https://unpkg.com/**',r=>r.abort());await c20.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c20.newPage();const e20=[],msgs=[];p.on('pageerror',e=>e20.push(e.message));p.on('dialog',d=>{msgs.push(d.message());d.accept()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const pickEL=type=>p.evaluate(type=>{const st=DATA.EL_STATIONS.find(s=>s.type===type);selectNetwork('EL');const ss=$('session');ss.value=ss.options[1].value;ss.dispatchEvent(new Event('change',{bubbles:true}));const s=$('station');s.value=st.nom;s.dispatchEvent(new Event('change',{bubbles:true}));return st.nom},type);
+    await pickEL('MET');await p.waitForTimeout(400);
+    const met=await p.evaluate(()=>({maree:[...($('elMaree')?.options||[])].map(o=>o.value).filter(Boolean),coef:!!$('elCoefMaree'),limp:[...$('limpidite').options].map(o=>o.textContent),meteo0:$('meteo').value,codes:[...document.querySelectorAll('#siteCard .sandreCode')].map(x=>x.textContent)}));
+    ok(met.maree.join('/')==='Montante/Descendante/Étal'&&met.coef,'EL MET : marée (montante / descendante / étal) et coefficient de marée (auparavant absents)');
+    ok(met.limp.includes('[1] Limpide')&&met.limp.includes('[2] Légèrement trouble')&&met.meteo0===''&&met.codes.includes('SANDRE 1422')&&met.codes.includes('SANDRE 1425'),'EL : caractérisation avec les listes et codes SANDRE (météo non présélectionnée)');
+    await pickEL('MEC');await p.waitForTimeout(400);
+    ok(await p.evaluate(()=>!!$('elMer')&&!!$('elMaree')&&!!$('elCoefMaree')&&[...$('meteo').options].some(o=>o.textContent==='[8] Fortement nuageux')),'EL MEC : état de la mer, marée, coefficient et météo SANDRE');
+    // Coefficient impossible : enregistrement bloqué
+    await p.fill('#elCoefMaree','150');await p.click('#save');await p.waitForTimeout(400);
+    ok(msgs.some(m=>/Enregistrement impossible[^]*Coefficient de marée/.test(m)),'EL : coefficient de marée hors 20–120 refusé');
+    // Ancienne fiche EL (libellés) : conversion exacte en codes, valeurs ambiguës conservées
+    await p.evaluate(()=>{const st=DATA.EL_STATIONS.find(s=>s.type==='MET');records.push({id:'WL',network:'EL',session:DATA.EL_SESSIONS[0].label,station:st.nom,stationInfo:st,date:'2026-09-10',savedAt:'2026-09-10T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{},sample:{},conditions:{meteo:'Couvert',limpidite:'Limpide',teinte:'Marron',elMaree:'Etal',ombre:'Faible',irisations:'Non'}});saveLS(LS,records);state.editing=null;loadRecord('WL')});await p.waitForTimeout(700);
+    const leg=await p.evaluate(()=>({limp:$('limpidite').value,teinte:$('teinte').value,teinteTxt:$('teinte').selectedOptions[0]?.textContent,maree:$('elMaree').value,meteo:$('meteo').value,ombre:$('ombre').value,iris:$('irisations').value}));
+    ok(leg.limp==='1'&&leg.ombre==='2'&&leg.iris==='2'&&leg.maree==='Étal','ancienne fiche EL : valeurs converties en codes SANDRE quand l’équivalence est exacte '+JSON.stringify(leg));
+    ok(leg.teinte==='Marron'&&/ancienne saisie/.test(leg.teinteTxt)&&leg.meteo==='Couvert','ancienne fiche EL : valeur sans équivalent exact conservée (« ancienne saisie »), jamais effacée');
+    // CRT : libellé SANDRE et conditions maritimes pour une MET
+    await p.evaluate(()=>{const st=DATA.EL_STATIONS.find(s=>s.type==='MET');records.push({id:'WC',network:'EL',session:DATA.EL_SESSIONS[0].label,station:st.nom,stationInfo:st,date:'2026-09-11',savedAt:'2026-09-11T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{},sample:{},conditions:{limpidite:'2',meteo:'1',elMaree:'Montante',elCoefMaree:'95'}});saveLS(LS,records)});
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='WC';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(300);
+    const crt=await p.textContent('#crtPreviewBox');
+    ok(crt.includes('Légèrement trouble (code SANDRE 2)')&&crt.includes('Ensoleillé (code SANDRE 1)')&&/Marée : Montante/.test(crt)&&/Coefficient de marée : 95/.test(crt),'CRT EL : libellés SANDRE, marée et coefficient (station MET)');
+    ok(e20.length===0,'aucune erreur JavaScript (caractérisation EL) '+JSON.stringify(e20));
+    await c20.close();
+  }
+  // --- X : aucune saisie perdue (fiche ouverte sur une autre tablette, schéma et modifications en cas d'arrêt) ---
+  {
+    const c21=await browser.newContext({serviceWorkers:'block'});await c21.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c21.newPage();const e21=[],msgs=[];p.on('pageerror',e=>e21.push(e.message));p.on('dialog',d=>{msgs.push(d.message());d.accept()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    // Fiche enregistrée sur une autre tablette : boîtier, sondes et préleveur inconnus de cette tablette
+    await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records.push({id:'XA',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',heureDebut:'08:00',organisme:"Office de l'Eau de Guyane",preleveurs:['ZZ'],savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],
+      insituBoitier:'BX-AUTRE',insitu:{mode:'par appareil',ph:{value:'7.2',gmao:'SD-AUTRE',nom:'Sonde B',serie:'SB9'}},conditions:{},sample:{},specific:{}});saveLS(LS,records)});
+    await p.evaluate(()=>{loadRecord('XA');showTab('new')});await p.waitForTimeout(800);
+    const ld=await p.evaluate(()=>({box:$('insituBoitier').value,boxTxt:$('insituBoitier').selectedOptions[0]?.textContent,ph:$('ig_ph').value,nom:$('ign_ph').value,pre:[...document.querySelectorAll('#preleveurs input:checked')].map(x=>x.value)}));
+    ok(ld.box==='BX-AUTRE'&&/non référencé sur cette tablette/.test(ld.boxTxt)&&ld.ph==='SD-AUTRE'&&ld.nom==='Sonde B','modification : boîtier et sonde d’une autre tablette conservés (auparavant effacés) '+JSON.stringify(ld));
+    ok(ld.pre.includes('ZZ'),'modification : préleveur absent de la liste de cette tablette affiché et conservé');
+    // Cocher un autre préleveur ne fait plus disparaître ZZ ; la mise à jour garde tout
+    await p.evaluate(()=>{const b=document.querySelector('#preleveurs input:not(:checked)');b.checked=true;b.dispatchEvent(new Event('change',{bubbles:true}))});
+    for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'5'); // turbidité : 3 mesures exigées à l'enregistrement
+    await p.click('#save');await p.waitForTimeout(1500);
+    const sv=await p.evaluate(()=>{const r=records.find(x=>x.id==='XA');return {box:r.insituBoitier,gmao:r.insitu.ph.gmao,pre:r.preleveurs}});
+    ok(sv.box==='BX-AUTRE'&&sv.gmao==='SD-AUTRE'&&sv.pre.includes('ZZ')&&sv.pre.length===2,'modification enregistrée sans aucune perte (boîtier, sonde, préleveurs) '+JSON.stringify(sv));
+    // Schéma seul (aucun autre champ touché) : brouillon enregistré
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.waitForTimeout(3200); // brouillon déclenché par le choix de la station déjà écrit : seul le dessin reste à sauvegarder
+    const cv=await p.$('#draw');await cv.scrollIntoViewIfNeeded();const b=await cv.boundingBox();
+    await p.mouse.move(b.x+40,b.y+40);await p.mouse.down();await p.mouse.move(b.x+160,b.y+90,{steps:6});await p.mouse.up();await p.waitForTimeout(3200);
+    const dr=await p.evaluate(()=>OEGStore.get('oeg_draft_v1'));
+    ok((dr?.record?.dessin||'').length>500,'schéma dessiné : brouillon enregistré (auparavant perdu si l’appli s’arrêtait)');
+    // Modification d'une fiche enregistrée puis arrêt inopiné : modifications retrouvées au redémarrage
+    await p.evaluate(()=>{clearFormNoConfirm({keepDraft:true});loadRecord('XA');showTab('new')});await p.waitForTimeout(800);
+    ok(!(await p.evaluate(()=>OEGStore.get('oeg_draft_edit_v1')))?.XA,'fiche simplement ouverte : pas de brouillon de modification');
+    await p.fill('#obs','Modification avant arrêt');await p.waitForTimeout(3200);
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_edit_v1')))?.XA?.record?.obs==='Modification avant arrêt','modification en cours : brouillon de modification enregistré');
+    ok((await p.evaluate(()=>OEGStore.get('oeg_draft_v1')))?.record?.dessin?.length>500,'le brouillon de la fiche nouvelle n’est pas écrasé par la modification');
+    await p.reload();await p.evaluate(()=>window.OEGRecordsReady);await p.waitForTimeout(1200);
+    ok(await p.evaluate(()=>!!document.getElementById('editDraftBanner_XA')&&!!document.getElementById('draftBanner')),'au redémarrage : modifications non enregistrées ET brouillon proposés');
+    await p.evaluate(()=>document.querySelector('#editDraftBanner_XA [data-a="restore"]').click());await p.waitForTimeout(800);
+    ok(await p.evaluate(()=>state.editing==='XA'&&$('obs').value==='Modification avant arrêt'&&records.find(r=>r.id==='XA').obs!=='Modification avant arrêt'),'reprise : la fiche XA est rouverte en modification avec les changements (la fiche enregistrée reste intacte tant qu’on n’enregistre pas)');
+    await p.click('#save');await p.waitForTimeout(1500);
+    ok(await p.evaluate(async()=>records.find(r=>r.id==='XA').obs==='Modification avant arrêt'&&!(await OEGStore.get('oeg_draft_edit_v1'))?.XA),'enregistrement : modifications appliquées et brouillon de modification effacé');
+    ok(e21.length===0,'aucune erreur JavaScript (aucune saisie perdue) '+JSON.stringify(e21));
+    await c21.close();
+  }
+  // --- Y : « Prélèvement réalisé ? » — Non : photos, coordonnées et motif seulement ---
+  {
+    const c22=await browser.newContext({serviceWorkers:'block'});await c22.route('https://unpkg.com/**',r=>r.abort());await c22.route('https://tile.openstreetmap.org/**',r=>r.abort());
+    const p=await c22.newPage();const e22=[],msgs=[];p.on('pageerror',e=>e22.push(e.message));p.on('dialog',d=>{msgs.push(d.message());d.accept()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.click('#networks .chip[data-n="RCO"]');
+    for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
+    await p.waitForTimeout(300);
+    const vis=id=>p.evaluate(id=>getComputedStyle($(id)).display!=='none',id);
+    ok(await p.evaluate(()=>radioValue('prelevementRealise')==='Oui')&&await vis('insituCard')&&await vis('sampleCard'),'nouvelle fiche : « Prélèvement réalisé ? » Oui par défaut, fiche complète');
+    await p.fill('#iv_ph','7.4'); // saisie faite avant de constater que le prélèvement est impossible
+    await p.click('input[name="prelevementRealise"][value="Non"]');await p.waitForTimeout(200);
+    const hid=await p.evaluate(()=>['siteCard','insituCard','sampleCard','specificCard'].map(id=>getComputedStyle($(id)).display));
+    ok(hid.every(d=>d==='none')&&await vis('mediaCard')&&await vis('missionCard')&&await vis('signCard'),'Non : caractérisation, mesures, prélèvement et données spécifiques masqués ; photos, mission et signature restent '+hid.join());
+    ok(await p.evaluate(()=>getComputedStyle(document.querySelector('#obsCard .lblNonReal')).display!=='none'&&getComputedStyle($('qcType').closest('.grid2')).display==='none'),'Non : le champ observation devient « Motif du prélèvement non réalisé », le contrôle qualité est masqué');
+    await p.click('#save');await p.waitForTimeout(400);
+    const m=msgs.at(-1)||'';
+    ok(/Enregistrement impossible/.test(m)&&/Motif du prélèvement non réalisé/.test(m)&&/Au moins une photo/.test(m)&&/Coordonnées terrain/.test(m),'Non : motif, photo et coordonnées obligatoires');
+    await p.fill('#obs','Crique à sec, accès impossible');await p.fill('#xT','352000');await p.fill('#yT','540000');
+    await p.evaluate(()=>{const c=document.createElement('canvas');c.width=40;c.height=30;state.photos.push({data:c.toDataURL('image/jpeg'),group:'Amont'});drawPhotoGroups()});
+    const n0=await p.evaluate(()=>records.length);
+    await p.click('#save');await p.waitForTimeout(1500);
+    const r=await p.evaluate(n0=>records.length===n0+1?records.at(-1):null,n0);
+    ok(r&&r.prelevementRealise==='Non'&&r.obs==='Crique à sec, accès impossible','Non : fiche enregistrée sans mesure (la turbidité n’est plus exigée)');
+    ok(await p.evaluate(()=>!document.body.classList.contains('nonRealise')),'après enregistrement : formulaire revenu à l’état normal');
+    // Rouverte : Non restauré, saisie antérieure conservée si l'on repasse à Oui
+    await p.evaluate(id=>{loadRecord(id);showTab('new')},r.id);await p.waitForTimeout(700);
+    ok(await p.evaluate(()=>radioValue('prelevementRealise')==='Non'&&document.body.classList.contains('nonRealise')),'fiche rouverte : « non réalisé » restauré');
+    await p.click('input[name="prelevementRealise"][value="Oui"]');await p.waitForTimeout(200);
+    ok(await vis('insituCard')&&await p.inputValue('#iv_ph')==='7.4','repasser à Oui : les rubriques réapparaissent avec la saisie antérieure (rien n’est perdu)');
+    await p.evaluate(()=>clearFormNoConfirm());
+    // Circuit qualité, suivi, CSV, CRT
+    ok(await p.evaluate(id=>{const c=qualityChecksFor(records.find(x=>x.id===id));return !c.some(x=>/Mesures in situ|Turbidité|froid/i.test(x.label))&&c.find(x=>/motif renseigné/.test(x.label))?.ok&&c.find(x=>/photo/.test(x.label))?.ok},r.id),'circuit qualité : ni mesures ni chaîne du froid exigées, motif et photos contrôlés');
+    ok(await p.evaluate(id=>suiviValueFor(records.find(x=>x.id===id),'ph')===undefined&&flatRecordForCsv(records.find(x=>x.id===id)).prelevementRealise==='Non',r.id),'suivi : aucune mesure prise en compte ; export CSV : colonne prélèvement réalisé');
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(id=>{const s=$('crtRecord');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}))},r.id);await p.waitForTimeout(300);
+    const crt=await p.textContent('#crtPreviewBox');
+    ok(/PRÉLÈVEMENT NON RÉALISÉ/.test(crt)&&crt.includes('Crique à sec, accès impossible')&&!/Contrôle qualité|Visualisation des données in situ/i.test(crt),'CRT : « prélèvement non réalisé » avec le motif, sans pages de mesures');
+    await p.click('.tab[data-tab="list"]');await p.waitForTimeout(200);
+    ok(/Prélèvement non réalisé/.test(await p.textContent('#records')),'liste des fiches : « prélèvement non réalisé » signalé');
+    ok(e22.length===0,'aucune erreur JavaScript (prélèvement non réalisé) '+JSON.stringify(e22));
+    await c22.close();
+  }
+  // --- Z : macrophytes, largeur et profondeur moyenne dans « Échantillonnage de sédiments » ---
+  {
+    const c23=await browser.newContext({serviceWorkers:'block'});await c23.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c23.newPage();const e23=[];p.on('pageerror',e=>e23.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const pick=async(net,sessionIdx=1)=>{await p.evaluate(([net,i])=>{clearFormNoConfirm({keepDraft:true});selectNetwork(net);for(const id of ['session','activity','bioOperation']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].filter(o=>o.value);if(o.length){s.value=(id==='session'?o[Math.min(i-1,o.length-1)]:o[0]).value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const st=$('station');st.value=[...st.options].find(o=>o.value).value;st.dispatchEvent(new Event('change',{bubbles:true}))},[net,sessionIdx]);await p.waitForTimeout(300)};
+    const where=()=>p.evaluate(()=>['macro','largeur','profMoy'].map(id=>{const e=$(id);return !e?'absent':e.closest('.sedimentPanel')?(e.closest('#specific')?'sédiments (spécifique)':'sédiments (prélèvement)'):e.closest('#siteCard')?'site':'ailleurs'}));
+    await pick('RCO');
+    ok((await where()).every(w=>w==='sédiments (spécifique)'),'RCO : macrophytes, largeur et profondeur moyenne dans « Échantillonnage de sédiments » '+(await where()).join());
+    await p.fill('#macro','35');await p.fill('#largeur','12');await p.fill('#profMoy','1.4');
+    ok(await p.evaluate(()=>{const c=collectConditions();return c.macro==='35'&&c.largeur==='12'&&c.profMoy==='1.4'}),'RCO : valeurs toujours enregistrées dans les conditions (fiches existantes inchangées)');
+    await pick('Chimie',1);ok((await where()).every(w=>w==='sédiments (prélèvement)'),'Chimie S1 : champs dans le panneau sédiments '+(await where()).join());
+    await pick('Chimie',2);ok((await where()).every(w=>w==='site'),'Chimie S2 (sans sédiments) : champs dans les conditions du site '+(await where()).join());
+    await pick('EL');await pick('BIO');ok((await where()).every(w=>w==='site'),'BIO (après un passage par EL) : champs dans les conditions du site, jamais perdus '+(await where()).join());
+    await pick('RCO');ok((await where()).every(w=>w==='sédiments (spécifique)'),'retour RCO : champs de nouveau dans les sédiments');
+    // Fiche rouverte : valeurs retrouvées dans le panneau sédiments
+    await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records.push({id:'ZR',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler'},photos:[],auditRefs:[],insitu:{},sample:{},specific:{},conditions:{macro:'20',largeur:'8',profMoy:'0.9'}});saveLS(LS,records);clearFormNoConfirm({keepDraft:true});loadRecord('ZR')});await p.waitForTimeout(600);
+    ok(await p.evaluate(()=>$('macro').value==='20'&&$('largeur').value==='8'&&$('profMoy').value==='0.9'&&!!$('macro').closest('.sedimentPanel')),'fiche rouverte : valeurs retrouvées dans le panneau sédiments');
+    ok(e23.length===0,'aucune erreur JavaScript (champs du cours d’eau) '+JSON.stringify(e23));
+    await c23.close();
+  }
+  // --- AA : tableau « Mesures in situ » harmonisé (BIO, RCO, Chimie) sur la présentation EL ---
+  {
+    const c24=await browser.newContext({serviceWorkers:'block'});await c24.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c24.newPage();const e24=[];p.on('pageerror',e=>e24.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{custom.equipements=[{type:'boitier',gmao:'BX-1',nom:'Multi 3630',serie:'SB-1',echeance:'2099-01-01'},{type:'sonde',gmao:'SD-1',nom:'Sonde pH',serie:'SS-1',echeance:'2099-01-01'}];saveLS(LSC,custom)});
+    const res={};
+    for(const net of ['BIO','RCO','Chimie']){
+      await p.evaluate(net=>{clearFormNoConfirm({keepDraft:true});selectNetwork(net);for(const id of ['session','activity','bioOperation']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const st=$('station');st.value=[...st.options].find(o=>o.value).value;st.dispatchEvent(new Event('change',{bubbles:true}))},net);
+      await p.waitForTimeout(400);
+      res[net]=await p.evaluate(()=>{const b=$('insituBoitier');b.value='BX-1';b.dispatchEvent(new Event('change'));
+        return {head:!!document.querySelector('#insitu .insituHead'),cols:[...document.querySelectorAll('#insitu .insituTable thead th')].map(t=>t.textContent).join('|'),rows:document.querySelectorAll('#insitu .insituTable tbody tr').length,
+          border:getComputedStyle($('iv_ph')).borderTopWidth,badges:[...document.querySelectorAll('#insitu [id^="ims_"]')].filter(x=>x.textContent.trim()).length,info:$('insituBoitierInfo').textContent}});
+    }
+    const same=JSON.stringify(res.BIO.cols)===JSON.stringify(res.RCO.cols)&&res.RCO.cols===res.Chimie.cols&&res.BIO.rows===res.RCO.rows&&res.RCO.rows===res.Chimie.rows;
+    ok(same&&Object.values(res).every(r=>r.head&&r.cols==='Paramètre|Mode|Valeur|Code GMAO sonde/capteur|Nom|N° série|Étalonnage|Contrôle'&&r.rows===8),'mesures in situ : même tableau (bandeau, colonnes, paramètres) pour BIO, RCO et Chimie '+JSON.stringify(res.RCO.cols));
+    ok(Object.values(res).every(r=>parseFloat(r.border)>0),'mesures in situ : cases de saisie visibles (auparavant sans bordure ni fond)');
+    ok(Object.values(res).every(r=>r.badges===0),'mesures in situ : plus de « Non référencé » sur les lignes sans appareil');
+    ok(Object.values(res).every(r=>/Multi 3630/.test(r.info)&&/SB-1/.test(r.info)),'boîtier : nom, n° de série et statut affichés');
+    ok(e24.length===0,'aucune erreur JavaScript (tableau in situ) '+JSON.stringify(e24));
+    await c24.close();
+  }
+  // --- AB : profil longitudinal du bassin versant pour RCO, Chimie et BIO (comme l'estuaire EL) ---
+  {
+    const c25=await browser.newContext({serviceWorkers:'block'});await c25.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c25.newPage();const e25=[];p.on('pageerror',e=>e25.push(e.message));
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{
+      const by=n=>[...DATA.RCO13,...DATA.RCO_BIO12].find(s=>s.nom===n),m={lifecycle:{status:'À contrôler'},photos:[],auditRefs:[]};let k=0;
+      const ses=SUIVI_SESSION_ORDER.RCO;
+      // Bassin du Mahury (9 stations RCO au référentiel) : 3 stations mesurées, volontairement dans le désordre
+      [[0,'2026-10-10'],[1,'2026-12-10']].forEach(([si,date])=>['Boulanger aval','Degrad Mouflet','Crique Affluent Orapu'].forEach((n,i)=>records.push({id:'AB'+(k++),network:'RCO',station:n,stationInfo:by(n),session:ses[si],date,savedAt:date+'T08:00:00Z',...m,insitu:{ph:{value:String(6+i+si/10)},temp:{value:String(25+i)}}})));
+      // Une visite non réalisée ne compte pas
+      records.push({id:'ABNR',network:'RCO',station:'Boulanger amont',stationInfo:by('Boulanger amont'),session:ses[0],date:'2026-10-11',savedAt:'2026-10-11T08:00:00Z',...m,prelevementRealise:'Non',insitu:{ph:{value:'9'}}});
+      // Autre bassin (Mana)
+      records.push({id:'ABMA',network:'RCO',station:'Crique Sakoura',stationInfo:by('Crique Sakoura'),session:ses[0],date:'2026-10-12',savedAt:'2026-10-12T08:00:00Z',...m,insitu:{ph:{value:'5.5'}}});
+      // BIO, bassin du Maroni : 11 stations mesurées (noms écrits en biais)
+      const bio=[...DATA.BIO_CE,...DATA.BIO_FISH].filter(s=>s.bv==='Maroni'),seen=new Set();
+      bio.forEach((s,i)=>{if(seen.has(s.nom))return;seen.add(s.nom);records.push({id:'ABB'+i,network:'BIO',station:s.nom,stationInfo:s,session:'Campagne biologique 2026',date:'2026-11-0'+(1+i%9),savedAt:'2026-11-01T08:00:00Z',...m,insitu:{o2mg:{value:String(6+i/10)}}})});
+      // ESO : pas de profil
+      records.push({id:'ABE',network:'ESO',station:DATA.ESO[0].nom,stationInfo:DATA.ESO[0],session:'Juillet 2026',date:'2026-07-10',savedAt:'2026-07-10T08:00:00Z',...m,insitu:{ph:{value:'6'}}});
+      saveLS(LS,records);
+    });
+    await p.click('.tab[data-tab="suivi"]');await p.waitForTimeout(300);
+    const pick=(n,s)=>p.evaluate(([n,s])=>{const a=$('suiviNetwork');a.value=n;a.dispatchEvent(new Event('change'));const b=$('suiviStation');b.value=s;b.dispatchEvent(new Event('change'))},[n,s]);
+    await pick('RCO','Degrad Mouflet');await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>document.querySelector('#suiviElBar .suiviElTab.on')?.dataset.v==='evolution'&&document.querySelectorAll('#suiviParamGrid .suiviParamCard').length===2),'suivi RCO : vue Évolution par défaut (graphes habituels)');
+    await p.click('.suiviElTab[data-v="bassin"]');await p.waitForTimeout(300);
+    const prof=()=>p.evaluate(()=>{const c=document.querySelector('.suiviParamCard[data-param="ph"]');return {label:document.querySelector('#suiviElBar .suiviElOpts label').textContent,basin:$('suiviElEstuary').value,depth:!!$('suiviElDepth'),
+      cols:[...c.querySelectorAll('thead th')].slice(1).map(t=>t.textContent),hi:[...c.querySelectorAll('thead th.suiviElHi')].map(t=>t.textContent),rows:[...c.querySelectorAll('tbody tr')].map(tr=>[...tr.children].map(td=>td.textContent.trim()).join(' | ')),
+      note:c.querySelector('.suiviElCardNote')?.textContent||'',legend:c.querySelector('.suiviDepthLegend').textContent,cards:[...document.querySelectorAll('#suiviParamGrid .suiviParamCard')].map(x=>x.dataset.param).join(',')}});
+    let r=await prof();
+    ok(r.label==='Bassin versant'&&r.basin==='Mahury'&&!r.depth,'profil du bassin RCO : bassin de la station choisi, pas de choix de profondeur');
+    ok(r.cols.join(' > ')==='Crique Affluent Orapu > Degrad Mouflet > Boulanger aval'&&r.hi.join()==='Degrad Mouflet','profil du bassin RCO : stations mesurées de l’amont vers l’aval, station choisie surlignée '+r.cols.join(' > '));
+    ok(r.rows.length===2&&/^S1 - Octobre 2026 \| 8\.00 \| 7\.00 \| 6\.00$/.test(r.rows[0])&&/^S2 - Décembre 2026 \| 8\.10 \| 7\.10 \| 6\.10$/.test(r.rows[1]),'profil du bassin RCO : une ligne par session, visite non réalisée ignorée '+JSON.stringify(r.rows));
+    ok(/6 station\(s\) du bassin sans mesure/.test(r.note)&&/S1 · Octobre 2026/.test(r.legend)&&r.cards==='temp,ph','profil du bassin RCO : stations non mesurées signalées, légende par session, un graphe par paramètre '+r.note);
+    ok(await p.evaluate(()=>{const cv=document.querySelector('.suiviParamCard[data-param="ph"] canvas'),d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;const has=([R,G,B])=>{for(let i=0;i<d.length;i+=4)if(Math.abs(d[i]-R)<12&&Math.abs(d[i+1]-G)<12&&Math.abs(d[i+2]-B)<12)return true;return false};return has([0x62,0x50,0xd6])&&has([0xe3,0x49,0x48])}),'profil du bassin RCO : S1 et S2 tracées dans leurs couleurs de session');
+    await p.selectOption('#suiviElEstuary','Mana');await p.waitForTimeout(250);r=await prof();
+    ok(r.basin==='Mana'&&r.cols.join()==='Crique Sakoura'&&!r.hi.length,'profil du bassin RCO : changement de bassin versant');
+    await pick('RCO','Crique Sakoura');await p.waitForTimeout(250);
+    await pick('RCO','Boulanger aval');await p.waitForTimeout(250);
+    ok(await p.evaluate(()=>$('suiviElEstuary').value==='Mahury'&&document.querySelector('.suiviElTab.on').dataset.v==='bassin'),'profil du bassin : la vue reste choisie, le bassin suit la station');
+    // BIO : 11 stations, noms en biais ; libellé de campagne abrégé
+    await pick('BIO','Twenke');await p.waitForTimeout(250);
+    ok(await p.evaluate(()=>document.querySelector('.suiviElTab.on').dataset.v==='evolution'),'suivi : la vue est mémorisée par réseau');
+    await p.click('.suiviElTab[data-v="bassin"]');await p.waitForTimeout(300);
+    const bio=await p.evaluate(()=>{const c=document.querySelector('.suiviParamCard[data-param="o2mg"]');return {basin:$('suiviElEstuary').value,n:c.querySelectorAll('thead th').length-1,first:c.querySelector('thead th:nth-child(2)').textContent,h:c.querySelector('canvas').style.height,code:netProfileData('BIO','Maroni','o2mg',true).sessions[0].si.code}});
+    ok(bio.basin==='Maroni'&&bio.n===11&&bio.first==='Twenke'&&bio.h==='260px'&&bio.code==='Camp. 2026','profil du bassin BIO : 11 stations du Maroni (noms en biais), de Twenke à l’aval '+JSON.stringify(bio));
+    // Chimie : sessions abrégées (« Sept.26 ») dans l'ordre chronologique
+    ok(await p.evaluate(()=>elOrderSessions(['S2 - Déc.26','2026-10-15','S1 - Sept.26','S4 - Juin.27','S3 - Fév.27'],'Chimie').infos.map(x=>x.code).join(' ')==='S1 15/10/26 S2 S3 S4'),'sessions Chimie : ordre chronologique avec les mois abrégés');
+    ok(await p.evaluate(()=>elSessionInfo('S1 - Sept.26','Chimie').name==='S1 · Sept.26'&&elSessionInfo('S2 - Déc.26','Chimie').color===EL_SESSION_COLORS[1]),'sessions Chimie : nom et couleur de session');
+    // ESO : pas de barre de vues
+    await pick('ESO',await p.evaluate(()=>DATA.ESO[0].nom));await p.waitForTimeout(250);
+    ok(await p.evaluate(()=>!$('suiviElBar')&&document.querySelectorAll('#suiviParamGrid .suiviParamCard').length===1),'suivi ESO : pas de profil longitudinal (forages, piézomètres)');
+    ok(e25.length===0,'aucune erreur JavaScript (profil du bassin) '+JSON.stringify(e25));
+    await c25.close();
+  }
+  // --- AC : fiche terrain imprimée au modèle des rapports OEG (js/fiche-print.js) ---
+  {
+    const c26=await browser.newContext({serviceWorkers:'block'});await c26.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c26.newPage();const e26=[];p.on('pageerror',e=>e26.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{custom.equipements=[{type:'boitier',gmao:'BX-1',nom:'Multi 3630',serie:'SB-1',echeance:'2099-01-01'}];saveLS(LSC,custom)});
+    await p.click('#networks .chip[data-n="RCO"]');
+    await p.evaluate(()=>{for(const id of ['session','activity']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const s=$('station');s.value=[...s.options].filter(o=>o.value)[0].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    await p.waitForTimeout(400);
+    await p.evaluate(()=>{
+      const mk=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');g.fillStyle='#3a7';g.fillRect(0,0,w,h);return c.toDataURL('image/jpeg',.6)};
+      state.photos=[{data:mk(1200,900),group:'Amont'},{data:mk(900,1200),group:'Aval'},{data:mk(800,600),group:'Rive gauche'}];drawPhotoGroups();
+      $('date').value='2026-10-15';$('meteo').value=$('meteo').options[2].value;
+      const b=$('insituBoitier');b.value='BX-1';b.dispatchEvent(new Event('change'));
+      // Ancienne valeur absente des listes : gardée à l'écran avec sa mention, imprimée sans
+      setSelectKeep($('hydro'),'Crue ancienne');
+      const g=$('draw').getContext('2d');g.lineWidth=4;g.beginPath();g.moveTo(10,10);g.lineTo(200,90);g.stroke();
+    });
+    const clickRadio=(name,v)=>p.evaluate(([name,v])=>{const r=document.querySelector('input[name="'+name+'"][value="'+v+'"]');r.checked=true;r.dispatchEvent(new Event('change',{bubbles:true}))},[name,v]);
+    await clickRadio('consOui','Oui');
+    const pr=()=>p.evaluate(()=>{startFichePrint();const f=$('fichePrint'),T=f.textContent,kv=k=>{const th=[...f.querySelectorAll('.fpKv th')].find(t=>t.firstChild&&t.firstChild.nodeValue.trim()===k);return th?th.nextElementSibling.textContent.trim():null};
+      return {T,bars:[...f.querySelectorAll('.fpBar')].map(b=>b.textContent),reseau:kv('Réseau / marché'),realise:kv('Prélèvement réalisé ?'),meteo:kv('Météo pendant le prélèvement'),hydro:kv('Situation hydrologique apparente'),boitier:kv('Boîtier / appareil multiparamètre'),
+        controls:f.querySelectorAll('input,select,textarea,button').length,photos:f.querySelectorAll('.fpPhoto img').length,draw:!!f.querySelector('.fpDraw img'),code:[...f.querySelectorAll('.fpCode')].map(x=>x.textContent).join('|'),alert:!!f.querySelector('.fpAlert')}});
+    let r=await pr();
+    ok(r.bars[0]==='1. Réseau, marché et station'&&r.bars.includes('8. Mesures in situ')&&r.bars.includes('10. Signature opérateur'),'fiche imprimée : rubriques numérotées sur bandeau '+JSON.stringify(r.bars));
+    ok(r.reseau==='RCO','fiche imprimée : réseau / marché rempli en haut de la fiche (auparavant vide)');
+    ok(r.controls===0&&r.realise==='Oui'&&r.meteo===await p.evaluate(()=>$('meteo').selectedOptions[0].text),'fiche imprimée : réponses en texte, sans bouton radio ni case à cocher '+JSON.stringify([r.realise,r.meteo]));
+    ok(r.hydro==='Crue ancienne'&&!/ancienne saisie|non référencé|[✓✔]/i.test(r.T),'fiche imprimée : ni « non référencé », ni mention de saisie, ni coche');
+    ok(/Multi 3630/.test(r.boitier||'')&&/SB-1/.test(r.boitier||''),'fiche imprimée : boîtier avec nom et n° de série '+r.boitier);
+    ok(/SANDRE 1425/.test(r.code),'fiche imprimée : codes SANDRE des caractérisations');
+    ok(/Flaconnage du laboratoire 1/.test(r.T),'fiche imprimée : bloc déployé par « Oui » imprimé (agents de conservation)');
+    ok(!/À contrôler|Brouillon|Provisoire|Validée/i.test(r.T),'fiche imprimée : pas de statut de la fiche (il reste dans l’application)');
+    ok(r.photos===3&&r.draw,'fiche imprimée : photos et schéma');
+    await clickRadio('consOui','Non');r=await pr();
+    ok(!/Flaconnage du laboratoire 1/.test(r.T),'fiche imprimée : bloc replié par « Non » absent');
+    // Mise en page imprimée
+    await p.emulateMedia({media:'print'});
+    await p.evaluate(()=>Promise.all([...document.querySelectorAll('#fichePrint img')].map(i=>i.decode?i.decode().catch(()=>{}):null)));
+    const lay=await p.evaluate(()=>{const cs=e=>getComputedStyle(e),f=$('fichePrint'),ph=f.querySelector('.fpPhoto img').getBoundingClientRect();
+      return {form:$('missionCard').getClientRects().length?'visible':'none',box:cs(f).display,head:cs(f.querySelector('.fpHead')).position,foot:(f.querySelector('.fpBand')?.naturalWidth>0?'bandeau-oeg.svg':''),font:cs(f).fontFamily,logo:f.querySelector('.fpHead img').naturalWidth,slogan:f.querySelector('.fpSlogan').textContent,page:$('fichePrintPage')?.textContent||'',photoH:ph.height,bar:cs(f.querySelector('.fpBar')).backgroundColor}});
+    ok(lay.form==='none'&&lay.box==='block','fiche imprimée : seule la fiche mise en page est imprimée (pas le formulaire)');
+    ok(lay.head==='fixed'&&/bandeau-oeg\.svg/.test(lay.foot)&&/connaissance aujourd’hui/.test(lay.slogan)&&lay.logo>0,'fiche imprimée : en-tête (logo) et bandeau de pied de page répétés sur chaque page');
+    ok(/Barlow/.test(lay.font)&&lay.bar==='rgb(13, 54, 120)','fiche imprimée : police Barlow et bandeaux bleu marine du modèle');
+    ok(/counter\(page\)/.test(lay.page)&&lay.photoH>=240,'fiche imprimée : numéro de page, photos en grand ('+Math.round(lay.photoH)+' px de haut)');
+    await p.emulateMedia({media:'screen'});
+    // Prélèvement non réalisé : bandeau rouge, rubriques de mesure absentes, motif imprimé
+    await clickRadio('prelevementRealise','Non');await p.evaluate(()=>{$('obs').value='Crique en crue, accès impossible'});r=await pr();
+    ok(r.alert&&r.realise==='Non'&&!r.bars.includes('8. Mesures in situ')&&/Crique en crue/.test(r.T),'fiche imprimée : prélèvement non réalisé (bandeau, motif, sans mesures)');
+    // Bouton « Imprimer / PDF » : la fiche est construite puis l'impression ouverte
+    await p.evaluate(()=>{window.print=()=>{window.dispatchEvent(new Event('beforeprint'));window.__fp=(window.__fp||0)+1};endFichePrint()});
+    await p.click('#printBtn');await p.waitForFunction(()=>window.__fp>=1,null,{timeout:5000});
+    ok(await p.evaluate(()=>document.body.classList.contains('fpPrinting')&&$('fichePrint').querySelectorAll('.fpBar').length>3),'bouton Imprimer : fiche mise en page construite avant l’impression');
+    // Impression depuis un autre onglet (CRT) : la fiche et ses marges de page sont retirées
+    await p.click('.tab[data-tab="crt"]');await p.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));
+    ok(await p.evaluate(()=>!document.body.classList.contains('fpPrinting')&&!$('fichePrintPage')&&!$('fichePrint').innerHTML),'impression d’un autre onglet : fiche mise en page retirée (le CRT garde ses marges)');
+    // Texte saisi imprimé tel quel ; unité d'une case (« g ») imprimée avec la valeur
+    await p.click('.tab[data-tab="new"]');
+    ok(await p.evaluate(()=>{startFichePrint();const tr=[...document.querySelectorAll('#fichePrint .fpKv tr')].find(t=>/X terrain/.test(t.textContent));return !!tr&&/Y terrain/.test(tr.textContent)&&/RGFG 95/.test(tr.textContent)}),'fiche imprimée : X et Y terrain sur la même ligne, comme les coordonnées théoriques');
+    await p.evaluate(()=>{$('methodRef').value='MO-12 (non référencé au programme) ✅';const f=document.createElement('div');f.className='field';f.id='zzUnit';f.innerHTML='<label>Poids test</label><input placeholder="g" value="45">';$('missionCard').appendChild(f)});
+    const typed=await p.evaluate(()=>{startFichePrint();const T=$('fichePrint').textContent;$('zzUnit').remove();return {m:T.includes('MO-12 (non référencé au programme) ✅'),g:/45 g/.test(T)}});
+    ok(typed.m&&typed.g,'fiche imprimée : texte saisi intact (mentions et pictogrammes tapés gardés), unité « g » avec la valeur '+JSON.stringify(typed));
+    // Ctrl+P (impression lancée par le navigateur, sans attente possible) : logo, bandeau et légende déjà prêts
+    await p.evaluate(()=>window.fichePrintAssetsReady);
+    const ctrlp=await p.evaluate(()=>{window.dispatchEvent(new Event('beforeprint'));const f=$('fichePrint');return {logo:f.querySelector('.fpHead img').getAttribute('src').slice(0,5),band:f.querySelector('.fpBand').getAttribute('src').slice(0,5),leg:(f.querySelector('.fpLegend img')?.getAttribute('src')||'data:').slice(0,5)}});
+    ok(ctrlp.logo==='data:'&&ctrlp.band==='data:'&&ctrlp.leg==='data:','Ctrl+P : logo, bandeau et légende imprimés sans délai de chargement '+JSON.stringify(ctrlp));
+    // PDF réel (Chromium) : plusieurs pages, sans erreur
+    await p.click('.tab[data-tab="new"]');await p.evaluate(()=>startFichePrint());await p.emulateMedia({media:'print'});
+    const pdf=await p.pdf({preferCSSPageSize:true,printBackground:true});const pages=(pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g)||[]).length;
+    ok(pages>=2&&pages<=8,'fiche imprimée : PDF A4 de '+pages+' page(s)');
+    ok(e26.length===0,'aucune erreur JavaScript (fiche imprimée) '+JSON.stringify(e26));
+    await c26.close();
+  }
+  // --- AD : corrections issues de la relecture (changement de station, brouillons, CRT, export, tablette) ---
+  {
+    const c27=await browser.newContext({serviceWorkers:'block'});await c27.route('https://unpkg.com/**',r=>r.abort());
+    const p=await c27.newPage();const e27=[];p.on('pageerror',e=>e27.push(e.message));const dlg=[];p.on('dialog',d=>{dlg.push(d.message());d.dismiss()});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{custom.equipements=[{type:'boitier',gmao:'BX-1',nom:'Multi 3630',serie:'SB-1',echeance:'2099-01-01'},{type:'sonde',gmao:'SD-OLD',nom:'Sonde pH',serie:'SS-9',echeance:'2020-01-01'}];saveLS(LSC,custom)});
+    const pick=()=>p.evaluate(()=>{for(const id of ['session','activity']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}const s=$('station');s.value=[...s.options].filter(o=>o.value)[0].value;s.dispatchEvent(new Event('change',{bubbles:true}))});
+    // Changement de station : ancienne valeur EL et appareil d'une autre tablette conservés, statuts remis à jour
+    await p.click('#networks .chip[data-n="EL"]');await pick();await p.waitForTimeout(300);
+    const elSt=await p.evaluate(()=>{setSelectKeep($('meteo'),'Couvert');const st=$('station'),o=[...st.options].filter(o=>o.value);st.value=o[1].value;st.dispatchEvent(new Event('change',{bubbles:true}));return {meteo:$('meteo').value}});
+    ok(elSt.meteo==='Couvert','changement de station : ancienne saisie EL conservée (auparavant remise à vide)');
+    await p.click('#networks .chip[data-n="RCO"]');await pick();await p.waitForTimeout(300);
+    const eq=await p.evaluate(()=>{setSelectKeep($('insituBoitier'),'BX-AUTRE',EQ_KEEP);const g=$('ig_ph');g.value='SD-OLD';g.dispatchEvent(new Event('change'));
+      const st=$('station'),o=[...st.options].filter(o=>o.value);st.value=o[1].value;st.dispatchEvent(new Event('change',{bubbles:true}));
+      return {boit:$('insituBoitier').value,ig:$('ig_ph').value,badge:$('ims_ph').textContent}});
+    ok(eq.boit==='BX-AUTRE'&&eq.ig==='SD-OLD'&&/expir/i.test(eq.badge),'changement de station : boîtier d’une autre tablette gardé, badge métrologique de la sonde à jour '+JSON.stringify(eq));
+    // Réouverture d'une fiche : badge de la sonde à l'étalonnage expiré affiché
+    const reopen=await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records.push({id:'AD1',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-05T08:00:00Z'},auditRefs:[],photos:[],insitu:{ph:{value:'7',gmao:'SD-OLD'}},conditions:{macro:'35'},sample:{},specific:{}});
+      clearFormNoConfirm();loadRecord('AD1');return {ig:$('ig_ph').value,badge:$('ims_ph').textContent,spec:collectSpecific()}});
+    ok(reopen.ig==='SD-OLD'&&/expir/i.test(reopen.badge),'réouverture d’une fiche : sonde à l’étalonnage expiré signalée (badge auparavant vide)');
+    ok(!('macro' in reopen.spec)&&!('largeur' in reopen.spec),'RCO : macrophytes / largeur plus enregistrés en double dans les données spécifiques');
+    // Tableau in situ en tablette portrait : la page ne défile plus sur le côté
+    await p.setViewportSize({width:800,height:1000});await p.waitForTimeout(300);
+    ok(await p.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),'tablette portrait (800 px) : tableau in situ dans son cadre, sans défilement de toute la page');
+    await p.setViewportSize({width:1280,height:900});
+    // Export CSV : anciennes fiches EL avec les codes SANDRE
+    ok(await p.evaluate(()=>flatRecordForCsv({id:'Z',network:'EL',conditions:{meteo:'Ensoleillé',irisations:'Oui'}}).cond_meteo===elLegacyValue('meteo','Ensoleillé')&&elLegacyValue('meteo','Ensoleillé')!=='Ensoleillé'),'export CSV : anciennes fiches EL avec les codes SANDRE (comme les récentes)');
+    // CRT : visite « non réalisée » conservée dans l'historique (pH saisi avant de passer à « Non » : ignoré)
+    const hist=await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[2],m={lifecycle:{status:'À contrôler'},auditRefs:[],photos:[],activity:RCO_COMBINED_ACTIVITY};
+      records.push({id:'H1',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',...m,insitu:{ph:{value:'7.0'}}},{id:'HN',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-02',savedAt:'2026-10-02T08:00:00Z',...m,prelevementRealise:'Non',insitu:{ph:{value:'4.1'}}},{id:'H2',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-03',savedAt:'2026-10-03T08:00:00Z',...m,insitu:{ph:{value:'7.2'}}});saveLS(LS,records)});
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='H2';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(500);
+    const ht=await p.evaluate(()=>$('crtPreviewBox').textContent);
+    ok(/Suivi historique à la station \(3 visite/.test(ht)&&/non réalisé/.test(await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox svg')].map(s=>s.textContent).join(' '))),'CRT : visite « prélèvement non réalisé » conservée dans l’historique de la station, signalée sous sa date');
+    ok(await p.evaluate(()=>{const s=[...document.querySelectorAll('#crtPreviewBox svg')].find(s=>/non réalisé/.test(s.textContent)&&s.querySelectorAll('rect[fill="#00AC97"]').length);return !!s&&s.querySelectorAll('rect[fill="#00AC97"]').length===2&&/02\/10\/26/.test(s.textContent)&&!/4\.10/.test(s.textContent)}),'CRT : visite non réalisée gardée à sa date dans le graphe, sans barre (mesure saisie avant « Non » ignorée)');
+    // Brouillon de modification : fiche remplacée entre-temps, version enregistrée plus récente, fiche supprimée
+    await p.click('.tab[data-tab="new"]');
+    const mk=(id,extra)=>p.evaluate(([id,extra])=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records=records.filter(r=>r.id!==id);records.push({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',heureDebut:'08:00',heureFin:'09:00',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-05T08:00:00Z'},auditRefs:[],photos:[],insitu:{},conditions:{},sample:{},specific:{},obs:'saved obs',comment:'',...extra});saveLS(LS,records)},[id,extra||{}]);
+    const crashEdit=async(id,txt)=>{await p.evaluate(id=>{clearFormNoConfirm();loadRecord(id);showTab('new')},id);await p.waitForTimeout(500);await p.fill('#obs',txt);await p.waitForTimeout(3200);await p.reload();await p.evaluate(()=>window.OEGRecordsReady);await p.waitForTimeout(1200)};
+    await mk('XA');await p.waitForTimeout(300);await crashEdit('XA','Modification avant arrêt');
+    await p.evaluate(()=>{const i=records.findIndex(r=>r.id==='XA');records[i]={...records[i]}}); // objet remplacé (récupération Drive, import)
+    await p.evaluate(()=>document.querySelector('#editDraftBanner_XA [data-a="restore"]').click());await p.waitForTimeout(600);
+    ok(await p.evaluate(()=>$('obs').value==='Modification avant arrêt'&&state.editing==='XA'&&!('-1' in records)),'brouillon de modification : restauré même si la fiche a été remplacée entre-temps');
+    await p.evaluate(()=>{window.clearEditDraft('XA');clearFormNoConfirm()});
+    await mk('XB');await p.waitForTimeout(300);await crashEdit('XB','Modif tablette A');
+    await p.evaluate(()=>{const i=records.findIndex(r=>r.id==='XB'),t=new Date(Date.now()+60000).toISOString();records[i]={...records[i],comment:'Ajout tablette B',savedAt:t,lifecycle:{...records[i].lifecycle,version:2,updatedAt:t}};saveLS(LS,records)});
+    dlg.length=0;await p.evaluate(()=>document.querySelector('#editDraftBanner_XB [data-a="restore"]').click());await p.waitForTimeout(500);
+    ok(dlg.length===1&&/modifiée depuis/.test(dlg[0])&&await p.evaluate(()=>!!$('editDraftBanner_XB')&&state.editing!=='XB'),'brouillon plus ancien que la fiche enregistrée : avertissement, rien n’est remplacé sans accord');
+    await p.evaluate(()=>window.clearEditDraft('XB'));
+    await mk('XD');await p.waitForTimeout(300);await crashEdit('XD','Modif fiche supprimée');
+    await p.evaluate(()=>{records=records.filter(r=>r.id!=='XD');saveLS(LS,records)});
+    await p.evaluate(()=>document.querySelector('#editDraftBanner_XD [data-a="restore"]').click());await p.waitForTimeout(600);
+    ok(await p.evaluate(async()=>$('obs').value==='Modif fiche supprimée'&&!state.editing&&!((await OEGStore.get('oeg_draft_edit_v1'))||{}).XD),'brouillon d’une fiche supprimée : repris comme nouvelle fiche, puis plus proposé à chaque démarrage');
+    ok(e27.length===0,'aucune erreur JavaScript (corrections de relecture) '+JSON.stringify(e27));
+    await c27.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
@@ -954,5 +1299,38 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
   ok(await p2.evaluate(()=>!!document.getElementById('count')&&/build/.test(window.APP_BUILD)),'l’appli s’ouvre hors-ligne');
   ok(errs2.length===0,'aucune erreur JavaScript (service worker) '+JSON.stringify(errs2));
   await ctx2.close();
+  // --- AE : mise à jour de l'appli sans rechargement en boucle (constaté sur iPhone) ---
+  {
+    const cx=await browser.newContext();await cx.route('https://unpkg.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    let loads=0;p.on('load',()=>loads++);
+    const base=fs.readFileSync(path.join(ROOT,'version.js'),'utf8'),build=+base.match(/OEG_BUILD\s*=\s*(\d+)/)[1];
+    const publish=n=>{OVERRIDES['/version.js']=base.replace(/OEG_BUILD\s*=\s*\d+/,'OEG_BUILD = '+n)};
+    const update=()=>p.evaluate(async()=>{const r=await navigator.serviceWorker.getRegistration();await r.update()}).catch(()=>{});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>navigator.serviceWorker.ready);
+    await p.waitForFunction(()=>!!navigator.serviceWorker.controller,null,{timeout:10000});await p.waitForTimeout(1500);
+    ok(loads===1,'première ouverture : aucun rechargement à l’installation du service worker ('+loads+' chargement(s))');
+    publish(build+1);await update();await p.waitForTimeout(3000);await p.waitForLoadState('load');
+    ok(loads===2&&await p.evaluate(b=>self.OEG_BUILD===b,build+1),'nouvelle version publiée : un seul rechargement, nouvelle version affichée ('+loads+')');
+    publish(build+2);await update();await p.waitForTimeout(3000);
+    ok(loads===2&&await p.evaluate(()=>!!document.getElementById('updateBanner')),'seconde version dans la minute : pas de nouveau rechargement automatique, bandeau proposé ('+loads+')');
+    await p.click('#updateBanner');await p.waitForTimeout(1500);await p.waitForLoadState('load');
+    ok(loads===3&&await p.evaluate(b=>self.OEG_BUILD===b,build+2),'bandeau touché : mise à jour affichée ('+loads+')');
+    await p.evaluate(()=>navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));await p.waitForTimeout(1500);
+    ok(loads===3&&await p.evaluate(()=>!document.getElementById('updateBanner')),'changement de service worker sans nouvelle version : ni rechargement ni bandeau ('+loads+')');
+    await p.click('.tab[data-tab="new"]');await p.click('#networks .chip[data-n="RCO"]');
+    await p.evaluate(()=>sessionStorage.removeItem('oeg_sw_reload_at'));
+    publish(build+3);await update();await p.waitForTimeout(3000);
+    ok(loads===3&&await p.evaluate(()=>!!document.getElementById('updateBanner')&&/enregistrez la fiche/.test(document.getElementById('updateBanner').textContent)),'fiche en cours : pas de rechargement, bandeau « enregistrez la fiche » ('+loads+')');
+    // Rechargement forcé (page non pilotée alors qu'un service worker est actif), puis nouvelle version : appliquée
+    await p.evaluate(()=>{clearFormNoConfirm();sessionStorage.removeItem('oeg_sw_reload_at')});
+    const cdp=await cx.newCDPSession(p);await cdp.send('Page.reload',{ignoreCache:true});await p.waitForTimeout(1500);await p.waitForLoadState('load');
+    const hard=loads;ok(await p.evaluate(()=>!navigator.serviceWorker.controller),'rechargement forcé : page non pilotée (situation de test)');
+    publish(build+4);await update();await p.waitForTimeout(3000);await p.waitForLoadState('load');
+    ok(loads===hard+1&&await p.evaluate(b=>self.OEG_BUILD===b,build+4),'après un rechargement forcé, la nouvelle version est quand même appliquée ('+(loads-hard)+' rechargement)');
+    delete OVERRIDES['/version.js'];
+    ok(ex.length===0,'aucune erreur JavaScript (mise à jour) '+JSON.stringify(ex));
+    await cx.close();
+  }
   await browser.close();srv.close();
 })();

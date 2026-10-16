@@ -20,10 +20,17 @@ const APP_SHELL = [
   './version.js',
   './img/logo-oeg.png',
   './img/legende-schema.png',
+  './img/logo-oeg-rond.png',
+  './img/bandeau-oeg.svg',
+  './fonts/barlow-latin-400-normal.woff2',
+  './fonts/barlow-latin-600-normal.woff2',
+  './fonts/barlow-latin-700-normal.woff2',
+  './fonts/barlow-condensed-latin-700-normal.woff2',
   './js/geo.js',
   './js/data.js',
   './js/app-core.js',
   './js/suivi-el.js',
+  './js/fiche-print.js',
   './js/dashboard.js',
   './js/quality.js',
   './js/quality-automation.js',
@@ -61,6 +68,9 @@ self.addEventListener('activate', event => {
 // (déclenché depuis js/sync.js après détection d'une mise à jour).
 self.addEventListener('message', event => {
   if (event.data === 'skipWaiting') self.skipWaiting();
+  // Numéro de version de ce service worker : la page ne se recharge que s'il diffère du sien
+  // (index.html, garde-fou contre un rechargement en boucle)
+  if (event.data && event.data.type === 'build' && event.ports && event.ports[0]) event.ports[0].postMessage({ build: self.OEG_BUILD });
 });
 
 function isSameOrigin(url) {

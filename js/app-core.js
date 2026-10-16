@@ -174,7 +174,7 @@ function applyFormSnapshot(s){
   if(!s||typeof s!=='object')return;
   Object.entries(s.v||{}).forEach(([id,value])=>{
     const e=$(id);if(!e||!inFiche(e)||SNAPSHOT_SKIP.has(id)||e.type==='file'||e.value!=='')return;
-    if(e.tagName==='SELECT'&&![...e.options].some(o=>o.value===value))return;
+    if(e.tagName==='SELECT'){setSelectKeep(e,value);return}
     e.value=value;
   });
   Object.keys(s.c||{}).forEach(k=>{
@@ -258,6 +258,11 @@ window.OEGRecordsReady=recordsReady;
 let custom=load(LSC,load('oeg_custom_v3',{preleveurs:[],stations:[],equipements:[]}));
 custom.preleveurs=(custom.preleveurs||[]).map(o=>typeof o==='string'?{nom:o,prenom:'',organisme:o==='PF'||o==='AA'||o==='SM'||o==='ML'||o==='MG'||o==='MB'?'Office de l\'Eau de Guyane':'',legacy:true}:o);
 custom.stations=custom.stations||[];
+// Clé des informations d'accès d'une station : son code, ou son nom quand elle n'a pas de code (« Non défini »
+// pour une station ajoutée sans code — toutes partageaient auparavant la même fiche d'accès)
+function accessKey(x){const c=x&&x.code;return (c&&c!=='Non défini')?String(c):String(x&&x.nom||'')}
+(function(){const a=custom.stationAccess;if(!a||!a['Non défini'])return;const nc=(custom.stations||[]).filter(s=>!s.code||s.code==='Non défini');
+  if(nc.length===1&&!a[nc[0].nom]){a[nc[0].nom]=a['Non défini'];delete a['Non défini']}})(); // une seule station sans code : sa fiche d'accès lui est rendue
 custom.equipements=custom.equipements||[];
 
 let state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};
@@ -605,8 +610,12 @@ function restoreFicheValues(list){
       return;
     }
     const e=$(x.key);
-    if(e&&e.value===''){e.value=x.v;e.dispatchEvent(new Event('input',{bubbles:true}))}
+    // Liste : valeur absente des nouvelles options (ancienne saisie EL, appareil d'une autre tablette) gardée
+    // avec sa mention, comme à l'ouverture d'une fiche (auparavant remise à vide sans prévenir)
+    if(e&&e.value===''){if(e.tagName==='SELECT')setSelectKeep(e,x.v,/^(insituBoitier|ig_|el_probe_)/.test(x.key)?EQ_KEEP:undefined);else e.value=x.v;e.dispatchEvent(new Event('input',{bubbles:true}))}
   });
+  // Nom / n° de série / statut du boîtier et badges métrologiques des sondes remis à jour
+  refreshBoitierInfo();refreshProbeBadges();
 }
 $('station').onchange=()=>{
   state.station=val('station');
@@ -614,7 +623,16 @@ $('station').onchange=()=>{
   const kept=snapshotFicheValues();
   renderAuto();refreshSiteFields();showForm();buildAll();
   restoreFicheValues(kept);
+  if(!radioValue('prelevementRealise'))radioSet('prelevementRealise','Oui'); // par défaut : prélèvement réalisé
+  applyRealise();
 };
+// « Prélèvement réalisé ? » Non : seules l'identification, la mission (date, préleveurs, coordonnées), les
+// photos, le motif (champ observation) et la signature restent à remplir ; les autres rubriques sont masquées
+// (CSS body.nonRealise). Les valeurs déjà saisies y sont conservées (rien n'est perdu si on revient à Oui).
+function isNonRealise(){return !!state.network&&radioValue('prelevementRealise')==='Non'}
+function applyRealise(){document.body.classList.toggle('nonRealise',isNonRealise())}
+window.applyRealise=applyRealise;
+document.querySelectorAll('input[name="prelevementRealise"]').forEach(r=>r.addEventListener('change',applyRealise));
 
 function dedupeProgram(v){
   const s=String(v||'').trim().replace(/\s+/g,' ');
@@ -753,19 +771,11 @@ function elSelect(id, options, selected=''){
   o.value=selected;return o;
 }
 // Listes déroulantes reprises du classeur FT_EL_2024-2025_v2 (onglet « Liste paramètres »).
-const EL_METEO=['Ensoleillé','Couvert','Crachin','Averse'];
 const EL_MER=['Belle','Peu agitée','Agitée'];
-const EL_MAREE=['Montante','Etal','Descendante'];
+const EL_MAREE=['Montante','Descendante','Étal'];
 const EL_MOYEN_ECH=['Btle NISKIN ou équivalent','Autre'];
 const EL_CONSERVATION=['Glacière réfrigérée','Réfrigérateur','Bloc','Autre'];
 const EL_ACTIVITES=['Port maritime','Port de plaisance','Pêche','Dragage'];
-const EL_TEINTE=['Marron','Bleu','Vert','Jaune','Gris','Noir','Blanc'];
-const EL_HYDRO=['Basse eau','Moyenne eau','Haute eau','Crue débordante'];
-const EL_INTENSITE=['Peu colorée','Très colorée','Incolore'];
-const EL_ASPECT=['Propre','Sale'];
-const EL_TYPEPREL=['Rive','Pont','Embarcation'];
-const EL_LIMP=['Limpide','Peu trouble','Trouble'];
-const EL_OMBRE=['Absente','Faible','Importante'];
 const EL_INC=['Oui','Non'];
 /* Codes des appareils repris de l’onglet « Liste paramètres » du modèle Excel EL. */
 const EL_PROBES={
@@ -823,32 +833,59 @@ function restoreSandreSite(){
   const c=$('siteCard');if(!c||!SANDRE_SITE)return;
   c.innerHTML='';while(SANDRE_SITE.firstChild)c.appendChild(SANDRE_SITE.firstChild);SANDRE_SITE=null;
 }
+// Caractérisation du site EL : listes SANDRE officielles (mêmes nomenclatures et codes de paramètre que les
+// autres réseaux — W et S ci-dessus), marée et coefficient de marée pour toutes les stations (MEC et MET :
+// les estuaires sont soumis à la marée). État de la mer, marée, activités et incidence n'ont pas de liste
+// SANDRE dans l'application : listes du modèle EL, sans code.
 function buildELSite(){
   const c=$('siteCard');if(!c)return;
   if(!SANDRE_SITE){SANDRE_SITE=document.createElement('div');while(c.firstChild)SANDRE_SITE.appendChild(c.firstChild)}
   const mec=elStationType()==='MEC';
+  const sel=(id,label,code)=>`<div class="field"><label>${label}${code?`<span class="sandreCode">SANDRE ${code}</span>`:''}</label><select id="${id}"></select></div>`;
+  const plain=(id,label,list,first)=>`<div class="field"><label>${label}</label><select id="${id}"><option value="">${first||''}</option>${list.map(x=>`<option>${x}</option>`).join('')}</select></div>`;
   c.innerHTML=`<h2>${mec?'7 · Conditions du site — MEC':'7 · Conditions du site — MET'}</h2>
   <div class="elSectionTitle">Conditions générales</div>
-  <div class="grid2"><div class="field"><label>Météo</label><select id="meteo">${EL_METEO.map(x=>`<option>${x}</option>`).join('')}</select>
-  </div>${mec?`<div class="field"><label>État de la mer</label><select id="elMer"><option></option>${EL_MER.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Marée</label><select id="elMaree"><option></option>${EL_MAREE.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Coefficient de marée</label><input id="elCoefMaree" type="number" step="any"></div>`:
-  `<div class="field"><label>Situation hydrologique</label><select id="hydro"><option></option>${EL_HYDRO.map(x=>`<option>${x}</option>`).join('')}</select></div>`}</div>
-  ${mec?`<div class="elSectionTitle">Contexte du prélèvement</div><div class="grid2"><div class="field"><label>Activités anthropiques</label><select id="elActivites"><option value="">— sélectionner —</option>${EL_ACTIVITES.map(x=>`<option>${x}</option>`).join('')}</select></div></div>`:
+  <div class="grid2">${sel('meteo','Météo pendant le prélèvement',1425)}
+  ${mec?plain('elMer','État de la mer',EL_MER):sel('hydro','Situation hydrologique apparente',1726)}
+  ${plain('elMaree','Marée',EL_MAREE)}
+  <div class="field"><label>Coefficient de marée</label><input id="elCoefMaree" type="number" step="1" min="20" max="120" inputmode="numeric" placeholder="20 à 120"></div></div>
+  ${mec?`<div class="elSectionTitle">Contexte du prélèvement</div><div class="grid2">${plain('elActivites','Activités anthropiques',EL_ACTIVITES,'— sélectionner —')}</div>`:
   `<div class="elSectionTitle">Observations de l'eau et des abords</div><div class="grid2">
-  <div class="field"><label>Limpidité de l'eau</label><select id="limpidite"><option></option>${EL_LIMP.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Teinte de l'eau</label><select id="teinte"><option></option>${EL_TEINTE.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Irisation sur l'eau</label><select id="irisations"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Mousse de détergent</label><select id="mousse"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Boues organiques flottantes</label><select id="boues"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Intensité</label><select id="elIntensite"><option></option>${EL_INTENSITE.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Ombre</label><select id="ombre"><option></option>${EL_OMBRE.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Type de prélèvement</label><select id="typePrelSandre"><option></option>${EL_TYPEPREL.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Feuilles, branches, litière</label><select id="feuilles"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Aspect des abords</label><select id="aspect"><option></option>${EL_ASPECT.map(x=>`<option>${x}</option>`).join('')}</select></div>
-  <div class="field"><label>Incidence activité humaine</label><select id="elIncidence"><option></option>${EL_INC.map(x=>`<option>${x}</option>`).join('')}</select></div></div>`}
+  ${sel('limpidite','Limpidité',1422)}${sel('teinte',"Teinte de l'eau",1739)}${sel('elIntensite','Coloration apparente (intensité)',1428)}
+  ${sel('irisations','Irisations',1411)}${sel('mousse','Mousse de détergent',1412)}${sel('boues','Boues organiques flottantes',1423)}
+  ${sel('feuilles','Produits ligneux/herbacés',1413)}${sel('ombre','Ombrage',1415)}${sel('typePrelSandre','Type de prélèvement',1947)}
+  ${sel('aspect','Aspect des abords',1410)}${plain('elIncidence','Incidence activité humaine',EL_INC)}</div>`}
   <div class="field"><label>Observations</label><textarea id="siteObs"></textarea></div>`;
+  fill('meteo',W);
+  [['hydro','hydro'],['limpidite','limpidite'],['teinte','teinte'],['elIntensite','coloration'],['irisations','yn0'],['mousse','yn0'],['boues','yn0'],['feuilles','yn0'],['ombre','ombre'],['typePrelSandre','type'],['aspect','aspect']].forEach(([id,list])=>{if($(id))fill(id,S[list])});
 }
+// Anciennes fiches EL (listes du modèle EL, avant les codes SANDRE) : valeur convertie en code SANDRE
+// seulement quand l'équivalence est exacte ; sinon (Marron, Couvert, Crachin, Averse, Haute eau…) elle
+// est conservée telle quelle (voir setSelectKeep).
+const EL_LEGACY_SANDRE={
+  meteo:{'Ensoleillé':'1'},
+  hydro:{'Basse eau':'3','Moyenne eau':'4','Crue débordante':'6'},
+  limpidite:{'Limpide':'1','Peu trouble':'2','Trouble':'3'},
+  teinte:{'Bleu':'2','Vert':'4','Jaune':'6','Gris':'10','Noir':'11','Blanc':'12'},
+  elIntensite:{'Incolore':'1','Peu colorée':'2','Très colorée':'3'},
+  irisations:{'Oui':'1','Non':'2'},mousse:{'Oui':'1','Non':'2'},boues:{'Oui':'1','Non':'2'},feuilles:{'Oui':'1','Non':'2'},
+  ombre:{'Absente':'1','Faible':'2','Importante':'3'},
+  typePrelSandre:{'Rive':'1','Pont':'3','Embarcation':'4'},
+  aspect:{'Propre':'1','Sale':'2'},
+  elMaree:{'Etal':'Étal'}
+};
+function elLegacyValue(k,v){const m=EL_LEGACY_SANDRE[k];return m&&v!=null&&Object.prototype.hasOwnProperty.call(m,v)?m[v]:v}
+// Valeur enregistrée remise dans une liste : si elle ne figure plus parmi les choix (ancienne liste), elle
+// est ajoutée telle quelle, marquée « ancienne saisie », au lieu d'être effacée sans prévenir.
+function setSelectKeep(el,v,note){
+  if(!el)return;
+  v=v==null?'':String(v);
+  if(el.tagName==='SELECT'&&v&&![...el.options].some(o=>o.value===v)){const o=document.createElement('option');o.value=v;o.textContent=v+' ('+(note||'ancienne saisie')+')';el.appendChild(o)}
+  el.value=v;
+}
+// Équipement d'une fiche ouverte sur une autre tablette (liste d'équipements propre à chaque tablette) :
+// conservé au lieu d'être effacé, puis perdu au réenregistrement
+const EQ_KEEP='non référencé sur cette tablette';
 function buildELSample(){
   const h=$('sample');if(!h)return;const mec=elStationType()==='MEC';
   h.innerHTML=`<div class="elHead"><div><b>ÉCHANTILLONNAGE — EL</b><div class="hint" style="color:#fff">Rubriques reprises du modèle Excel FT_EL</div></div><span class="elBadge">${mec?'MEC':'MET'}</span></div>
@@ -859,6 +896,18 @@ function buildELSample(){
   <h3>Transport / remise</h3><div class="grid2"><div class="field"><label>Moyen de refroidissement</label><select id="transportFroid"><option></option><option>Glacières + blocs eutectiques</option><option>Véhicule réfrigéré</option><option>Autre</option></select></div><div class="field"><label>Suivi température</label><select id="transportSuivi"><option></option><option>Pastilles min/max</option><option>Thermomètre flacon</option><option>Enregistreur</option></select></div><div class="field"><label>Organisme récepteur</label><input id="recepteur"></div><div class="field"><label>Date / heure remise</label><input id="remise" type="datetime-local"></div></div>`;
   setTimeout(()=>receivers('recepteur'),0);
 }
+// Tableau des mesures in situ harmonisé (BIO, RCO, Chimie, ESO) sur la présentation du tableau EL : bandeau,
+// cases de saisie visibles, nom / n° de série / échéance de l'appareil affichés, turbidité M1 M2 M3 + moyenne.
+function insituHead(){return `<div class="elHead insituHead"><div><b>MESURES IN SITU — ${escapeHTML(netLabel(state.network)||state.network||'')}</b><div class="hint" style="color:#fff">Valeur, mode et sonde pour chaque paramètre · turbidité sur 3 mesures · le code GMAO renseigne le nom, le n° de série et l’échéance</div></div></div>`}
+// Badges métrologiques des sondes (lignes du tableau in situ) après un remplissage par programme
+function refreshProbeBadges(){document.querySelectorAll('select[id^="ig_"]').forEach(s=>{if(s._renderBadge)s._renderBadge()})}
+function refreshBoitierInfo(){
+  const sel=$('insituBoitier'),box=$('insituBoitierInfo');if(!sel||!box)return;
+  if(!sel.value){box.textContent='';box.className='eqInfoLine';return}
+  const e=equipmentByGmao(sel.value),st=equipStatus(e);
+  box.className='eqInfoLine';box.innerHTML=e?escapeHTML([e.nom,e.serie?'n° '+e.serie:'',e.echeance?'échéance '+e.echeance.split('-').reverse().join('/'):''].filter(Boolean).join(' · '))+' <span class="metrologyStatus '+st.cls+'">'+escapeHTML(st.label)+'</span>':'<span class="metrologyStatus metrologyBad">Non référencé sur cette tablette</span>';
+}
+window.refreshBoitierInfo=refreshBoitierInfo;
 function buildInsitu(){
   (function buildInsituCore(){
   const h=$('insitu');h.innerHTML='';
@@ -874,9 +923,9 @@ function buildInsitu(){
   ps.splice(3,0,['sal','Salinité','','sonde',null]);
   ps.push(['redox','Potentiel redox','mV/ENH','sonde',null]);
   if(state.network==='ESO'){
-    h.innerHTML=`<div class="note">Mode de mesure commun à toutes les sondes.</div>
-      <div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('eso_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}</div></div>
-      <table class="table"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody id="esoSensorTable"></tbody></table>`;
+    h.innerHTML=`${insituHead()}<div class="note">Mode de mesure commun à toutes les sondes.</div>
+      <div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('eso_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}<div id="insituBoitierInfo" class="eqInfoLine"></div></div></div>
+      <table class="table insituTable"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody id="esoSensorTable"></tbody></table>`;
     const tb=$('esoSensorTable');
     ps.filter(x=>x[0]!=='air').forEach(p=>{
       const tr=document.createElement('tr');
@@ -894,18 +943,20 @@ function buildInsitu(){
     });
     return;
   }
-  let t=`<div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('global_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}</div></div><table class="table"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody>`;
+  let t=`${insituHead()}<div class="grid2"><div class="field"><label>Mode de mesure</label>${radios('global_mode')}</div><div class="field"><label>Boîtier / appareil multiparamètre</label>${eqSelect('insituBoitier','boitier')}<div id="insituBoitierInfo" class="eqInfoLine"></div></div></div><table class="table insituTable"><thead><tr><th>Paramètre</th><th>Valeur</th><th>Code GMAO sonde/capteur</th><th>Nom</th><th>N° série</th><th>Étalonnage</th><th>Contrôle</th></tr></thead><tbody>`;
   ps.filter(p=>p[0]!=='redox').forEach(p=>t+=`<tr><td><b>${escapeHTML(p[1])}</b><br><span class="paramUnit">${escapeHTML(p[2])}</span>${p[4]?`<br><span class="sandreCode">SANDRE ${p[4]}</span>`:''}</td><td><input id="iv_${p[0]}" type="number" step="any"><span id="ivs_${p[0]}"></span></td><td>${eqSelect('ig_'+p[0],'sonde')}</td><td><input class="readonly" id="ign_${p[0]}" readonly></td><td><input class="readonly" id="igs_${p[0]}" readonly></td><td><input id="ic_${p[0]}" type="date"></td><td><select id="iq_${p[0]}"><option></option><option>Oui</option><option>Non</option></select></td></tr>`);
   t+='</tbody></table>';h.innerHTML+=t;
   ps.filter(p=>p[0]!=='redox').forEach(p=>{
     const el=$('ig_'+p[0]);if(el)el.onchange=()=>{const e=equipmentByGmao(el.value);$('ign_'+p[0]).value=e?.nom||'';$('igs_'+p[0]).value=e?.serie||''};
   });
   })();
+  if($('insituBoitier')){$('insituBoitier').addEventListener('change',refreshBoitierInfo);refreshBoitierInfo()}
   /* Badge métrologique après sélection GMAO (ancien correctif) */
   document.querySelectorAll('select[id^="ig_"]').forEach(sel=>{
     const p=sel.id.slice(3);let badge=document.getElementById('ims_'+p);if(!badge){badge=document.createElement('div');badge.id='ims_'+p;sel.parentElement.appendChild(badge)}
-    const render=()=>{const st=equipStatus(equipmentByGmao(sel.value));badge.className='metrologyStatus '+st.cls;badge.textContent=st.label;};
-    sel.addEventListener('change',render);render();
+    // Statut métrologique seulement quand un code est choisi (« Non référencé » s'affichait sur chaque ligne vide)
+    const render=()=>{if(!sel.value){badge.className='';badge.textContent='';return}const st=equipStatus(equipmentByGmao(sel.value));badge.className='metrologyStatus '+st.cls;badge.textContent=st.label;};
+    sel._renderBadge=render;sel.addEventListener('change',render);render();
   });
   /* Colonne "Mode" (in-situ / seau) par sonde, ajoutée après coup (ancien correctif) */
   setTimeout(()=>{
@@ -921,13 +972,13 @@ function buildInsitu(){
     base.style.display='none';
     const status=$('ivs_turb'); if(status)status.style.display='none';
     const wrap=document.createElement('div');wrap.className='turbReplicates';wrap.style.cssText='display:grid;grid-template-columns:repeat(3,minmax(70px,1fr));gap:6px;margin-top:4px';
-    ['1','2','3'].forEach(n=>{const lab=document.createElement('label');lab.className='turbMeas';lab.innerHTML='Mesure '+n+'<input id="iv_turb_'+n+'" type="number" step="any" inputmode="decimal" placeholder="NTU" aria-label="Turbidité mesure '+n+'" required>';wrap.appendChild(lab)});
+    ['1','2','3'].forEach(n=>{const lab=document.createElement('label');lab.className='turbMeas';lab.innerHTML='<input id="iv_turb_'+n+'" type="number" step="any" inputmode="decimal" placeholder="M'+n+'" aria-label="Turbidité mesure '+n+'" required>';wrap.appendChild(lab)});
     cell.insertBefore(wrap,base);
-    const avg=document.createElement('div');avg.id='iv_turb_moyenne';avg.className='turbAvg';avg.style.marginTop='4px';avg.textContent='Moyenne des 3 mesures : —';
+    const avg=document.createElement('div');avg.id='iv_turb_moyenne';avg.className='turbAvg';avg.style.marginTop='4px';avg.textContent='Moyenne : —';
     cell.insertBefore(avg,base);
     function refreshTurbAverage(){
       const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n))).filter(v=>v!==null);
-      avg.textContent='Moyenne des 3 mesures : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');
+      avg.textContent='Moyenne : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');
     }
     ['1','2','3'].forEach(n=>$('iv_turb_'+n).addEventListener('input',refreshTurbAverage));
     const existing=state.editing&&records.find(r=>r.id===state.editing)?.insitu?.turb;
@@ -1153,12 +1204,28 @@ function buildSpecific(){
 }
 
 function buildAll(){
+  homeRiverFields(); // avant toute reconstruction : ces champs ne doivent jamais être détruits avec un panneau
   if(isEL()){
     buildELInsitu();buildELSample();buildSpecific();buildELSite();initCanvases();
     const s=getStation(); if(s&&$('elDepth')){$('elDepth').value=s.type==='MEC'?'10':'';refreshELDepthLevels();}
     return;
   }
-  restoreSandreSite();buildInsitu();buildSample();buildSpecific();initCanvases()
+  restoreSandreSite();buildInsitu();buildSample();buildSpecific();initCanvases();
+  placeRiverFields();
+}
+// Recouvrement macrophytes, largeur et profondeur moyenne du cours d'eau : dans « Échantillonnage de
+// sédiments » quand la fiche en comporte un (RCO, Chimie S1), sinon dans les conditions du site (BIO,
+// Chimie S2-S4…). Mêmes identifiants : rien ne change dans les fiches enregistrées.
+const RIVER_FIELDS=['macro','largeur','profMoy'],riverHome={};
+function homeRiverFields(){
+  RIVER_FIELDS.forEach(id=>{const f=$(id)?.closest('.field');const ph=riverHome[id];if(f&&ph&&ph.parentNode&&f.previousSibling!==ph)ph.after(f)});
+  document.querySelectorAll('.riverFields').forEach(b=>{if(!b.querySelector('input'))b.remove()});
+}
+function placeRiverFields(){
+  const panel=document.querySelector('#specific .sedimentPanel,#sample .sedimentPanel');if(!panel)return;
+  let box=panel.querySelector('.riverFields');
+  if(!box){box=document.createElement('div');box.className='riverFields grid2';(panel.querySelector('.sedimentTitle')||panel.firstChild).after(box)}
+  RIVER_FIELDS.forEach(id=>{const f=$(id)?.closest('.field');if(!f)return;if(!riverHome[id]){riverHome[id]=document.createComment('emplacement '+id);f.before(riverHome[id])}box.appendChild(f)});
 }
 
 function collectSimple(ids){
@@ -1246,6 +1313,7 @@ function collectSpecific(){
   // ex. RCO « Eau prélevée ? », « Invertébrés… », « Diatomées… » — ou enregistrés avec la valeur
   // de leur attribut même non cochés quand ils en avaient un).
   const o={};document.querySelectorAll('#specific input,#specific select,#specific textarea').forEach(e=>{
+    if(e.closest('.riverFields'))return; // macrophytes / largeur / profondeur moyenne : enregistrés dans les conditions du site
     if(e.type==='radio'){if(e.checked&&e.name)o[e.name]=e.value;return}
     if(e.id)o[e.id]=e.type==='checkbox'?e.checked:e.value;
   });return o;
@@ -1326,7 +1394,8 @@ function setupCanvas(c){
   const pos=e=>{const q=c.getBoundingClientRect();return [e.clientX-q.left,e.clientY-q.top]};
   c.onpointerdown=e=>{fitCanvas(c);applyPen(c);active=true;c.setPointerCapture(e.pointerId);const ctx=c.getContext('2d'),[x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+0.01,y+0.01);ctx.stroke()};
   c.onpointermove=e=>{if(!active)return;const ctx=c.getContext('2d'),[x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke()};
-  const end=()=>{if(!active)return;active=false;c._hasContent=true;try{state[key]=c.toDataURL('image/png')}catch(_){}};
+  // Fin d'un trait : image mémorisée, puis brouillon automatique (le schéma n'était pas sauvegardé en cas d'arrêt)
+  const end=()=>{if(!active)return;active=false;c._hasContent=true;try{state[key]=c.toDataURL('image/png')}catch(_){}if(window.markDraftDirty)window.markDraftDirty()};
   c.onpointerup=end;c.onpointercancel=end;return c.getContext('2d')
 }
 // Palette de couleurs et gomme pour le canvas "Schéma / dessin" : la gomme efface localement
@@ -1410,9 +1479,10 @@ $('clearDraw').onclick=()=>{
   c._pen={color:'#17212b',eraser:false};applyPen(c);
   document.querySelectorAll('#drawColors .swatch').forEach((b,i)=>b.classList.toggle('sel',i===0));
   $('drawEraser')?.classList.remove('sel');
+  if(window.markDraftDirty)window.markDraftDirty();
 };
-$('clearSig').onclick=()=>{const c=$('signature'),x=c.getContext('2d');x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();state.signature=null;c._hasContent=false};
-$('printBtn').onclick=()=>{preparePrint();window.print()};
+$('clearSig').onclick=()=>{const c=$('signature'),x=c.getContext('2d');x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);x.restore();state.signature=null;c._hasContent=false;if(window.markDraftDirty)window.markDraftDirty()};
+$('printBtn').onclick=()=>{preparePrint();if(window.printFiche)window.printFiche();else window.print()}; // fiche mise en page : js/fiche-print.js
 
 function compress(file){
   return new Promise(res=>{const fr=new FileReader(),im=new Image();fr.onload=()=>{im.onload=()=>{const max=1280,s=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.72))};im.src=fr.result};fr.readAsDataURL(file)})
@@ -1431,6 +1501,7 @@ function collectRecord(){
     xTheorique:(stationXY22(s)?.[0]??s?.x)??'',yTheorique:(stationXY22(s)?.[1]??s?.y)??'',xTerrain:val('xT'),yTerrain:val('yT'),ecartM:$('distance').textContent,
     conditions:collectConditions(),insitu:collectInsitu(),sample:collectSample(),specific:collectSpecific(),
     photos:(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p),projection:val('projection'),schemaLegend:{ecoulement:!!$('legendeEcoulement')?.checked,prelevement:!!$('legendePrelevement')?.checked,berges:!!$('legendeBerges')?.checked,acces:!!$('legendeAcces')?.checked,autre:val('legendeAutre')},dessin:canvasData('draw'),signature:canvasData('signature'),signName:val('signName'),
+    prelevementRealise:radioValue('prelevementRealise')||'Oui',
     qc:radioValue('qc'),qcType:val('qcType'),obs:val('obs'),comment:val('comment'),insituBoitier:val('insituBoitier'),formValues:snapshotForm(),savedAt:new Date().toISOString(),
     appBuild:window.APP_BUILD||''
   };
@@ -1487,7 +1558,7 @@ function loadRecord(id){
   if(f.insitu){
     Object.keys(f.insitu).forEach(k=>{
       const d=f.insitu[k];if(d&&typeof d==='object'&&$(`iv_${k}`)){
-        $(`iv_${k}`).value=d.value||'';if($(`ig_${k}`)){$(`ig_${k}`).value=d.gmao||'';const e=equipmentByGmao(d.gmao||'');if($(`ign_${k}`))$(`ign_${k}`).value=e?.nom||d.nom||'';if($(`igs_${k}`))$(`igs_${k}`).value=e?.serie||d.serie||''}
+        $(`iv_${k}`).value=d.value||'';if($(`ig_${k}`)){setSelectKeep($(`ig_${k}`),d.gmao,EQ_KEEP);const e=equipmentByGmao(d.gmao||'');if($(`ign_${k}`))$(`ign_${k}`).value=e?.nom||d.nom||'';if($(`igs_${k}`))$(`igs_${k}`).value=e?.serie||d.serie||''}
         if($(`ic_${k}`))$(`ic_${k}`).value=d.etalonnage||'';if($(`iq_${k}`))$(`iq_${k}`).value=d.controle||'';if($(`imode_${k}`))$(`imode_${k}`).value=d.mode||''
       }
     })
@@ -1496,7 +1567,7 @@ function loadRecord(id){
     const tm=f.insitu.turb.mesures||[];
     [1,2,3].forEach((n,i)=>{if($('iv_turb_'+n))$('iv_turb_'+n).value=(tm[i]!=null?tm[i]:'')});
     const avg=$('iv_turb_moyenne');
-    if(avg){const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n))).filter(v=>v!==null);avg.textContent='Moyenne des 3 mesures : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');}
+    if(avg){const vals=[1,2,3].map(n=>numOrNull(val('iv_turb_'+n))).filter(v=>v!==null);avg.textContent='Moyenne : '+(vals.length===3?((vals[0]+vals[1]+vals[2])/3).toFixed(2)+' NTU':'—');}
   }
   if(f.network==='EL' && f.insitu?.params){
     const d=f.insitu;
@@ -1507,19 +1578,22 @@ function loadRecord(id){
       if($(`el_${k}_surf`))$(`el_${k}_surf`).value=v.surface??'';
       if($(`el_${k}_inter`))$(`el_${k}_inter`).value=v.intermediaire??'';
       if($(`el_${k}_fond`))$(`el_${k}_fond`).value=v.fond??'';
-      if($(`el_probe_${k}`))$(`el_probe_${k}`).value=v.sonde??'';
+      if($(`el_probe_${k}`))setSelectKeep($(`el_probe_${k}`),v.sonde,EQ_KEEP);
     });
     ['surf','inter','fond'].forEach(dn=>{
       const tm=d.turbidite?.[dn]?.mesures||[];
       [1,2,3].forEach((n,i)=>{if($(`el_turb_${dn}_${n}`))$(`el_turb_${dn}_${n}`).value=tm[i]??''});
-      if($('el_probe_turb'))$('el_probe_turb').value=d.turbidite?.[dn]?.sonde||d.turbidite?.surf?.sonde||'';
+      if($('el_probe_turb'))setSelectKeep($('el_probe_turb'),d.turbidite?.[dn]?.sonde||d.turbidite?.surf?.sonde||'',EQ_KEEP);
       refreshELTurb(dn);
     });
   }
   const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
-  Object.entries(mainMap).forEach(([k,v])=>{if($(k))$(k).value=v||''});
+  Object.entries(mainMap).forEach(([k,v])=>{const e=$(k);if(!e)return;if(f.network==='EL')v=elLegacyValue(k,v);if(e.tagName==='SELECT')setSelectKeep(e,v);else e.value=v||''});
+  if(f.insituBoitier)setSelectKeep($('insituBoitier'),f.insituBoitier,EQ_KEEP); // boîtier / appareil multiparamètre
+  refreshBoitierInfo();refreshProbeBadges(); // sonde à l'étalonnage expiré signalée aussi à la réouverture
   renderOrgOptions(f.organisme);renderPre();
   radioSet('qc',f.qc);
+  radioSet('prelevementRealise',f.prelevementRealise||'Oui');applyRealise();
   if(f.sample){
     Object.entries(f.sample).forEach(([k,v])=>{
       if($(k))$(k).value=v||'';
@@ -1604,7 +1678,7 @@ const SUIVI_SESSION_ORDER={
    retenue comme valeur de suivi, coherente avec les autres reseaux ; la turbidite EL utilise
    la moyenne des 3 repetitions de surface, comme dans le CRT. */
 function suiviValueFor(record,param){
-  const ins=record.insitu; if(!ins)return undefined;
+  const ins=record.insitu; if(!ins||record.prelevementRealise==='Non')return undefined; // prélèvement non réalisé : aucune mesure
   if(record.network==='EL'){
     // EL mesure sur 3 profondeurs : on utilise exclusivement les variantes _surf/_inter/_fond
     // (voir extension de SUIVI_PARAMS ci-dessous) pour ne perdre aucune des 3 séries.
@@ -1688,9 +1762,9 @@ function renderSuivi(){
   $('suiviStationTitle').textContent=s;
   $('suiviStationMeta').textContent=[sample?.stationInfo?.code_me?'Masse d’eau '+sample.stationInfo.code_me:'',sample?.stationInfo?.bassin||'',sample?.stationInfo?.pressions||''].filter(Boolean).join(' · ')||'Aperçu de la station';
   $('suiviStationBadge').textContent=(sample?.stationInfo?.code||'Station');
-  // EL : trois vues (évolution par profondeur, profil de profondeur, profil de l'estuaire), js/suivi-el.js
-  if(n==='EL'&&typeof renderSuiviEL==='function'){renderSuiviEL(n,s,grid);return}
-  if(typeof clearSuiviEL==='function')clearSuiviEL();
+  // Vues du suivi (js/suivi-el.js) : EL (évolution par profondeur, profil de profondeur, profil de l'estuaire),
+  // RCO / Chimie / BIO (évolution ci-dessous ou profil longitudinal du bassin versant), ESO (évolution seule)
+  if(typeof renderSuiviViews==='function'&&renderSuiviViews(n,s,grid))return;
   grid.innerHTML='';
   params.forEach(p=>{
     const series=suiviSeries(n,s,p),all=series.flatMap(x=>x.values); if(!all.length)return;
@@ -1745,7 +1819,7 @@ function mergeCustomInto(target,incoming){
   if(incoming.qualityConfig&&typeof incoming.qualityConfig==='object'){const appVersion=target.qualityConfig?.appVersion;target.qualityConfig=Object.assign({},target.qualityConfig||{},incoming.qualityConfig);if(appVersion)target.qualityConfig.appVersion=appVersion}
   if(incoming.crtMeta&&typeof incoming.crtMeta==='object')target.crtMeta=Object.assign({},incoming.crtMeta,target.crtMeta||{});
   Object.keys(incoming).forEach(k=>{
-    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs','nonConformites','auditTrail','qualityConfig','crtMeta'].includes(k))return;
+    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs','nonConformites','auditTrail','qualityConfig','crtMeta','type','exportedAt','lastAutoBackup'].includes(k))return;
     if(target[k]===undefined)target[k]=incoming[k];
   });
 }
@@ -1762,7 +1836,7 @@ $('reset').onclick=async()=>{
   if(!confirm('Effacer toutes les fiches et données de CET appareil ?\n\nLes sauvegardes déjà faites (dossier, Google Drive, exports) ne sont pas touchées. La connexion Google Drive et le dossier de sauvegarde devront être reconfigurés.'))return;
   try{
     Object.keys(localStorage).filter(k=>k.startsWith('oeg_')).forEach(k=>localStorage.removeItem(k));
-    await OEGStore.del(LS).catch(()=>{});await OEGStore.del('oeg_draft_v1').catch(()=>{});
+    await OEGStore.del(LS).catch(()=>{});await OEGStore.del('oeg_draft_v1').catch(()=>{});await OEGStore.del('oeg_draft_edit_v1').catch(()=>{}); // brouillons de modification compris
     await new Promise(res=>{try{const rq=indexedDB.deleteDatabase('oeg-sync-db');rq.onsuccess=rq.onerror=rq.onblocked=()=>res()}catch(e){res()}});
   }finally{location.reload()}
 };

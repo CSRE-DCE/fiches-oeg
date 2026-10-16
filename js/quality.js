@@ -105,7 +105,9 @@ async function saveQualityRecord(){
   /* Turbidité : le formulaire EL utilise 3 répétitions par profondeur.
      L'ancien contrôle regardait uniquement les champs IV génériques (iv_turb_1..3),
      ce qui provoquait une fausse erreur sur les fiches EL. */
-  if(state.network==='EL'){
+  const nonRealise=typeof isNonRealise==='function'&&isNonRealise(); // prélèvement non réalisé : pas de mesures
+  if(nonRealise){/* aucune mesure exigée */}
+  else if(state.network==='EL'){
     const depths=['surf','inter','fond'];
     for(const d of depths){
       const vals=[1,2,3].map(n=>val(`el_turb_${d}_${n}`).trim());
@@ -143,6 +145,7 @@ async function saveQualityRecord(){
   r.lifecycle.integrityHash=await sha256(integrityPayload(r));
   saveLS(LSC,custom);
   if(!saveLS(LS,records)){records=previous?records.map(x=>x.id===id?previous:x):records.filter(x=>x!==r);return}
+  if(previous&&window.clearEditDraft)window.clearEditDraft(id); // modifications enregistrées : leur brouillon n'a plus lieu d'être
   state.editing=null;$('save').textContent='💾 Enregistrer la fiche';updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi();toast(previous?'Fiche mise à jour ✓':'Fiche enregistrée ✓');
   if(typeof window.maybeAutoBackup==='function')setTimeout(()=>window.maybeAutoBackup(),1200);
   return true;
@@ -216,6 +219,7 @@ function flatRecordForCsv(r){
   const r2=v=>{const n=numOrNull(v);return n===null?(v??''):Math.round(n*100)/100};
   ['id','network','activity','bioOperation','session','station'].forEach(k=>put(k,r[k]??''));
   put('codeStation',si.code||si.code_bss||'');
+  put('prelevementRealise',r.prelevementRealise||'Oui');
   ['date','heureDebut','heureFin','organisme','preleveurs','xTheorique','yTheorique','xTerrain','yTerrain','projection'].forEach(k=>put(k,r[k]??''));
   put('ecartM',numOrNull(String(r.ecartM||'').replace(/\s*m\s*$/,''))??''); // nombre (auparavant « 12.3 m »)
   ['methodRef','methodVersion','obs','comment'].forEach(k=>put(k,r[k]??''));
@@ -228,7 +232,8 @@ function flatRecordForCsv(r){
     Object.entries(i.params||{}).forEach(([k,d])=>{D.forEach(dd=>put('el_'+k+'_'+dd,(dd==='intermediaire'?(d?.intermediaire??d?.inter):d?.[dd])??''));put('el_'+k+'_sonde',d?.sonde??'')});
     const t=i.turbidite||{};[['surf','surface'],['inter','intermediaire'],['fond','fond']].forEach(([a,b])=>put('el_turb_'+b,r2(t[a]?.moyenne)));
   }else Object.entries(i).forEach(([k,d])=>{if(!d||typeof d!=='object'||Array.isArray(d))return;put('mes_'+k,k==='turb'?r2(d.moyenne??d.value):(d.value??''));put('mes_'+k+'_gmao',d.gmao??'');if(d.mode)put('mes_'+k+'_mode',d.mode)});
-  Object.entries(r.conditions||{}).forEach(([k,v])=>put('cond_'+k,v));
+  // EL : anciennes fiches (libellés) exportées avec les codes SANDRE, comme les fiches récentes
+  Object.entries(r.conditions||{}).forEach(([k,v])=>put('cond_'+k,r.network==='EL'&&typeof elLegacyValue==='function'?elLegacyValue(k,v):v));
   const s=r.sample||{},recv=list=>(Array.isArray(list)?list:[]).filter(x=>x&&(x.organisme||x.dateHeure)).map(x=>(x.organisme||'?')+(x.dateHeure?' ('+x.dateHeure+')':''));
   Object.entries(s).forEach(([k,v])=>{if(!Array.isArray(v)||v.every(x=>x===null||typeof x!=='object'))put('ech_'+k,v)});
   put('ech_recepteurs',recv(s.recepteurs));put('ech_esoRecepteurs',recv(s.esoRecepteurs));
@@ -300,7 +305,7 @@ $('importJSON').onchange=e=>{
 };
 
 /* --- Liste des fiches : statut + métrologie + NC ouvertes --- */
-function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>[x.station,x.stationInfo?.code,x.network,x.activity,x.session,x.date,(x.preleveurs||[]).join(' '),x.organisme,x.signName,x.obs,x.comment,x.lifecycle?.status,x.id].join(' ').toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.heureDebut||'')}–${qEscape(f.heureFin||'')}</div></div><span class="badge">${qEscape(st)}</span></div><div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${f.conflict?`<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — comparez avec la fiche d’origine, gardez la bonne et supprimez l’autre.</div>`:''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button></div>`;const b=d.querySelectorAll('button');b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
+function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>[x.station,x.stationInfo?.code,x.network,x.activity,x.session,x.date,(x.preleveurs||[]).join(' '),x.organisme,x.signName,x.obs,x.comment,x.lifecycle?.status,x.id].join(' ').toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.heureDebut||'')}–${qEscape(f.heureFin||'')}</div></div><span class="badge">${qEscape(st)}</span></div>${f.prelevementRealise==='Non'?'<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⛔ Prélèvement non réalisé</div>':''}<div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${f.conflict?`<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — comparez avec la fiche d’origine, gardez la bonne et supprimez l’autre.</div>`:''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button></div>`;const b=d.querySelectorAll('button');b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);if(window.clearEditDraft)window.clearEditDraft(f.id);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
 
 /* --- Qualité : configuration persistante --- */
 ['qualityMethodRef','qualityMethodVersion','qualityInterlab','qualityMaterialRef'].forEach(id=>{
