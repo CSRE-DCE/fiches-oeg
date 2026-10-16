@@ -290,6 +290,8 @@
     let written = 0, failed = 0;
     for(const item of items){
       if(localHashes[item.id] === item.hash) continue; // rien de changé pour cette fiche
+      // Fiche modifiée ou allégée depuis la préparation : écrite au passage suivant (jamais sans ses photos)
+      if(!item.id.startsWith('_') && item.content && (item.content._archived || await hashOf(item.content) !== item.hash)) continue;
       try{
         const fh = await localFolderHandle.getFileHandle(item.filename, {create:true});
         const writable = await fh.createWritable();
@@ -335,6 +337,10 @@
 
   function requestTokenAsync(promptMode){
     return new Promise((resolve,reject)=>{
+      // Fenêtre Google ignorée ou bloquée : abandon au bout de 90 s (sinon toute synchronisation restait
+      // bloquée jusqu'au rechargement de l'appli)
+      const timer=setTimeout(()=>reject(new Error('token-timeout')),90000);
+      const done=f=>v=>{clearTimeout(timer);f(v)};resolve=done(resolve);reject=done(reject);
       try{
         const client = ensureTokenClient();
         client.callback = (resp)=>{
@@ -353,8 +359,12 @@
     });
   }
 
-  async function ensureValidToken(interactive){
-    if(driveAccessToken && Date.now() < driveTokenExpiresAt - 60000) return true;
+  async function ensureValidToken(interactive, userAction){
+    if(tokenValid()) return true;
+    // Sans geste récent de l'agent (synchronisation automatique, réception périodique), aucune fenêtre
+    // Google n'est ouverte : elle surgirait en pleine saisie ou serait bloquée par le navigateur.
+    // L'état « autorisation expirée » invite alors à toucher « Synchroniser maintenant ».
+    if(!interactive && !userAction && !(navigator.userActivation && navigator.userActivation.isActive)) return false;
     try{
       await loadGisScript();
       await requestTokenAsync(interactive ? 'consent' : '');
@@ -364,10 +374,17 @@
     }
   }
 
+  // Requête Drive avec délai maximal (réseau qui ne répond plus : sinon la synchronisation restait bloquée)
   async function driveFetch(url, options){
-    const resp = await fetch(url, options);
-    if(!resp.ok) throw new Error('drive-http-'+resp.status);
-    return resp;
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const long = options && options.method && options.method !== 'GET';
+    const timer = ctl ? setTimeout(()=>ctl.abort(), long ? 300000 : 90000) : null;
+    try{
+      const resp = await fetch(url, ctl ? {...(options||{}), signal: ctl.signal} : options);
+      if(resp.status === 401){ driveAccessToken = null; driveTokenExpiresAt = 0; try{ localStorage.removeItem(DRIVE_TOKEN_KEY) }catch(e){} }
+      if(!resp.ok) throw new Error('drive-http-'+resp.status);
+      return resp;
+    } finally { if(timer) clearTimeout(timer) }
   }
 
   // Le dossier Drive mémorisé est vérifié une fois par session : s'il n'existe plus (supprimé, ou
@@ -463,10 +480,12 @@
   // N'envoie que les fiches / fichiers de référence dont le contenu a changé depuis le dernier
   // envoi réussi vers Drive. Si le nom souhaité d'une fiche a changé (ex. date modifiée), un
   // NOUVEAU fichier Drive est créé — l'ancien fichier n'est ni supprimé ni renommé.
-  async function syncDrive(items){
+  async function syncDrive(items, userAction){
     if(!driveCfg.connected) return {ok:false, reason:'not-connected'};
     if(!navigator.onLine) return {ok:false, reason:'offline'};
-    const authOk = await ensureValidToken(false);
+    // Rien à envoyer : pas de demande d'autorisation (évite une fenêtre Google à chaque ouverture de l'appli)
+    if(!userAction && items.every(it=>driveHashes[it.id] === it.hash)) return {ok:true, written:0};
+    const authOk = await ensureValidToken(false, userAction);
     if(!authOk){renderDriveStatus('Reconnexion nécessaire'); return {ok:false, reason:'auth'}}
     let folderId;
     try{ folderId = await ensureDriveFolder() }
@@ -475,6 +494,9 @@
     const mergeStats = {conflicts:0, merged:0};
     for(const item of items){
       if(driveHashes[item.id] === item.hash) continue; // déjà à jour sur Drive
+      // Fiche modifiée depuis la préparation de l'envoi (validation, allègement des photos…) : envoyée au
+      // passage suivant, avec son contenu et son empreinte à jour (jamais une version allégée sans photos)
+      if(!item.id.startsWith('_') && (item.content?._archived || await hashOf(item.content) !== item.hash)) continue;
       const text = itemText(item);
       try{
         // Fichier déjà connu : mis à jour EN PLACE, et renommé si la date ou la station a changé.
@@ -487,7 +509,8 @@
           // télécharge sa version et on la fusionne (même règle que "Récupérer l'historique"),
           // puis l'envoi se refait au passage suivant, sur la fiche fusionnée.
           if(!item.id.startsWith('_') && await remoteChangedElsewhere(item.id)){
-            await mergeRemoteRecord(await driveDownloadJson(driveFileIds[item.id]), driveFileIds[item.id], driveNames[item.id], await driveFileVersion(driveFileIds[item.id]), mergeStats);
+            const remoteVersion = await driveFileVersion(driveFileIds[item.id]); // lu AVANT le contenu
+            await mergeRemoteRecord(await driveDownloadJson(driveFileIds[item.id]), driveFileIds[item.id], driveNames[item.id], remoteVersion, mergeStats);
             mergeStats.merged++;
             continue;
           }
@@ -548,7 +571,7 @@
       folderVerified = false; // autre compte possible : le dossier mémorisé sera vérifié
       saveDriveCfg();
       renderDriveStatus('Envoi des fiches en cours...');
-      await syncDrive(await collectItems());
+      await syncDrive(await collectItems(), true);
     }catch(e){
       if(typeof toast==='function') toast('Connexion à Google Drive impossible. Vérifiez le Client ID.');
       renderDriveStatus();
@@ -609,7 +632,7 @@
       if(f.name.startsWith('_')||!isNew(f))continue;
       try{
         const rec=await driveDownloadJson(f.id);
-        fetched.push(f);
+        fetched.push({f,id:rec&&rec.id});
         if(!rec||!rec.id){failed++;continue}
         const prev=remoteById.get(rec.id);
         if(!prev||recordStamp(rec)>recordStamp(prev.rec))remoteById.set(rec.id,{rec,fileId:f.id,name:f.name,version:f.version});
@@ -618,12 +641,13 @@
     // 3) Fusion avec les fiches de cet appareil, fondée sur la date de dernière modification.
     //    Règle d'or : une saisie locale n'est JAMAIS écrasée sans être conservée.
     await (window.OEGRecordsReady||Promise.resolve());
-    const stats={imported:0,updated:0,kept:0,conflicts:0,deleted:0};
+    const stats={imported:0,updated:0,kept:0,conflicts:0,deleted:0,deferOpen:true},later=new Set();
     for(const {rec,fileId,name,version} of remoteById.values()){
       if(window.OEGShare&&window.OEGShare.isDeletedVersion(rec)){stats.deleted++;continue} // supprimée sur CETTE tablette : ne revient pas
-      await mergeRemoteRecord(rec,fileId,name,version,stats);
+      if(await mergeRemoteRecord(rec,fileId,name,version,stats)==='deferred')later.add(rec.id);
     }
-    fetched.forEach(f=>{driveSeen[f.id]=String(f.version)});
+    // Fichiers lus, sauf ceux d'une fiche dont la fusion est reportée (relus à la réception suivante)
+    fetched.forEach(({f,id})=>{if(!later.has(id))driveSeen[f.id]=String(f.version)});
     saveDriveFileIds();saveDriveHashes();saveDriveNames();saveDriveVersions();saveDriveSeen();
     const restored=stats.restoredPhotos||0;
     if(stats.imported||stats.updated||stats.conflicts||restored){
@@ -644,7 +668,7 @@
     if(!driveCfg.connected){if(typeof toast==='function')toast("Connectez d'abord Google Drive.");return {ok:false,reason:'not-connected'}}
     if(!navigator.onLine){if(typeof toast==='function')toast('Pas de connexion : impossible de récupérer l\u2019historique.');return {ok:false,reason:'offline'}}
     return withLock(async()=>{
-      const authOk=await ensureValidToken(false);
+      const authOk=await ensureValidToken(false,true);
       if(!authOk){renderDriveStatus('Reconnexion nécessaire');return {ok:false,reason:'auth'}}
       renderDriveStatus('Récupération de l\u2019historique en cours…');
       let r;
@@ -679,11 +703,18 @@
   async function mergeRemoteRecord(rec,fileId,name,version,stats){
     if(!rec||!rec.id)return;
     const id=rec.id;
+    const editingId=(typeof state!=='undefined'&&state)?state.editing:null;
+    // Réception : fiche ouverte dans le formulaire (même seulement consultée) : fusion reportée à la
+    // réception suivante, une fois la fiche fermée ou enregistrée (pas de fausse copie de conflit)
+    if(stats.deferOpen&&id===editingId){stats.deferred=(stats.deferred||0)+1;return 'deferred'}
     const remoteHash=await hashOf(rec);
     const adoptRemote=()=>{driveFileIds[id]=fileId;driveNames[id]=name;driveHashes[id]=remoteHash;if(version!==undefined)driveVersions[id]=version;rememberHash(id,remoteHash)};
     const idx=records.findIndex(r=>r.id===id);
     if(idx===-1){records.push(rec);adoptRemote();stats.imported=(stats.imported||0)+1;return}
     const local=records[idx];
+    // La liste des fiches peut changer pendant les calculs (enregistrement, suppression) : la fiche est
+    // relue avant toute modification ; si elle a changé, la fusion est reportée (rien n'est écrasé)
+    const still=()=>records.find(r=>r.id===id)===local;
     // Fiche allégée ici, complète sur Drive : on lui rend ses photos avant de comparer
     // (auparavant chaque récupération créait une fausse copie de conflit).
     if(local._archived&&!rec._archived&&Array.isArray(rec.photos)){
@@ -692,19 +723,19 @@
       stats.restoredPhotos=(stats.restoredPhotos||0)+1;
     }
     const localHash=await hashOf(local);
+    if(!still())return 'deferred';
     if(localHash===remoteHash){adoptRemote();return}
     const localDirty=driveHashes[id]!==localHash;   // modifications locales pas encore envoyées sur Drive
     const remoteSeen=driveHashes[id]===remoteHash||hashKnown(id,remoteHash);  // version déjà connue de cet appareil
     const remoteNewer=recordStamp(rec)>recordStamp(local);
-    const editingId=(typeof state!=='undefined'&&state)?state.editing:null;
     if(remoteNewer&&id!==editingId){
-      if(localDirty){records.push(await conflictCopy(local,'cette tablette'));stats.conflicts=(stats.conflicts||0)+1}
-      records[idx]=rec;adoptRemote();stats.updated=(stats.updated||0)+1;
+      if(localDirty){const cc=await conflictCopy(local,'cette tablette');if(!still())return 'deferred';records.push(cc);stats.conflicts=(stats.conflicts||0)+1}
+      records[records.findIndex(r=>r.id===id)]=rec;adoptRemote();stats.updated=(stats.updated||0)+1;
     }else{
       // Version locale plus récente (ou fiche ouverte en cours de modification) : elle est
       // conservée et sera envoyée sur Drive. Si la version Drive contient des modifications
       // inconnues ici (autre tablette), elle est d'abord gardée en copie de conflit.
-      if(!remoteSeen&&!conflictAlreadyCopied(id,remoteHash)){records.push(await conflictCopy(rec,'Google Drive'));markConflictCopied(id,remoteHash);stats.conflicts=(stats.conflicts||0)+1}
+      if(!remoteSeen&&!conflictAlreadyCopied(id,remoteHash)){const cc=await conflictCopy(rec,'Google Drive');records.push(cc);markConflictCopied(id,remoteHash);stats.conflicts=(stats.conflicts||0)+1}
       // La version Drive est désormais connue : le prochain envoi pourra la remplacer.
       if(fileId===driveFileIds[id]&&version!==undefined)driveVersions[id]=version;
       stats.kept=(stats.kept||0)+1;
@@ -772,7 +803,7 @@
         // l'index et les fichiers seraient calculés sur une liste incomplète.
         await (window.OEGRecordsReady||Promise.resolve());
         const items = await collectItems();
-        if(localFolderHandle) await syncLocalFolder(items);
+        if(localFolderHandle){ try{ await syncLocalFolder(items) }catch(e){} } // un échec du dossier n'empêche pas Drive
         if(driveCfg.connected){
           await syncDrive(items);
           const force = pullWanted; pullWanted = false;
@@ -794,7 +825,7 @@
     return withLock(async()=>{
       const items = await collectItems();
       const r1 = localFolderHandle ? await syncLocalFolder(items) : {ok:true, written:0};
-      const r2 = driveCfg.connected ? await syncDrive(items) : {ok:true, written:0};
+      const r2 = driveCfg.connected ? await syncDrive(items, true) : {ok:true, written:0};
       let r3 = null;
       if(driveCfg.connected && tokenValid()){ try{ r3 = await pullCore(false) }catch(e){ r3 = {ok:false} } }
       renderLocalStatus();

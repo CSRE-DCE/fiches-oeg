@@ -1274,7 +1274,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     const ctxs=[];
     async function tablet(){
       const c=await browser.newContext({serviceWorkers:'block'});ctxs.push(c);await c.route('https://unpkg.com/**',r=>r.abort());
-      await c.route('https://accounts.google.com/**',r=>r.fulfill({contentType:'text/javascript',body:'window.google={accounts:{oauth2:{initTokenClient:o=>({requestAccessToken(){this.callback({access_token:"tok",expires_in:3600})}})}}}'}));
+      await c.route('https://accounts.google.com/**',r=>r.fulfill({contentType:'text/javascript',body:'window.__gis=0;window.google={accounts:{oauth2:{initTokenClient:o=>({requestAccessToken(){window.__gis++;this.callback({access_token:"tok",expires_in:3600})}})}}}'}));
       await c.route('https://www.googleapis.com/**',async r=>{const u=new URL(r.request().url()),m=r.request().method(),body=r.request().postData()||'';let mm;
         if(m==='GET'&&u.pathname==='/drive/v3/files'){const q=u.searchParams.get('q')||'';if(q.includes('vnd.google-apps.folder'))return r.fulfill({json:{files:[...acct.folders.values()].map(f=>({id:f.id,name:f.name}))}});const pm=q.match(/'([^']+)' in parents/);return r.fulfill({json:{files:[...acct.files].filter(([id,f])=>!pm||f.parent===pm[1]).map(([id,f])=>({id,name:f.name,version:String(f.v)}))}})}
         if(m==='POST'&&u.pathname==='/drive/v3/files'){const j=JSON.parse(body);const id='D'+(nid++);acct.folders.set(id,{id,name:j.name});return r.fulfill({json:{id}})}
@@ -1341,6 +1341,22 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await sync(A);await sync(B);await sync(A);await A.waitForTimeout(1800);
     const moved=[...acct.files].filter(([id,f])=>snap.get(id)!==f.v).map(([id,f])=>f.name);
     ok(moved.length===0,'partage stable : aucun fichier réécrit sans changement '+JSON.stringify(moved));
+    // Fiche ouverte dans le formulaire sur B pendant une modification sur A : pas remplacée sous les yeux de
+    // l'agent ni copiée en conflit ; mise à jour une fois la fiche fermée
+    await B.evaluate(()=>{loadRecord('R2');showTab('new')});
+    await A.evaluate(()=>{const r=records.find(r=>r.id==='R2');r.comment='A2';r.lifecycle.updatedAt='2026-10-09T08:00:00.000Z';saveLS(LS,records)});await sync(A);
+    const n0=await B.evaluate(()=>records.filter(r=>r.id.startsWith('R2_conflit')).length);
+    await B.evaluate(()=>OEGSync.autoPull());
+    ok(await B.evaluate(n0=>records.find(r=>r.id==='R2').comment!=='A2'&&records.filter(r=>r.id.startsWith('R2_conflit')).length===n0&&state.editing==='R2',n0),'fiche ouverte dans le formulaire : réception reportée (ni remplacée, ni fausse copie de conflit)');
+    await B.evaluate(()=>clearFormNoConfirm());await B.evaluate(()=>OEGSync.autoPull());
+    ok(await B.evaluate(()=>records.find(r=>r.id==='R2').comment==='A2'),'fiche fermée : la version de l’autre tablette arrive à la réception suivante');
+    // Envoi automatique sans geste de l'agent et sans autorisation valable : aucune fenêtre Google
+    await A.evaluate(()=>{localStorage.removeItem('oeg_sync_drive_token_v1')});
+    await A.reload();await A.evaluate(()=>window.OEGRecordsReady);
+    await A.evaluate(()=>{window.__gis=0;records.find(r=>r.id==='R2').obs='modif';saveLS(LS,records)});await A.waitForTimeout(2500);
+    ok(await A.evaluate(()=>window.__gis)===0,'envoi automatique sans geste de l’agent : aucune fenêtre Google ouverte');
+    await A.evaluate(()=>OEGSync.manualSyncNow());
+    ok(await A.evaluate(()=>window.__gis)===1&&[...acct.files.values()].length>0,'« Synchroniser maintenant » : autorisation redemandée, envoi fait');
     // Autorisation Google expirée : pas de fenêtre ouverte en arrière-plan, état affiché
     await A.evaluate(()=>{localStorage.setItem('oeg_sync_drive_token_v1',JSON.stringify({token:'old',exp:Date.now()-1000}))});
     await A.reload();await A.evaluate(()=>window.OEGRecordsReady);await A.waitForTimeout(300);
