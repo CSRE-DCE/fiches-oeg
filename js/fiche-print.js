@@ -57,7 +57,10 @@
   function labelOf(lab){
     if(!lab)return {text:'',code:''};
     const code=lab.querySelector('.sandreCode');
-    return {text:collect(lab,code),code:code?clean(code.textContent):''};
+    // « X terrain — selon projection sélectionnée ci-dessus » → « X terrain — RGFG 95 / UTM 22N » : libellé court,
+    // X et Y terrain sur une même ligne comme les coordonnées théoriques
+    const text=collect(lab,code).replace(/\s*—\s*selon projection sélectionnée ci-dessus\s*$/i,()=>' — '+(val('projection')||'projection choisie'));
+    return {text,code:code?clean(code.textContent):''};
   }
   // ---------- Lecture du formulaire ----------
   function tableBlock(t){

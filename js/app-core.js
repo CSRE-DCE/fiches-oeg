@@ -1806,10 +1806,7 @@ function mergeCustomInto(target,incoming){
     const seen=new Set(target[k].map(x=>JSON.stringify(x)));
     incoming[k].forEach(x=>{const s=JSON.stringify(x);if(!seen.has(s)){target[k].push(x);seen.add(s)}});
   });
-  // Accès et configuration qualité : les valeurs déjà présentes ici sont gardées (une ancienne sauvegarde
-  // importée remplaçait des réglages plus récents, ensuite repris par les autres tablettes) ; seules les
-  // entrées manquantes sont ajoutées
-  if(incoming.stationAccess)target.stationAccess=Object.assign({},incoming.stationAccess,target.stationAccess||{});
+  if(incoming.stationAccess)target.stationAccess=Object.assign({},target.stationAccess||{},incoming.stationAccess);
   if(Array.isArray(incoming.receiverOrgs))target.receiverOrgs=[...new Set([...(target.receiverOrgs||[]),...incoming.receiverOrgs])];
   // Non-conformités et journal d'audit : réunis (par identifiant). Auparavant ils étaient ignorés
   // (tableaux déjà créés au démarrage) : une NC critique ouverte importée ne bloquait plus la validation.
@@ -1819,10 +1816,10 @@ function mergeCustomInto(target,incoming){
     const seen=new Set(target[k].map(x=>x&&x.id!=null?'id:'+x.id:JSON.stringify(x)));
     incoming[k].forEach(x=>{const key=x&&x.id!=null?'id:'+x.id:JSON.stringify(x);if(!seen.has(key)){target[k].push(x);seen.add(key)}});
   });
-  if(incoming.qualityConfig&&typeof incoming.qualityConfig==='object'){const appVersion=target.qualityConfig?.appVersion;target.qualityConfig=Object.assign({},incoming.qualityConfig,target.qualityConfig||{});if(appVersion)target.qualityConfig.appVersion=appVersion}
+  if(incoming.qualityConfig&&typeof incoming.qualityConfig==='object'){const appVersion=target.qualityConfig?.appVersion;target.qualityConfig=Object.assign({},target.qualityConfig||{},incoming.qualityConfig);if(appVersion)target.qualityConfig.appVersion=appVersion}
   if(incoming.crtMeta&&typeof incoming.crtMeta==='object')target.crtMeta=Object.assign({},incoming.crtMeta,target.crtMeta||{});
   Object.keys(incoming).forEach(k=>{
-    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs','nonConformites','auditTrail','qualityConfig','crtMeta','type','exportedAt','share','lastAutoBackup'].includes(k))return;
+    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs','nonConformites','auditTrail','qualityConfig','crtMeta','type','exportedAt','lastAutoBackup'].includes(k))return;
     if(target[k]===undefined)target[k]=incoming[k];
   });
 }

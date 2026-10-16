@@ -28,11 +28,6 @@
   const DRIVE_FILEIDS_KEY = 'oeg_sync_drive_fileids_v1';
   const DRIVE_NAMES_KEY = 'oeg_sync_drive_filenames_v1';
   const DRIVE_VERSIONS_KEY = 'oeg_sync_drive_versions_v1';
-  const DRIVE_SEEN_KEY = 'oeg_sync_drive_seen_v1';      // fileId -> version déjà lue/écrite (réception incrémentale)
-  const KNOWN_HASHES_KEY = 'oeg_sync_known_hashes_v1';  // id fiche -> dernières empreintes connues ici
-  const DRIVE_TOKEN_KEY = 'oeg_sync_drive_token_v1';    // jeton Google (1 h) gardé au rechargement
-  const AUTO_PULL_MS = 5 * 60 * 1000;                   // réception automatique toutes les 5 minutes
-  const PULL_THROTTLE_MS = 60 * 1000;                   // au plus une réception par minute après un envoi
   const DEBOUNCE_MS = 1500;
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
   const DRIVE_FOLDER_NAME = 'Fiches terrain OEG';
@@ -104,21 +99,9 @@
   let driveNames = loadJson(DRIVE_NAMES_KEY, {});  // id -> nom de fichier actuel sur Drive
   let driveVersions = loadJson(DRIVE_VERSIONS_KEY, {}); // id -> numéro de version Drive du fichier, tel que vu lors du dernier envoi/téléchargement
   let driveCfg = loadJson(DRIVE_CFG_KEY, {clientId:'', folderId:'', connected:false});
-  let driveSeen = loadJson(DRIVE_SEEN_KEY, {});
-  let knownHashes = loadJson(KNOWN_HASHES_KEY, {});
-  function saveDriveSeen(){ saveJson(DRIVE_SEEN_KEY, driveSeen) }
-  // Empreintes des dernières versions d'une fiche envoyées / reçues par cette tablette : une ancienne
-  // version retrouvée sur Drive (ancien fichier de la même fiche) n'est pas prise pour une modification
-  // faite ailleurs (pas de fausse copie de conflit).
-  function rememberHash(id, h){ if(!id||!h)return; const a = knownHashes[id] || (knownHashes[id] = []); if(!a.includes(h)){ a.push(h); if(a.length > 8) a.shift(); saveJson(KNOWN_HASHES_KEY, knownHashes) } }
-  function hashKnown(id, h){ return !!(knownHashes[id] && knownHashes[id].includes(h)) }
 
-  // Jeton d'accès Google (valable 1 h) : conservé pour que la réception automatique reprenne après un
-  // rechargement de l'appli sans redemander l'autorisation (fenêtre Google impossible à ouvrir sans geste)
-  const savedTok = loadJson(DRIVE_TOKEN_KEY, null);
-  let driveAccessToken = savedTok && savedTok.exp > Date.now() + 60000 ? savedTok.token : null;
-  let driveTokenExpiresAt = driveAccessToken ? savedTok.exp : 0;
-  function tokenValid(){ return !!driveAccessToken && Date.now() < driveTokenExpiresAt - 60000 }
+  let driveAccessToken = null;
+  let driveTokenExpiresAt = 0;
   let tokenClient = null;
   let gisLoading = null;
 
@@ -145,7 +128,6 @@
   }
 
   function referentielPayload(){
-    if(window.OEGShare) return window.OEGShare.payload('ref');
     return {
       type: 'referentiel_operateurs_equipements_stations',
       preleveurs: custom.preleveurs || [],
@@ -156,7 +138,6 @@
     };
   }
   function qualitePayload(){
-    if(window.OEGShare) return window.OEGShare.payload('qual');
     return {
       type: 'qualite_audit_non_conformites',
       nonConformites: custom.nonConformites || [],
@@ -194,18 +175,14 @@
       if(r._archived) continue;
       items.push({id: r.id, filename: filenameForRecord(r), content: r, hash: await hashOf(r)});
     }
-    // Dates des changements du référentiel / de la qualité faits sur cette tablette (partage, js/partage.js)
-    if(window.OEGShare){ try{ window.OEGShare.stamp() }catch(e){} }
     const ref = referentielPayload();
     const qual = qualitePayload();
     // Le hash exclut "exportedAt" (horodatage toujours différent) pour ne pas déclencher
     // une réécriture à chaque passage alors que le contenu réel n'a pas changé.
     const { exportedAt: _refTs, ...refForHash } = ref;
     const { exportedAt: _qualTs, ...qualForHash } = qual;
-    // Un fichier de partage PAR tablette (les autres tablettes le lisent, personne d'autre ne l'écrit)
-    const dev = window.OEGShare ? '_' + window.OEGShare.deviceId : '';
-    items.push({id: REF_KEY, filename: '_referentiel_operateurs_equipements_stations' + dev + '.json', content: ref, hash: await hashOf(refForHash)});
-    items.push({id: QUALITE_KEY, filename: '_qualite_audit_non-conformites' + dev + '.json', content: qual, hash: await hashOf(qualForHash)});
+    items.push({id: REF_KEY, filename: '_referentiel_operateurs_equipements_stations.json', content: ref, hash: await hashOf(refForHash)});
+    items.push({id: QUALITE_KEY, filename: '_qualite_audit_non-conformites.json', content: qual, hash: await hashOf(qualForHash)});
     const csvText = indexCsvPayload();
     items.push({id: INDEX_KEY, filename: '_index_fiches.csv', content: null, text: csvText, hash: await sha256(csvText)});
     return items;
@@ -290,8 +267,6 @@
     let written = 0, failed = 0;
     for(const item of items){
       if(localHashes[item.id] === item.hash) continue; // rien de changé pour cette fiche
-      // Fiche modifiée ou allégée depuis la préparation : écrite au passage suivant (jamais sans ses photos)
-      if(!item.id.startsWith('_') && item.content && (item.content._archived || await hashOf(item.content) !== item.hash)) continue;
       try{
         const fh = await localFolderHandle.getFileHandle(item.filename, {create:true});
         const writable = await fh.createWritable();
@@ -337,17 +312,12 @@
 
   function requestTokenAsync(promptMode){
     return new Promise((resolve,reject)=>{
-      // Fenêtre Google ignorée ou bloquée : abandon au bout de 90 s (sinon toute synchronisation restait
-      // bloquée jusqu'au rechargement de l'appli)
-      const timer=setTimeout(()=>reject(new Error('token-timeout')),90000);
-      const done=f=>v=>{clearTimeout(timer);f(v)};resolve=done(resolve);reject=done(reject);
       try{
         const client = ensureTokenClient();
         client.callback = (resp)=>{
           if(resp && resp.access_token){
             driveAccessToken = resp.access_token;
             driveTokenExpiresAt = Date.now() + ((resp.expires_in||3300) * 1000);
-            saveJson(DRIVE_TOKEN_KEY, {token: driveAccessToken, exp: driveTokenExpiresAt});
             resolve(resp);
           }else{
             reject(new Error('no-token'));
@@ -359,12 +329,8 @@
     });
   }
 
-  async function ensureValidToken(interactive, userAction){
-    if(tokenValid()) return true;
-    // Sans geste récent de l'agent (synchronisation automatique, réception périodique), aucune fenêtre
-    // Google n'est ouverte : elle surgirait en pleine saisie ou serait bloquée par le navigateur.
-    // L'état « autorisation expirée » invite alors à toucher « Synchroniser maintenant ».
-    if(!interactive && !userAction && !(navigator.userActivation && navigator.userActivation.isActive)) return false;
+  async function ensureValidToken(interactive){
+    if(driveAccessToken && Date.now() < driveTokenExpiresAt - 60000) return true;
     try{
       await loadGisScript();
       await requestTokenAsync(interactive ? 'consent' : '');
@@ -374,17 +340,10 @@
     }
   }
 
-  // Requête Drive avec délai maximal (réseau qui ne répond plus : sinon la synchronisation restait bloquée)
   async function driveFetch(url, options){
-    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-    const long = options && options.method && options.method !== 'GET';
-    const timer = ctl ? setTimeout(()=>ctl.abort(), long ? 300000 : 90000) : null;
-    try{
-      const resp = await fetch(url, ctl ? {...(options||{}), signal: ctl.signal} : options);
-      if(resp.status === 401){ driveAccessToken = null; driveTokenExpiresAt = 0; try{ localStorage.removeItem(DRIVE_TOKEN_KEY) }catch(e){} }
-      if(!resp.ok) throw new Error('drive-http-'+resp.status);
-      return resp;
-    } finally { if(timer) clearTimeout(timer) }
+    const resp = await fetch(url, options);
+    if(!resp.ok) throw new Error('drive-http-'+resp.status);
+    return resp;
   }
 
   // Le dossier Drive mémorisé est vérifié une fois par session : s'il n'existe plus (supprimé, ou
@@ -480,13 +439,11 @@
   // N'envoie que les fiches / fichiers de référence dont le contenu a changé depuis le dernier
   // envoi réussi vers Drive. Si le nom souhaité d'une fiche a changé (ex. date modifiée), un
   // NOUVEAU fichier Drive est créé — l'ancien fichier n'est ni supprimé ni renommé.
-  async function syncDrive(items, userAction){
+  async function syncDrive(items){
     if(!driveCfg.connected) return {ok:false, reason:'not-connected'};
     if(!navigator.onLine) return {ok:false, reason:'offline'};
-    // Rien à envoyer : pas de demande d'autorisation (évite une fenêtre Google à chaque ouverture de l'appli)
-    if(!userAction && items.every(it=>driveHashes[it.id] === it.hash)) return {ok:true, written:0};
-    const authOk = await ensureValidToken(false, userAction);
-    if(!authOk){renderDriveStatus(); return {ok:false, reason:'auth'}} // état « autorisation expirée : touchez Synchroniser maintenant »
+    const authOk = await ensureValidToken(false);
+    if(!authOk){renderDriveStatus('Reconnexion nécessaire'); return {ok:false, reason:'auth'}}
     let folderId;
     try{ folderId = await ensureDriveFolder() }
     catch(e){ renderDriveStatus('Impossible de créer le dossier Drive'); return {ok:false, reason:'folder'} }
@@ -494,9 +451,6 @@
     const mergeStats = {conflicts:0, merged:0};
     for(const item of items){
       if(driveHashes[item.id] === item.hash) continue; // déjà à jour sur Drive
-      // Fiche modifiée depuis la préparation de l'envoi (validation, allègement des photos…) : envoyée au
-      // passage suivant, avec son contenu et son empreinte à jour (jamais une version allégée sans photos)
-      if(!item.id.startsWith('_') && (item.content?._archived || await hashOf(item.content) !== item.hash)) continue;
       const text = itemText(item);
       try{
         // Fichier déjà connu : mis à jour EN PLACE, et renommé si la date ou la station a changé.
@@ -509,22 +463,20 @@
           // télécharge sa version et on la fusionne (même règle que "Récupérer l'historique"),
           // puis l'envoi se refait au passage suivant, sur la fiche fusionnée.
           if(!item.id.startsWith('_') && await remoteChangedElsewhere(item.id)){
-            const remoteVersion = await driveFileVersion(driveFileIds[item.id]); // lu AVANT le contenu
-            await mergeRemoteRecord(await driveDownloadJson(driveFileIds[item.id]), driveFileIds[item.id], driveNames[item.id], remoteVersion, mergeStats);
+            await mergeRemoteRecord(await driveDownloadJson(driveFileIds[item.id]), driveFileIds[item.id], driveNames[item.id], await driveFileVersion(driveFileIds[item.id]), mergeStats);
             mergeStats.merged++;
             continue;
           }
           const version = await driveUpdateFile(driveFileIds[item.id], item.filename, text);
-          if(version !== undefined){ driveVersions[item.id] = version; driveSeen[driveFileIds[item.id]] = String(version) }
+          if(version !== undefined) driveVersions[item.id] = version;
         }else{
           const created = await driveCreateFile(item.filename, folderId, text);
           driveFileIds[item.id] = created.id;
-          if(created.version !== undefined){ driveVersions[item.id] = created.version; driveSeen[created.id] = String(created.version) }
+          if(created.version !== undefined) driveVersions[item.id] = created.version;
           saveDriveFileIds();
         }
         driveHashes[item.id] = item.hash;
         driveNames[item.id] = item.filename;
-        if(!item.id.startsWith('_')) rememberHash(item.id, item.hash);
         written++;
       }catch(e){
         // Fichier supprimé sur Drive : on l'oublie pour le recréer au prochain passage
@@ -536,7 +488,7 @@
         failed++; // sera retenté au prochain passage
       }
     }
-    if(written){saveDriveHashes(); saveDriveNames(); saveDriveSeen()}
+    if(written){saveDriveHashes(); saveDriveNames()}
     if(written) localStorage.setItem('oeg_sync_drive_last', new Date().toISOString());
     saveDriveVersions();
     if(mergeStats.merged){
@@ -571,7 +523,7 @@
       folderVerified = false; // autre compte possible : le dossier mémorisé sera vérifié
       saveDriveCfg();
       renderDriveStatus('Envoi des fiches en cours...');
-      await syncDrive(await collectItems(), true);
+      await syncDrive(await collectItems());
     }catch(e){
       if(typeof toast==='function') toast('Connexion à Google Drive impossible. Vérifiez le Client ID.');
       renderDriveStatus();
@@ -582,125 +534,70 @@
     driveCfg.connected = false;
     driveAccessToken = null;
     driveTokenExpiresAt = 0;
-    try{ localStorage.removeItem(DRIVE_TOKEN_KEY) }catch(e){}
     saveDriveCfg();
     renderDriveStatus();
   }
 
-  // Liste des fichiers du dossier Drive commun (toutes pages)
-  async function listFolderFiles(folderId){
+  // Récupère TOUTES les fiches du dossier Drive partagé (utile quand plusieurs tablettes,
+  // connectées au même compte Google, contribuent chacune une partie des visites sur une
+  // station : sans cet appel, l'historique et l'histogramme du CRT ne voient que les fiches
+  // déjà présentes sur CET appareil). Les fiches récupérées sont fusionnées dans "records"
+  // (ajoutées si nouvelles ; pour une fiche déjà connue, la version la plus récente l'emporte et une
+  // version divergente est conservée en copie de conflit) puis sauvegardées localement — elles
+  // seront donc aussi recopiées dans le dossier local de cet appareil au prochain passage.
+  async function pullFromDrive(){
+    if(!driveCfg.connected){if(typeof toast==='function')toast("Connectez d'abord Google Drive.");return {ok:false,reason:'not-connected'}}
+    if(!navigator.onLine){if(typeof toast==='function')toast('Pas de connexion : impossible de récupérer l\u2019historique.');return {ok:false,reason:'offline'}}
+    const authOk=await ensureValidToken(false);
+    if(!authOk){renderDriveStatus('Reconnexion nécessaire');return {ok:false,reason:'auth'}}
+    let folderId;
+    try{folderId=await ensureDriveFolder()}catch(e){renderDriveStatus('Impossible d\u2019accéder au dossier Drive');return {ok:false,reason:'folder'}}
+    renderDriveStatus('Récupération de l\u2019historique en cours…');
     let files=[],pageToken;
-    do{
-      const q=encodeURIComponent(`'${folderId}' in parents and trashed=false`);
-      let url=`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,version)&pageSize=1000`;
-      if(pageToken)url+='&pageToken='+encodeURIComponent(pageToken);
-      const resp=await driveFetch(url,{headers:{'Authorization':'Bearer '+driveAccessToken}});
-      const json=await resp.json();
-      files=files.concat(json.files||[]);
-      pageToken=json.nextPageToken;
-    }while(pageToken);
-    return files;
-  }
-
-  // Réception depuis le dossier Drive commun (plusieurs tablettes connectées au même compte Google) :
-  //  - fiches des autres tablettes, fusionnées dans "records" (ajoutées si nouvelles ; pour une fiche déjà
-  //    connue, la version la plus récente l'emporte et une version divergente est conservée en copie de
-  //    conflit) ; une fiche supprimée sur cette tablette n'y revient pas (rien n'est retiré ailleurs) ;
-  //  - référentiel et données qualité des autres tablettes (js/partage.js).
-  // full : tout relire (bouton « Récupérer l'historique complet », rend aussi leurs photos aux fiches
-  // allégées) ; sinon seuls les fichiers modifiés depuis le dernier passage sont téléchargés.
-  async function pullCore(full){
-    const folderId=await ensureDriveFolder();
-    const files=await listFolderFiles(folderId);
-    const ownIds=new Set([driveFileIds[REF_KEY],driveFileIds[QUALITE_KEY],driveFileIds[INDEX_KEY]].filter(Boolean));
-    const isNew=f=>full||driveSeen[f.id]!==String(f.version);
+    try{
+      do{
+        const q=encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+        let url=`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,version)&pageSize=1000`;
+        if(pageToken)url+='&pageToken='+encodeURIComponent(pageToken);
+        const resp=await driveFetch(url,{headers:{'Authorization':'Bearer '+driveAccessToken}});
+        const json=await resp.json();
+        files=files.concat(json.files||[]);
+        pageToken=json.nextPageToken;
+      }while(pageToken);
+    }catch(e){renderDriveStatus('Échec de la récupération de la liste des fiches');return {ok:false,reason:'list'}}
+    // 1) Téléchargement : une même fiche peut exister dans plusieurs fichiers Drive (un
+    //    changement de date/station crée un nouveau fichier, l'ancien reste comme version
+    //    précédente). On ne retient que la version la plus récente de chaque fiche.
     let failed=0;
-    // 1) Référentiel et qualité des autres tablettes
-    const share={changed:false,kinds:[]};
+    const remoteById=new Map();
     for(const f of files){
-      if(!/^_(referentiel|qualite)/.test(f.name)||ownIds.has(f.id)||!isNew(f))continue;
+      if(f.name.startsWith('_'))continue; // fichiers de référence (équipements, qualité), pas des fiches
       try{
-        const p=await driveDownloadJson(f.id);
-        if(window.OEGShare){
-          const r=await window.OEGShare.mergeRemote(p);
-          // Données fusionnées enregistrées AVANT l'état du partage (arrêt de l'appli, stockage plein : rien
-          // n'est faussement daté) ; en cas d'échec d'enregistrement, l'état enregistré est conservé
-          if(r.changed&&saveLS(LSC,custom)===false){window.OEGShare.reloadState();failed++;continue}
-          window.OEGShare.persist();
-          if(r.changed){share.changed=true;share.kinds.push(...r.kinds)}
-        }
-        driveSeen[f.id]=String(f.version);
-      }catch(e){failed++}
-    }
-    // 2) Fiches : une même fiche peut exister dans plusieurs fichiers Drive (un changement de date/station
-    //    créait autrefois un nouveau fichier) : on ne retient que sa version la plus récente.
-    const remoteById=new Map(),fetched=[];
-    for(const f of files){
-      if(f.name.startsWith('_')||!isNew(f))continue;
-      try{
-        const rec=await driveDownloadJson(f.id);
-        fetched.push({f,id:rec&&rec.id});
+        const resp=await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`,{headers:{'Authorization':'Bearer '+driveAccessToken}});
+        const rec=await resp.json();
         if(!rec||!rec.id){failed++;continue}
         const prev=remoteById.get(rec.id);
         if(!prev||recordStamp(rec)>recordStamp(prev.rec))remoteById.set(rec.id,{rec,fileId:f.id,name:f.name,version:f.version});
       }catch(e){failed++}
     }
-    // 3) Fusion avec les fiches de cet appareil, fondée sur la date de dernière modification.
-    //    Règle d'or : une saisie locale n'est JAMAIS écrasée sans être conservée.
+    // 2) Fusion avec les fiches de cet appareil, fondée sur la date de dernière modification.
+    //    Règle d'or : une saisie locale n'est JAMAIS écrasée sans être conservée. Quand les deux
+    //    versions ont divergé (modifiée ici ET sur une autre tablette), la plus récente devient
+    //    la fiche principale et l'autre est gardée comme "copie de conflit" à examiner.
     await (window.OEGRecordsReady||Promise.resolve());
-    const stats={imported:0,updated:0,kept:0,conflicts:0,deleted:0,deferOpen:true},later=new Set();
-    for(const {rec,fileId,name,version} of remoteById.values()){
-      if(window.OEGShare&&window.OEGShare.isDeletedVersion(rec)){stats.deleted++;continue} // supprimée sur CETTE tablette : ne revient pas
-      if(await mergeRemoteRecord(rec,fileId,name,version,stats)==='deferred')later.add(rec.id);
-    }
-    // Fichiers lus, sauf ceux d'une fiche dont la fusion est reportée (relus à la réception suivante)
-    fetched.forEach(({f,id})=>{if(!later.has(id))driveSeen[f.id]=String(f.version)});
-    saveDriveFileIds();saveDriveHashes();saveDriveNames();saveDriveVersions();saveDriveSeen();
-    const restored=stats.restoredPhotos||0;
-    if(stats.imported||stats.updated||stats.conflicts||restored){
+    const stats={imported:0,updated:0,kept:0,conflicts:0};
+    for(const {rec,fileId,name,version} of remoteById.values())await mergeRemoteRecord(rec,fileId,name,version,stats);
+    const {imported,updated,kept,conflicts}=stats,restored=stats.restoredPhotos||0;
+    saveDriveFileIds();saveDriveHashes();saveDriveNames();saveDriveVersions();
+    if(imported||updated||conflicts){
       saveLS(LS,records);
       if(typeof updateCount==='function')updateCount();
       if(typeof renderList==='function')renderList();
     }
-    if(share.changed&&window.OEGShare)window.OEGShare.refreshUI(share); // données déjà enregistrées à la fusion
-    localStorage.setItem('oeg_sync_drive_pull_last',new Date().toISOString());
-    lastPullAt=Date.now();
     renderDriveStatus();
     window.dispatchEvent(new Event('oeg:sync-done'));
-    return {ok:true,imported:stats.imported,updated:stats.updated,kept:stats.kept,conflicts:stats.conflicts,restored,shareChanged:share.changed,shareKinds:[...new Set(share.kinds)],failed};
-  }
-
-  // Bouton « Récupérer l'historique complet depuis Drive »
-  async function pullFromDrive(){
-    if(!driveCfg.connected){if(typeof toast==='function')toast("Connectez d'abord Google Drive.");return {ok:false,reason:'not-connected'}}
-    if(!navigator.onLine){if(typeof toast==='function')toast('Pas de connexion : impossible de récupérer l\u2019historique.');return {ok:false,reason:'offline'}}
-    return withLock(async()=>{
-      const authOk=await ensureValidToken(false,true);
-      if(!authOk){renderDriveStatus('Reconnexion nécessaire');return {ok:false,reason:'auth'}}
-      renderDriveStatus('Récupération de l\u2019historique en cours…');
-      let r;
-      try{r=await pullCore(true)}catch(e){renderDriveStatus('Échec de la récupération depuis Drive');return {ok:false,reason:'list'}}
-      if(typeof toast==='function')toast(`Historique récupéré : ${r.imported} nouvelle(s) fiche(s), ${r.updated} mise(s) à jour`+(r.kept?`, ${r.kept} version(s) locale(s) plus récente(s) conservée(s)`:'')+(r.restored?`, photos rendues à ${r.restored} fiche(s) allégée(s)`:'')+(r.shareChanged?', référentiel / qualité des autres tablettes repris':'')+(r.failed?`, ${r.failed} échec(s)`:'')+' ✓'+(r.conflicts?` — ⚠ ${r.conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
-      return r;
-    });
-  }
-
-  // Réception automatique : après chaque envoi (au plus une fois par minute), toutes les 5 minutes,
-  // au retour du réseau ou de l'appli au premier plan. Silencieuse, sauf s'il y a du nouveau. Jamais
-  // de fenêtre Google : sans jeton valide, l'état « reconnexion nécessaire » est affiché.
-  let lastPullAt=0;
-  async function autoPull(force){
-    if(!driveCfg.connected||!navigator.onLine||!tokenValid())return null;
-    if(!force&&Date.now()-lastPullAt<PULL_THROTTLE_MS)return null;
-    lastPullAt=Date.now();
-    let r=null;
-    try{r=await pullCore(false)}catch(e){return null}
-    const parts=[];
-    if(r.imported)parts.push(r.imported+' nouvelle(s) fiche(s)');
-    if(r.updated)parts.push(r.updated+' fiche(s) mise(s) à jour');
-    if(r.shareChanged)parts.push('référentiel / qualité mis à jour');
-    if((parts.length||r.conflicts)&&typeof toast==='function')toast('📥 Reçu des autres tablettes : '+(parts.join(', ')||'')+(r.conflicts?(parts.length?' — ':'')+`⚠ ${r.conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
-    return r;
+    if(typeof toast==='function')toast(`Historique récupéré : ${imported} nouvelle(s) fiche(s), ${updated} mise(s) à jour`+(kept?`, ${kept} version(s) locale(s) plus récente(s) conservée(s)`:'')+(restored?`, photos rendues à ${restored} fiche(s) allégée(s)`:'')+(failed?`, ${failed} échec(s)`:'')+' ✓'+(conflicts?` — ⚠ ${conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
+    return {ok:true,imported,updated,kept,conflicts,failed};
   }
 
   // Fusionne UNE fiche venue de Drive avec celle de cet appareil, selon la date de dernière
@@ -710,18 +607,11 @@
   async function mergeRemoteRecord(rec,fileId,name,version,stats){
     if(!rec||!rec.id)return;
     const id=rec.id;
-    const editingId=(typeof state!=='undefined'&&state)?state.editing:null;
-    // Réception : fiche ouverte dans le formulaire (même seulement consultée) : fusion reportée à la
-    // réception suivante, une fois la fiche fermée ou enregistrée (pas de fausse copie de conflit)
-    if(stats.deferOpen&&id===editingId){stats.deferred=(stats.deferred||0)+1;return 'deferred'}
     const remoteHash=await hashOf(rec);
-    const adoptRemote=()=>{driveFileIds[id]=fileId;driveNames[id]=name;driveHashes[id]=remoteHash;if(version!==undefined)driveVersions[id]=version;rememberHash(id,remoteHash)};
+    const adoptRemote=()=>{driveFileIds[id]=fileId;driveNames[id]=name;driveHashes[id]=remoteHash;if(version!==undefined)driveVersions[id]=version};
     const idx=records.findIndex(r=>r.id===id);
     if(idx===-1){records.push(rec);adoptRemote();stats.imported=(stats.imported||0)+1;return}
     const local=records[idx];
-    // La liste des fiches peut changer pendant les calculs (enregistrement, suppression) : la fiche est
-    // relue avant toute modification ; si elle a changé, la fusion est reportée (rien n'est écrasé)
-    const still=()=>records.find(r=>r.id===id)===local;
     // Fiche allégée ici, complète sur Drive : on lui rend ses photos avant de comparer
     // (auparavant chaque récupération créait une fausse copie de conflit).
     if(local._archived&&!rec._archived&&Array.isArray(rec.photos)){
@@ -730,19 +620,19 @@
       stats.restoredPhotos=(stats.restoredPhotos||0)+1;
     }
     const localHash=await hashOf(local);
-    if(!still())return 'deferred';
     if(localHash===remoteHash){adoptRemote();return}
     const localDirty=driveHashes[id]!==localHash;   // modifications locales pas encore envoyées sur Drive
-    const remoteSeen=driveHashes[id]===remoteHash||hashKnown(id,remoteHash);  // version déjà connue de cet appareil
+    const remoteSeen=driveHashes[id]===remoteHash;  // version Drive déjà connue de cet appareil
     const remoteNewer=recordStamp(rec)>recordStamp(local);
+    const editingId=(typeof state!=='undefined'&&state)?state.editing:null;
     if(remoteNewer&&id!==editingId){
-      if(localDirty){const cc=await conflictCopy(local,'cette tablette');if(!still())return 'deferred';records.push(cc);stats.conflicts=(stats.conflicts||0)+1}
-      records[records.findIndex(r=>r.id===id)]=rec;adoptRemote();stats.updated=(stats.updated||0)+1;
+      if(localDirty){records.push(await conflictCopy(local,'cette tablette'));stats.conflicts=(stats.conflicts||0)+1}
+      records[idx]=rec;adoptRemote();stats.updated=(stats.updated||0)+1;
     }else{
       // Version locale plus récente (ou fiche ouverte en cours de modification) : elle est
       // conservée et sera envoyée sur Drive. Si la version Drive contient des modifications
       // inconnues ici (autre tablette), elle est d'abord gardée en copie de conflit.
-      if(!remoteSeen&&!conflictAlreadyCopied(id,remoteHash)){const cc=await conflictCopy(rec,'Google Drive');records.push(cc);markConflictCopied(id,remoteHash);stats.conflicts=(stats.conflicts||0)+1}
+      if(!remoteSeen&&!conflictAlreadyCopied(id,remoteHash)){records.push(await conflictCopy(rec,'Google Drive'));markConflictCopied(id,remoteHash);stats.conflicts=(stats.conflicts||0)+1}
       // La version Drive est désormais connue : le prochain envoi pourra la remplacer.
       if(fileId===driveFileIds[id]&&version!==undefined)driveVersions[id]=version;
       stats.kept=(stats.kept||0)+1;
@@ -785,39 +675,22 @@
   }
 
   // ---------- orchestration ----------
-  // Envois et réceptions passent l'un après l'autre (jamais deux en même temps sur les mêmes tables)
-  let lockChain = Promise.resolve();
-  function withLock(fn){ const run = lockChain.then(()=>fn()); lockChain = run.catch(()=>{}); return run }
-
-  let pullWanted = false;
   function notifyChange(){
     if(debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(performSync, DEBOUNCE_MS);
-  }
-  // Demande une réception (forcée : sans attendre la minute qui suit la précédente)
-  function requestPull(force){
-    if(!driveCfg.connected || !navigator.onLine || !tokenValid()){ renderDriveStatus(); return }
-    if(force) pullWanted = true;
-    notifyChange();
   }
 
   async function performSync(){
     if(syncing){syncAgainAfter = true; return}
     syncing = true;
     try{
-      await withLock(async()=>{
-        // Jamais de synchronisation avant la fin du chargement des fiches (IndexedDB) :
-        // l'index et les fichiers seraient calculés sur une liste incomplète.
-        await (window.OEGRecordsReady||Promise.resolve());
-        const items = await collectItems();
-        if(localFolderHandle){ try{ await syncLocalFolder(items) }catch(e){} } // un échec du dossier n'empêche pas Drive
-        if(driveCfg.connected){
-          await syncDrive(items);
-          const force = pullWanted; pullWanted = false;
-          await autoPull(force);
-        }
-        renderLocalStatus();
-      });
+      // Jamais de synchronisation avant la fin du chargement des fiches (IndexedDB) :
+      // l'index et les fichiers seraient calculés sur une liste incomplète.
+      await (window.OEGRecordsReady||Promise.resolve());
+      const items = await collectItems();
+      if(localFolderHandle) await syncLocalFolder(items);
+      if(driveCfg.connected) await syncDrive(items);
+      renderLocalStatus();
     } finally {
       syncing = false;
       window.dispatchEvent(new Event('oeg:sync-done'));
@@ -825,32 +698,23 @@
     }
   }
 
-  // « Synchroniser maintenant » : envoi puis réception (le geste de l'agent permet aussi de renouveler
-  // l'autorisation Google si elle a expiré)
   async function manualSyncNow(){
     await (window.OEGRecordsReady||Promise.resolve());
-    return withLock(async()=>{
-      const items = await collectItems();
-      const r1 = localFolderHandle ? await syncLocalFolder(items) : {ok:true, written:0};
-      const r2 = driveCfg.connected ? await syncDrive(items, true) : {ok:true, written:0};
-      let r3 = null;
-      if(driveCfg.connected && tokenValid()){ try{ r3 = await pullCore(false) }catch(e){ r3 = {ok:false} } }
-      renderLocalStatus();
-      window.dispatchEvent(new Event('oeg:sync-done'));
-      if(typeof toast==='function'){
-        const total = (r1.written||0) + (r2.written||0);
-        const got = r3 && r3.ok ? (r3.imported||0) + (r3.updated||0) : 0;
-        const recv = r3 && r3.ok ? (got ? `, ${got} fiche(s) reçue(s)` : '') + (r3.shareChanged ? ', référentiel / qualité reçus' : '') + (r3.conflicts ? ` — ⚠ ${r3.conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.` : '') : '';
-        if(r1.ok && r2.ok && (!r3 || r3.ok)) toast((total ? `Synchronisation effectuée (${total} fichier${total>1?'s':''} envoyé${total>1?'s':''})` : 'Envoi : déjà à jour') + recv + ' ✓');
-        else toast('Synchronisation partielle — nouvelle tentative automatique.');
-      }
-      return {r1, r2, r3};
-    });
+    const items = await collectItems();
+    const r1 = localFolderHandle ? await syncLocalFolder(items) : {ok:true, written:0};
+    const r2 = driveCfg.connected ? await syncDrive(items) : {ok:true, written:0};
+    renderLocalStatus();
+    window.dispatchEvent(new Event('oeg:sync-done'));
+    if(typeof toast==='function'){
+      const total = (r1.written||0) + (r2.written||0);
+      if(r1.ok && r2.ok) toast(total ? `Synchronisation effectuée (${total} fichier${total>1?'s':''} mis à jour) ✓` : 'Déjà à jour ✓');
+      else toast('Synchronisation partielle — nouvelle tentative au prochain enregistrement.');
+    }
   }
 
-  window.addEventListener('online', ()=>{ if(driveCfg.connected) requestPull(false) });
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') requestPull(false) });
-  setInterval(()=>{ if(document.visibilityState === 'visible') requestPull(true) }, AUTO_PULL_MS);
+  window.addEventListener('online', ()=>{
+    if(driveCfg.connected) notifyChange();
+  });
 
   // ---------- UI ----------
   function renderLocalStatus(customMsg){
@@ -898,11 +762,8 @@
     if(connectBtn) connectBtn.style.display = 'none';
     if(disconnectBtn) disconnectBtn.style.display = '';
     const last = localStorage.getItem('oeg_sync_drive_last');
-    const pulled = localStorage.getItem('oeg_sync_drive_pull_last');
     const count = Object.keys(driveHashes).length;
-    el.textContent = `Google Drive connecté (dossier "${DRIVE_FOLDER_NAME}") — ${count} fichier(s) à jour` + (last ? `, dernier envoi : ${new Date(last).toLocaleString('fr-FR')}` : '')
-      + (pulled ? `, dernière réception des autres tablettes : ${new Date(pulled).toLocaleString('fr-FR')}` : '') + '.'
-      + (tokenValid() ? ' Réception automatique toutes les 5 minutes.' : ' ⚠ Autorisation Google expirée : touchez « Synchroniser maintenant » pour envoyer et recevoir les fiches des autres tablettes.');
+    el.textContent = `Google Drive connecté (dossier "${DRIVE_FOLDER_NAME}") — ${count} fichier(s) à jour` + (last ? `, dernière synchronisation : ${new Date(last).toLocaleString('fr-FR')}` : '') + '.';
   }
 
   function wireButtons(){
@@ -927,9 +788,6 @@
     wireButtons();
     await tryReacquireLocalFolder();
     renderDriveStatus();
-    // Au démarrage : réception des fiches et du référentiel des autres tablettes (si l'autorisation Google
-    // obtenue il y a moins d'une heure est toujours valable)
-    (window.OEGRecordsReady||Promise.resolve()).then(()=>setTimeout(()=>requestPull(true), 2000));
   }
 
   if(document.readyState === 'loading'){
@@ -976,7 +834,7 @@
         if(!((localOk && localHashes[r.id]===h) || (drive && driveHashes[r.id]===h))) pending++;
       }
     }
-    return {configured: localOk || drive, local: localOk, localNeedsPermission: !!localFolderHandle && !localOk, drive, driveNeedsAuth: drive && !tokenValid(), pending, total: records.length};
+    return {configured: localOk || drive, local: localOk, localNeedsPermission: !!localFolderHandle && !localOk, drive, pending, total: records.length};
   }
 
   window.OEGSync = {
@@ -988,7 +846,6 @@
     disconnectDrive,
     manualSyncNow,
     pullFromDrive,
-    autoPull: (force)=>withLock(()=>autoPull(force!==false)),
     isBackedUp,
     adoptCurrentHash
   };

@@ -11,7 +11,8 @@ const { chromium } = require('playwright');
 const http=require('http'),fs=require('fs'),path=require('path');
 const ROOT=path.join(__dirname,'..');
 const TYPES={'.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.html':'text/html','.svg':'image/svg+xml','.woff2':'font/woff2'};
-const srv=http.createServer((q,s)=>{let p=path.join(ROOT,decodeURIComponent(q.url.split('?')[0]));if(p.endsWith('/'))p+='index.html';fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);return s.end()}s.writeHead(200,{'Content-Type':TYPES[path.extname(p)]||'application/octet-stream'});s.end(d)})}).listen(8765);
+const OVERRIDES={}; // contenu servi à la place d'un fichier (simulation d'une nouvelle version publiée)
+const srv=http.createServer((q,s)=>{const u=decodeURIComponent(q.url.split('?')[0]);if(OVERRIDES[u]!=null){s.writeHead(200,{'Content-Type':TYPES[path.extname(u)]||'application/octet-stream'});return s.end(OVERRIDES[u])}let p=path.join(ROOT,u);if(p.endsWith('/'))p+='index.html';fs.readFile(p,(e,d)=>{if(e){s.writeHead(404);return s.end()}s.writeHead(200,{'Content-Type':TYPES[path.extname(p)]||'application/octet-stream'});s.end(d)})}).listen(8765);
 const ok=(c,m)=>{console.log((c?'PASS ':'FAIL ')+m);if(!c)process.exitCode=1};
 const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01',savedAt:upd,lifecycle:{status:'À contrôler',version:1,createdAt:upd,updatedAt:upd},auditRefs:[],photos:[],...extra});
 (async()=>{
@@ -625,7 +626,8 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok((await p.textContent('#distance')).trim()==='—','coordonnées terrain vides : écart « — » (auparavant ≈ 600 km)');
     ok(await p.evaluate(()=>{const c=qualityChecksFor({network:'RCO',station:'x',xTerrain:'',yTerrain:'',stationInfo:{x:'350000',y:'550000'}});const g=c.find(x=>/GPS terrain numériques/.test(x.label));return g&&!g.ok}),'contrôle qualité : coordonnées terrain manquantes signalées (et non un faux écart)');
     // Mise à jour de l'appli pendant une saisie : pas de rechargement, bandeau
-    await p.evaluate(()=>{window.__noReload=true;navigator.serviceWorker.dispatchEvent(new Event('controllerchange'))});await p.waitForTimeout(300);
+    // (page sans service worker : le 1er changement est l'installation, sans rechargement ; le 2e, une mise à jour)
+    await p.evaluate(()=>{window.__noReload=true;navigator.serviceWorker.dispatchEvent(new Event('controllerchange'));navigator.serviceWorker.dispatchEvent(new Event('controllerchange'))});await p.waitForTimeout(300);
     ok(await p.evaluate(()=>!!document.getElementById('updateBanner')&&window.__noReload===true),'nouvelle version pendant une saisie : bandeau, pas de rechargement (la saisie est préservée)');
     await Promise.all([p.waitForNavigation({timeout:8000}),p.evaluate(()=>clearFormNoConfirm())]);
     ok(true,'fiche enregistrée / vidée : la mise à jour se fait ensuite d’elle-même');
@@ -1208,6 +1210,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(()=>!document.body.classList.contains('fpPrinting')&&!$('fichePrintPage')&&!$('fichePrint').innerHTML),'impression d’un autre onglet : fiche mise en page retirée (le CRT garde ses marges)');
     // Texte saisi imprimé tel quel ; unité d'une case (« g ») imprimée avec la valeur
     await p.click('.tab[data-tab="new"]');
+    ok(await p.evaluate(()=>{startFichePrint();const tr=[...document.querySelectorAll('#fichePrint .fpKv tr')].find(t=>/X terrain/.test(t.textContent));return !!tr&&/Y terrain/.test(tr.textContent)&&/RGFG 95/.test(tr.textContent)}),'fiche imprimée : X et Y terrain sur la même ligne, comme les coordonnées théoriques');
     await p.evaluate(()=>{$('methodRef').value='MO-12 (non référencé au programme) ✅';const f=document.createElement('div');f.className='field';f.id='zzUnit';f.innerHTML='<label>Poids test</label><input placeholder="g" value="45">';$('missionCard').appendChild(f)});
     const typed=await p.evaluate(()=>{startFichePrint();const T=$('fichePrint').textContent;$('zzUnit').remove();return {m:T.includes('MO-12 (non référencé au programme) ✅'),g:/45 g/.test(T)}});
     ok(typed.m&&typed.g,'fiche imprimée : texte saisi intact (mentions et pictogrammes tapés gardés), unité « g » avec la valeur '+JSON.stringify(typed));
@@ -1249,13 +1252,14 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.setViewportSize({width:1280,height:900});
     // Export CSV : anciennes fiches EL avec les codes SANDRE
     ok(await p.evaluate(()=>flatRecordForCsv({id:'Z',network:'EL',conditions:{meteo:'Ensoleillé',irisations:'Oui'}}).cond_meteo===elLegacyValue('meteo','Ensoleillé')&&elLegacyValue('meteo','Ensoleillé')!=='Ensoleillé'),'export CSV : anciennes fiches EL avec les codes SANDRE (comme les récentes)');
-    // CRT : visite « non réalisée » exclue de l'historique
+    // CRT : visite « non réalisée » (sans mesure) conservée dans l'historique
     const hist=await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[2],m={lifecycle:{status:'À contrôler'},auditRefs:[],photos:[],activity:RCO_COMBINED_ACTIVITY};
-      records.push({id:'H1',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',...m,insitu:{ph:{value:'7.0'}}},{id:'HN',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-02',savedAt:'2026-10-02T08:00:00Z',...m,prelevementRealise:'Non',insitu:{ph:{value:'4.1'}}},{id:'H2',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-03',savedAt:'2026-10-03T08:00:00Z',...m,insitu:{ph:{value:'7.2'}}});saveLS(LS,records)});
+      records.push({id:'H1',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',...m,insitu:{ph:{value:'7.0'}}},{id:'HN',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-02',savedAt:'2026-10-02T08:00:00Z',...m,prelevementRealise:'Non'},{id:'H2',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-03',savedAt:'2026-10-03T08:00:00Z',...m,insitu:{ph:{value:'7.2'}}});saveLS(LS,records)});
     await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
     await p.evaluate(()=>{const s=$('crtRecord');s.value='H2';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(500);
     const ht=await p.evaluate(()=>$('crtPreviewBox').textContent);
-    ok(/Suivi historique à la station \(3 visite/.test(ht),'CRT : visite « prélèvement non réalisé » conservée dans l’historique de la station');
+    ok(/Suivi historique à la station \(3 visite/.test(ht)&&/non réalisé/.test(await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox svg')].map(s=>s.textContent).join(' '))),'CRT : visite « prélèvement non réalisé » conservée dans l’historique de la station, signalée sous sa date');
+    ok(await p.evaluate(()=>{const s=[...document.querySelectorAll('#crtPreviewBox svg')].find(s=>/non réalisé/.test(s.textContent)&&s.querySelectorAll('rect[fill="#00AC97"]').length);return !!s&&s.querySelectorAll('rect[fill="#00AC97"]').length===2&&/02\/10\/26/.test(s.textContent)}),'CRT : visite non réalisée sans mesure gardée à sa date dans le graphe (sans barre)');
     // Brouillon de modification : fiche remplacée entre-temps, version enregistrée plus récente, fiche supprimée
     await p.click('.tab[data-tab="new"]');
     const mk=(id,extra)=>p.evaluate(([id,extra])=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records=records.filter(r=>r.id!==id);records.push({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',heureDebut:'08:00',heureFin:'09:00',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-05T08:00:00Z'},auditRefs:[],photos:[],insitu:{},conditions:{},sample:{},specific:{},obs:'saved obs',comment:'',...extra});saveLS(LS,records)},[id,extra||{}]);
@@ -1277,120 +1281,6 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(e27.length===0,'aucune erreur JavaScript (corrections de relecture) '+JSON.stringify(e27));
     await c27.close();
   }
-  // --- AE : partage entre tablettes via Drive (réception automatique, référentiel, qualité, suppressions) ---
-  {
-    let acct={folders:new Map(),files:new Map()},nid=1,media=0;
-    const part=body=>{const parts=body.split(/--oegboundary[^\r\n]*/);return {meta:JSON.parse(parts[1].split('\r\n\r\n')[1]),txt:parts[2].split('\r\n\r\n').slice(1).join('\r\n\r\n').replace(/\r\n$/,'')}};
-    const ctxs=[];
-    async function tablet(){
-      const c=await browser.newContext({serviceWorkers:'block'});ctxs.push(c);await c.route('https://unpkg.com/**',r=>r.abort());
-      await c.route('https://accounts.google.com/**',r=>r.fulfill({contentType:'text/javascript',body:'window.__gis=0;window.google={accounts:{oauth2:{initTokenClient:o=>({requestAccessToken(){window.__gis++;this.callback({access_token:"tok",expires_in:3600})}})}}}'}));
-      await c.route('https://www.googleapis.com/**',async r=>{const u=new URL(r.request().url()),m=r.request().method(),body=r.request().postData()||'';let mm;
-        if(m==='GET'&&u.pathname==='/drive/v3/files'){const q=u.searchParams.get('q')||'';if(q.includes('vnd.google-apps.folder'))return r.fulfill({json:{files:[...acct.folders.values()].map(f=>({id:f.id,name:f.name}))}});const pm=q.match(/'([^']+)' in parents/);return r.fulfill({json:{files:[...acct.files].filter(([id,f])=>!pm||f.parent===pm[1]).map(([id,f])=>({id,name:f.name,version:String(f.v)}))}})}
-        if(m==='POST'&&u.pathname==='/drive/v3/files'){const j=JSON.parse(body);const id='D'+(nid++);acct.folders.set(id,{id,name:j.name});return r.fulfill({json:{id}})}
-        if(m==='GET'&&(mm=u.pathname.match(/^\/drive\/v3\/files\/(.+)$/))){const id=mm[1];if(acct.folders.has(id))return r.fulfill({json:{id,trashed:false}});const f=acct.files.get(id);if(!f)return r.fulfill({status:404,json:{}});if(u.searchParams.get('alt')==='media'){media++;return r.fulfill({body:f.text,contentType:'application/json'})}return r.fulfill({json:{version:String(f.v)}})}
-        if(m==='POST'&&u.pathname.startsWith('/upload')){const {meta,txt}=part(body);if(!acct.folders.has(meta.parents?.[0]))return r.fulfill({status:404,json:{}});const id='f'+(nid++);acct.files.set(id,{name:meta.name,text:txt,v:1,parent:meta.parents[0]});return r.fulfill({json:{id,version:'1'}})}
-        if(m==='PATCH'&&(mm=u.pathname.match(/files\/(.+)$/))){const f=acct.files.get(mm[1]);if(!f)return r.fulfill({status:404,json:{}});const {meta,txt}=part(body);f.name=meta.name;f.text=txt;f.v++;return r.fulfill({json:{id:mm[1],version:String(f.v)}})}
-        r.fulfill({status:500})});
-      const p=await c.newPage();p.errs=[];p.on('pageerror',e=>p.errs.push(e.message));p.on('dialog',d=>d.accept());
-      await p.addInitScript(()=>{if(!localStorage.getItem('oeg_sync_drive_cfg_v1'))localStorage.setItem('oeg_sync_drive_cfg_v1',JSON.stringify({clientId:'x',folderId:'',connected:true}))});
-      await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);return p;
-    }
-    const A=await tablet(),B=await tablet();
-    const mk=(id,extra={})=>Object.assign({id,network:'RCO',station:'ST'+id,date:'2026-10-01',savedAt:'2026-10-01T08:00:00.000Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-01T08:00:00.000Z'},auditRefs:[],photos:[]},extra);
-    const sync=async p=>{await p.evaluate(()=>OEGSync.manualSyncNow());await p.waitForTimeout(1800);await p.evaluate(()=>OEGSync.manualSyncNow())};
-    await A.evaluate(([r1,r2])=>{custom.preleveurs.push({nom:'Durand',prenom:'Léa',organisme:'HYDRECO'});custom.equipements.push({type:'sonde',gmao:'SD-9',nom:'Sonde pH',serie:'S9',echeance:'2026-12-01'});custom.nonConformites.push({id:'NC1',recordId:'R1',status:'Ouverte',severity:'Majeure'});custom.qualityConfig.maxDelayHours=24;custom.crtMeta={R2:{ref:'CRT-1'}};custom.stationOverrides={RCO13:[{code:'09141515',nom:'Ineri (import)'}]};records.push(r1,r2);saveLS(LS,records);saveLS(LSC,custom)},[mk('R1'),mk('R2')]);
-    await sync(A);
-    const devA=await A.evaluate(()=>OEGShare.deviceId);
-    ok([...acct.files.values()].filter(f=>f.name.startsWith('_referentiel')&&f.name.endsWith('_'+devA+'.json')).length===1,'partage : un fichier de référentiel propre à la tablette');
-    await sync(B);
-    let b=await B.evaluate(()=>({recs:records.map(r=>r.id).sort().join(),op:custom.preleveurs.some(o=>o.nom==='Durand'),eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance,nc:custom.nonConformites.find(n=>n.id==='NC1')?.status,cfg:custom.qualityConfig.maxDelayHours,crt:custom.crtMeta?.R2?.ref,ov:DATA.RCO13.find(s=>s.code==='09141515')?.nom,opUI:$('operatorData').textContent.includes('Durand')}));
-    ok(b.recs==='R1,R2','partage : fiches de l’autre tablette reçues');
-    ok(b.op&&b.opUI&&b.eq==='2026-12-01'&&b.ov==='Ineri (import)','partage : référentiel reçu (opérateur, équipement, programme de marché) et affiché '+JSON.stringify(b));
-    ok(b.nc==='Ouverte'&&b.cfg===24&&b.crt==='CRT-1','partage : données qualité reçues (non-conformité, configuration, informations CRT)');
-    // Modifications et suppressions sur B, réception automatique sur A
-    await B.evaluate(()=>{custom.equipements.find(e=>e.gmao==='SD-9').echeance='2027-06-01';custom.nonConformites.find(n=>n.id==='NC1').status='Clôturée';records=records.filter(r=>r.id!=='R1');OEGShare.noteRecordDeleted('R1');saveLS(LS,records);saveLS(LSC,custom)});
-    await sync(B);
-    media=0;await A.evaluate(()=>OEGSync.autoPull());
-    let a=await A.evaluate(()=>({recs:records.map(r=>r.id).sort().join(),eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance,nc:custom.nonConformites.find(n=>n.id==='NC1')?.status}));
-    ok(a.eq==='2027-06-01'&&a.nc==='Clôturée','réception automatique : équipement réétalonné et non-conformité clôturée sur l’autre tablette '+JSON.stringify(a));
-    ok(a.recs==='R1,R2','suppression d’une fiche sur l’autre tablette : la fiche reste ici (suppressions non transmises)');
-    media=0;await A.evaluate(()=>OEGSync.autoPull());
-    ok(media===0,'réception automatique : rien de nouveau, aucun fichier téléchargé (seuls les fichiers modifiés le sont)');
-    await A.evaluate(()=>{const r=records.find(r=>r.id==='R1');if(r){r.comment='touché';saveLS(LS,records)}});await sync(A); // A renvoie encore R1
-    await B.evaluate(()=>OEGSync.pullFromDrive());await B.evaluate(()=>OEGSync.autoPull());
-    ok(await B.evaluate(()=>!records.some(r=>r.id==='R1')),'fiche supprimée sur cette tablette : ne revient pas (réception, « Récupérer l’historique complet »)');
-    // Modification faite ici juste avant une réception (pas encore envoyée) : gardée face à une version plus ancienne
-    await B.evaluate(()=>{custom.equipements.find(e=>e.gmao==='SD-9').echeance='2027-01-15';saveLS(LSC,custom)});await sync(B);
-    await A.evaluate(()=>{custom.equipements.find(e=>e.gmao==='SD-9').echeance='2027-09-30';localStorage.setItem(LSC,JSON.stringify(custom))}); // pas d'envoi
-    await A.evaluate(()=>OEGSync.autoPull());
-    ok(await A.evaluate(()=>custom.equipements.find(e=>e.gmao==='SD-9').echeance)==='2027-09-30','modification faite juste avant une réception : gardée (non remplacée par une version plus ancienne)');
-    await sync(A);await B.evaluate(()=>OEGSync.autoPull());
-    ok(await B.evaluate(()=>custom.equipements.find(e=>e.gmao==='SD-9').echeance)==='2027-09-30','… et transmise ensuite à l’autre tablette');
-    // Suppression d'un opérateur sur A : non transmise à B, et l'opérateur ne revient pas sur A
-    await A.evaluate(()=>{custom.preleveurs=custom.preleveurs.filter(o=>o.nom!=='Durand');localStorage.setItem(LSC,JSON.stringify(custom))});
-    await A.evaluate(()=>OEGSync.pullFromDrive()); // récupération complète aussitôt après la suppression
-    ok(await A.evaluate(()=>!custom.preleveurs.some(o=>o.nom==='Durand')),'opérateur supprimé puis « Récupérer l’historique complet » aussitôt : ne revient pas');
-    await sync(A);
-    await B.evaluate(()=>OEGSync.autoPull());
-    ok(await B.evaluate(()=>custom.preleveurs.some(o=>o.nom==='Durand')),'suppression d’un opérateur sur l’autre tablette : non transmise');
-    await B.evaluate(()=>{custom.equipements.push({type:'boitier',gmao:'BX-7',nom:'Multi',serie:'B7'});saveLS(LSC,custom)});await sync(B); // B republie son référentiel (avec l'opérateur)
-    await A.evaluate(()=>OEGSync.autoPull());
-    ok(await A.evaluate(()=>!custom.preleveurs.some(o=>o.nom==='Durand')&&custom.equipements.some(e=>e.gmao==='BX-7')),'opérateur supprimé ici : ne revient pas depuis l’autre tablette (le reste du référentiel arrive)');
-    // Nouvel opérateur reçu pendant la saisie d'une fiche : organisme choisi conservé
-    await B.evaluate(()=>{const o=$('org');o.value=[...o.options].find(x=>x.value==='HYDRECO')?.value||o.value;o.dispatchEvent(new Event('change'));});
-    const orgB=await B.evaluate(()=>$('org').value);
-    await A.evaluate(()=>{custom.preleveurs.push({nom:'Martin',prenom:'Paul',organisme:'NBC'});saveLS(LSC,custom)});await sync(A);
-    await B.evaluate(()=>OEGSync.autoPull());
-    ok(await B.evaluate(()=>custom.preleveurs.some(o=>o.nom==='Martin')&&$('operatorData').textContent.includes('Martin')),'partage : nouvel opérateur reçu et affiché');
-    ok(await B.evaluate(()=>$('org').value)===orgB,'partage : organisme choisi dans la fiche en cours conservé à la réception');
-    // Fiche modifiée sur les deux tablettes : version la plus récente + copie de conflit
-    await A.evaluate(()=>{const r=records.find(r=>r.id==='R2');r.comment='A';r.lifecycle.updatedAt='2026-10-05T08:00:00.000Z';saveLS(LS,records)});
-    await B.evaluate(()=>{const r=records.find(r=>r.id==='R2');r.comment='B';r.lifecycle.updatedAt='2026-10-06T08:00:00.000Z';saveLS(LS,records)});
-    await sync(A);await sync(B);await sync(A);
-    a=await A.evaluate(()=>records.filter(r=>r.id.startsWith('R2')).map(r=>r.id.replace(/_conflit_.*/,'_conflit')+':'+r.comment).sort().join());
-    ok(/R2:B/.test(a)&&/R2_conflit:A/.test(a),'fiche modifiée des deux côtés : la plus récente l’emporte, l’autre est gardée en copie de conflit '+a);
-    // Fichier d'une tablette pas encore à jour (ancien format) : ajouté sans rien remplacer
-    acct.files.set('old1',{name:'_referentiel_operateurs_equipements_stations.json',text:JSON.stringify({type:'referentiel_operateurs_equipements_stations',preleveurs:['MB',{nom:'Old',prenom:'Ana',organisme:'OEG'}],equipements:[{gmao:'SD-9',echeance:'2000-01-01'}],stations:[],stationAccess:{}}),v:1,parent:[...acct.folders.keys()][0]});
-    await A.evaluate(()=>OEGSync.autoPull());
-    a=await A.evaluate(()=>({old:custom.preleveurs.some(o=>o.nom==='Old'),mb:custom.preleveurs.find(o=>o.nom==='MB')?.organisme,eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance}));
-    ok(a.old&&a.eq!=='2000-01-01'&&(a.mb===undefined||a.mb==="Office de l'Eau de Guyane"),'ancien format : opérateurs ajoutés (initiales converties), équipement plus récent non remplacé '+JSON.stringify(a));
-    // « Importer JSON » d'une ancienne sauvegarde : accès et configuration déjà présents gardés, manquants ajoutés
-    ok(await A.evaluate(()=>{const t={stationAccess:{K1:{etapes:'récent'}},qualityConfig:{qualityMethodRef:'MO-12 v2'}};mergeCustomInto(t,{stationAccess:{K1:{etapes:'ancien'},K2:{etapes:'x'}},qualityConfig:{qualityMethodRef:'MO-12 v1',autre:'y'},type:'t',share:{}});return t.stationAccess.K1.etapes==='récent'&&t.stationAccess.K2.etapes==='x'&&t.qualityConfig.qualityMethodRef==='MO-12 v2'&&t.qualityConfig.autre==='y'&&!('share' in t)&&!('type' in t)}),'import JSON : réglages récents gardés, éléments manquants ajoutés, sans clés parasites');
-    ok(await A.evaluate(()=>accessKey({code:'Non défini',nom:'Crique A'})==='Crique A'&&accessKey({code:'Non défini',nom:'Crique B'})!=='Crique A'&&accessKey({code:'0914',nom:'X'})==='0914'),'stations sans code : chacune sa fiche d’accès (plus de clé commune « Non défini »)');
-    // Pas d'allers-retours sans fin
-    await sync(A);await sync(B);await A.waitForTimeout(1800);
-    const snap=new Map([...acct.files].map(([id,f])=>[id,f.v]));
-    await sync(A);await sync(B);await sync(A);await A.waitForTimeout(1800);
-    const moved=[...acct.files].filter(([id,f])=>snap.get(id)!==f.v).map(([id,f])=>f.name);
-    ok(moved.length===0,'partage stable : aucun fichier réécrit sans changement '+JSON.stringify(moved));
-    // Fiche ouverte dans le formulaire sur B pendant une modification sur A : pas remplacée sous les yeux de
-    // l'agent ni copiée en conflit ; mise à jour une fois la fiche fermée
-    await B.evaluate(()=>{loadRecord('R2');showTab('new')});
-    await A.evaluate(()=>{const r=records.find(r=>r.id==='R2');r.comment='A2';r.lifecycle.updatedAt='2026-10-09T08:00:00.000Z';saveLS(LS,records)});await sync(A);
-    const n0=await B.evaluate(()=>records.filter(r=>r.id.startsWith('R2_conflit')).length);
-    await B.evaluate(()=>OEGSync.autoPull());
-    ok(await B.evaluate(n0=>records.find(r=>r.id==='R2').comment!=='A2'&&records.filter(r=>r.id.startsWith('R2_conflit')).length===n0&&state.editing==='R2',n0),'fiche ouverte dans le formulaire : réception reportée (ni remplacée, ni fausse copie de conflit)');
-    await B.evaluate(()=>clearFormNoConfirm());await B.evaluate(()=>OEGSync.autoPull());
-    ok(await B.evaluate(()=>records.find(r=>r.id==='R2').comment==='A2'),'fiche fermée : la version de l’autre tablette arrive à la réception suivante');
-    // Envoi automatique sans geste de l'agent et sans autorisation valable : aucune fenêtre Google
-    await A.evaluate(()=>{localStorage.removeItem('oeg_sync_drive_token_v1')});
-    await A.reload();await A.evaluate(()=>window.OEGRecordsReady);
-    // (avec Playwright chaque instruction compte comme un geste : modification lancée 6,5 s plus tard, sans geste récent)
-    await A.evaluate(()=>{setTimeout(()=>{window.__gis=0;records.find(r=>r.id==='R2').obs='modif';saveLS(LS,records)},6500)});await A.waitForTimeout(10000);
-    ok(await A.evaluate(()=>window.__gis===0&&/Synchroniser maintenant/.test($('driveStatus').textContent)),'envoi automatique sans geste de l’agent : aucune fenêtre Google ouverte, « Synchroniser maintenant » proposé');
-    await A.evaluate(()=>OEGSync.manualSyncNow());
-    ok(await A.evaluate(()=>window.__gis)===1&&[...acct.files.values()].length>0,'« Synchroniser maintenant » : autorisation redemandée, envoi fait');
-    // Autorisation Google expirée : pas de fenêtre ouverte en arrière-plan, état affiché
-    await A.evaluate(()=>{localStorage.setItem('oeg_sync_drive_token_v1',JSON.stringify({token:'old',exp:Date.now()-1000}))});
-    await A.reload();await A.evaluate(()=>window.OEGRecordsReady);await A.waitForTimeout(300);
-    ok(await A.evaluate(async()=>(await OEGSync.backupStatus()).driveNeedsAuth&&/Synchroniser maintenant/.test($('driveStatus').textContent)),'autorisation expirée : « Synchroniser maintenant » proposé (réception automatique en pause)');
-    await B.evaluate(()=>{localStorage.setItem('oeg_sync_drive_token_v1',JSON.stringify({token:'tok',exp:Date.now()+3000000}))});
-    await B.reload();await B.evaluate(()=>window.OEGRecordsReady);
-    ok(await B.evaluate(async()=>!(await OEGSync.backupStatus()).driveNeedsAuth),'autorisation de moins d’une heure : réception automatique reprise après rechargement');
-    ok(A.errs.length===0&&B.errs.length===0,'aucune erreur JavaScript (partage entre tablettes) '+JSON.stringify(A.errs.concat(B.errs)));
-    for(const c of ctxs)await c.close();
-  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
@@ -1407,5 +1297,32 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
   ok(await p2.evaluate(()=>!!document.getElementById('count')&&/build/.test(window.APP_BUILD)),'l’appli s’ouvre hors-ligne');
   ok(errs2.length===0,'aucune erreur JavaScript (service worker) '+JSON.stringify(errs2));
   await ctx2.close();
+  // --- AE : mise à jour de l'appli sans rechargement en boucle (constaté sur iPhone) ---
+  {
+    const cx=await browser.newContext();await cx.route('https://unpkg.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    let loads=0;p.on('load',()=>loads++);
+    const base=fs.readFileSync(path.join(ROOT,'version.js'),'utf8'),build=+base.match(/OEG_BUILD\s*=\s*(\d+)/)[1];
+    const publish=n=>{OVERRIDES['/version.js']=base.replace(/OEG_BUILD\s*=\s*\d+/,'OEG_BUILD = '+n)};
+    const update=()=>p.evaluate(async()=>{const r=await navigator.serviceWorker.getRegistration();await r.update()}).catch(()=>{});
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>navigator.serviceWorker.ready);
+    await p.waitForFunction(()=>!!navigator.serviceWorker.controller,null,{timeout:10000});await p.waitForTimeout(1500);
+    ok(loads===1,'première ouverture : aucun rechargement à l’installation du service worker ('+loads+' chargement(s))');
+    publish(build+1);await update();await p.waitForTimeout(3000);await p.waitForLoadState('load');
+    ok(loads===2&&await p.evaluate(b=>self.OEG_BUILD===b,build+1),'nouvelle version publiée : un seul rechargement, nouvelle version affichée ('+loads+')');
+    publish(build+2);await update();await p.waitForTimeout(3000);
+    ok(loads===2&&await p.evaluate(()=>!!document.getElementById('updateBanner')),'seconde version dans la minute : pas de nouveau rechargement automatique, bandeau proposé ('+loads+')');
+    await p.click('#updateBanner');await p.waitForTimeout(1500);await p.waitForLoadState('load');
+    ok(loads===3&&await p.evaluate(b=>self.OEG_BUILD===b,build+2),'bandeau touché : mise à jour affichée ('+loads+')');
+    await p.evaluate(()=>navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));await p.waitForTimeout(1500);
+    ok(loads===3&&await p.evaluate(()=>!document.getElementById('updateBanner')),'changement de service worker sans nouvelle version : ni rechargement ni bandeau ('+loads+')');
+    await p.click('.tab[data-tab="new"]');await p.click('#networks .chip[data-n="RCO"]');
+    await p.evaluate(()=>sessionStorage.removeItem('oeg_sw_reload_at'));
+    publish(build+3);await update();await p.waitForTimeout(3000);
+    ok(loads===3&&await p.evaluate(()=>!!document.getElementById('updateBanner')&&/enregistrez la fiche/.test(document.getElementById('updateBanner').textContent)),'fiche en cours : pas de rechargement, bandeau « enregistrez la fiche » ('+loads+')');
+    delete OVERRIDES['/version.js'];
+    ok(ex.length===0,'aucune erreur JavaScript (mise à jour) '+JSON.stringify(ex));
+    await cx.close();
+  }
   await browser.close();srv.close();
 })();

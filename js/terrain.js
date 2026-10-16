@@ -68,9 +68,11 @@
   function refreshField(input){
     if(!input||!input.id||!paramOf(input.id))return;
     const r=checkValue(input.id,input.value),s=statusEl(input);
-    if(!r){s.className='';s.textContent='';input.classList.remove('valueBad','valueWarn');return}
-    s.className='valueStatus '+(r.level==='ok'?'ok':'alert');
-    s.textContent=r.text;
+    // Écriture seulement si le statut change : ce contrôle repasse toutes les 2 s, et réécrire le même
+    // texte modifiait la page à chaque fois (travail inutile, surtout sur téléphone)
+    const set=(cls,txt)=>{if(s.className!==cls)s.className=cls;if(s.textContent!==txt)s.textContent=txt};
+    if(!r){set('','');input.classList.remove('valueBad','valueWarn');return}
+    set('valueStatus '+(r.level==='ok'?'ok':'alert'),r.text);
     input.classList.toggle('valueBad',r.level==='bad');
     input.classList.toggle('valueWarn',r.level==='warn');
   }
@@ -176,7 +178,6 @@
       }
       const sub=[];
       if(!navigator.onLine)sub.push('hors ligne');
-      else if(st&&st.driveNeedsAuth)sub.push('Drive : touchez « Synchroniser maintenant »');
       try{
         const est=await navigator.storage?.estimate?.();
         if(est&&est.usage!=null){

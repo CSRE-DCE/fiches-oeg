@@ -280,8 +280,9 @@
       }
       function histogramSvg(points){
         const W=640,H=230,L=60,R=16,T=22,B=40,iw=W-L-R,ih=H-T-B;
-        if(points.length<2)return '<div class="crtNoData">Historique insuffisant (au moins 2 relevés nécessaires).</div>';
-        const vals=points.map(p=>p.value);
+        // Visite « prélèvement non réalisé » : gardée à sa place dans l'historique (sans barre, signalée)
+        const vals=points.filter(p=>p.value!==null).map(p=>p.value);
+        if(vals.length<2)return '<div class="crtNoData">Historique insuffisant (au moins 2 relevés nécessaires).</div>';
         let vmin=Math.min(0,...vals),vmax=Math.max(...vals);if(vmax===vmin)vmax=vmin+1;
         const sy=v=>T+ih-(v-vmin)/(vmax-vmin)*ih;
         const gap=iw/points.length,bw=Math.min(34,gap*.55);
@@ -289,10 +290,11 @@
         let bars='',labels='',grid='';
         for(let i=0;i<=4;i++){const v=vmin+(vmax-vmin)*i/4,py=sy(v);grid+='<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+(L+iw)+'" y2="'+py.toFixed(1)+'" stroke="#edf1f4"/><text x="'+(L-6)+'" y="'+(py+3).toFixed(1)+'" text-anchor="end" font-size="12" fill="#617180">'+esc(fmtv(v))+'</text>'}
         points.forEach((p,i)=>{
-          const cx=L+gap*i+gap/2,y=sy(p.value),h=(T+ih)-y;
+          const cx=L+gap*i+gap/2;
+          if(p.value!==null){const y=sy(p.value),h=(T+ih)-y;
           bars+='<rect x="'+(cx-bw/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,h).toFixed(1)+'" fill="#00AC97"/>';
-          bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-4).toFixed(1)+'" text-anchor="middle" font-size="12" font-weight="700" fill="#003D7A">'+esc(fmtv(p.value))+'</text>';
-          labels+='<text x="'+cx.toFixed(1)+'" y="'+(T+ih+15)+'" text-anchor="middle" font-size="11" fill="#617180">'+esc(p.label)+'</text>';
+          bars+='<text x="'+cx.toFixed(1)+'" y="'+(y-4).toFixed(1)+'" text-anchor="middle" font-size="12" font-weight="700" fill="#003D7A">'+esc(fmtv(p.value))+'</text>';}
+          labels+='<text x="'+cx.toFixed(1)+'" y="'+(T+ih+15)+'" text-anchor="middle" font-size="11" fill="#617180">'+esc(p.label)+'</text>'+(p.nr?'<text x="'+cx.toFixed(1)+'" y="'+(T+ih+28)+'" text-anchor="middle" font-size="10" font-weight="700" fill="#b2261f">non réalisé</text>':'');
         });
         return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Historique des mesures"><rect width="100%" height="100%" fill="#fff"/>'+grid+'<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/><line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.2"/>'+bars+labels+'</svg>';
       }
@@ -330,7 +332,8 @@
         history.forEach((rec,i)=>{
           const dt=/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',ses=(/^(S\d+)\s*-/.exec(rec.session||'')||[])[1]||'';
           const bold=i===ci?' font-weight="700" fill="#003D7A"':' fill="#617180"';
-          g+=(ses?'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+16)+'" text-anchor="middle" font-size="12"'+bold+'>'+esc(ses)+'</text>':'')+'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+(ses?31:16))+'" text-anchor="middle" font-size="11"'+bold+'>'+esc(dt)+'</text>';
+          g+=(ses?'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+16)+'" text-anchor="middle" font-size="12"'+bold+'>'+esc(ses)+'</text>':'')+'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+(ses?31:16))+'" text-anchor="middle" font-size="11"'+bold+'>'+esc(dt)+'</text>'
+            +(rec.prelevementRealise==='Non'?'<text x="'+sx(i).toFixed(1)+'" y="'+(T+ih+(ses?44:29))+'" text-anchor="middle" font-size="10" font-weight="700" fill="#b2261f">non réalisé</text>':''); // visite « prélèvement non réalisé » signalée
         });
         let lines='',marks='';const labs=[];
         series.forEach(({d,pts})=>{
@@ -357,8 +360,8 @@
           return '<h3 style="margin-top:5mm">📈 Suivi historique à la station ('+history.length+' visite(s))</h3><div class="crtGraphLegend">Valeurs mesurées lors des visites successives à cette station, pour chaque profondeur : '+key+'. La visite du présent rapport est surlignée, avec ses valeurs.</div><div class="crtGraphGrid">'+cards+'</div>';
         }
         const cards=defs.map(([k,label,unit])=>{
-          const points=history.map(rec=>({label:/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',value:paramValue(rec,network,k)})).filter(p=>p.value!==null);
-          if(points.length<2)return '';
+          const points=history.map(rec=>({label:/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',nr:rec.prelevementRealise==='Non',value:paramValue(rec,network,k)})).filter(p=>p.value!==null||p.nr);
+          if(points.filter(p=>p.value!==null).length<2)return '';
           return '<div class="crtGraphCard"><h3>'+esc(label)+' <span class="crtSmall">('+esc(unit)+')</span></h3>'+histogramSvg(points)+'</div>';
         }).filter(Boolean).join('');
         if(!cards)return '';
