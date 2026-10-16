@@ -1188,6 +1188,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(!/Flaconnage du laboratoire 1/.test(r.T),'fiche imprimée : bloc replié par « Non » absent');
     // Mise en page imprimée
     await p.emulateMedia({media:'print'});
+    await p.evaluate(()=>Promise.all([...document.querySelectorAll('#fichePrint img')].map(i=>i.decode?i.decode().catch(()=>{}):null)));
     const lay=await p.evaluate(()=>{const cs=e=>getComputedStyle(e),f=$('fichePrint'),ph=f.querySelector('.fpPhoto img').getBoundingClientRect();
       return {form:$('missionCard').getClientRects().length?'visible':'none',box:cs(f).display,head:cs(f.querySelector('.fpHead')).position,foot:cs(f.querySelector('.fpFoot')).backgroundImage,font:cs(f).fontFamily,logo:f.querySelector('.fpHead img').naturalWidth,slogan:f.querySelector('.fpSlogan').textContent,page:$('fichePrintPage')?.textContent||'',photoH:ph.height,bar:cs(f.querySelector('.fpBar')).backgroundColor}});
     ok(lay.form==='none'&&lay.box==='block','fiche imprimée : seule la fiche mise en page est imprimée (pas le formulaire)');
@@ -1353,8 +1354,9 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     // Envoi automatique sans geste de l'agent et sans autorisation valable : aucune fenêtre Google
     await A.evaluate(()=>{localStorage.removeItem('oeg_sync_drive_token_v1')});
     await A.reload();await A.evaluate(()=>window.OEGRecordsReady);
-    await A.evaluate(()=>{window.__gis=0;records.find(r=>r.id==='R2').obs='modif';saveLS(LS,records)});await A.waitForTimeout(2500);
-    ok(await A.evaluate(()=>window.__gis)===0,'envoi automatique sans geste de l’agent : aucune fenêtre Google ouverte');
+    // (avec Playwright chaque instruction compte comme un geste : modification lancée 6,5 s plus tard, sans geste récent)
+    await A.evaluate(()=>{setTimeout(()=>{window.__gis=0;records.find(r=>r.id==='R2').obs='modif';saveLS(LS,records)},6500)});await A.waitForTimeout(10000);
+    ok(await A.evaluate(()=>window.__gis===0&&/Synchroniser maintenant/.test($('driveStatus').textContent)),'envoi automatique sans geste de l’agent : aucune fenêtre Google ouverte, « Synchroniser maintenant » proposé');
     await A.evaluate(()=>OEGSync.manualSyncNow());
     ok(await A.evaluate(()=>window.__gis)===1&&[...acct.files.values()].length>0,'« Synchroniser maintenant » : autorisation redemandée, envoi fait');
     // Autorisation Google expirée : pas de fenêtre ouverte en arrière-plan, état affiché

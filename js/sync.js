@@ -486,7 +486,7 @@
     // Rien à envoyer : pas de demande d'autorisation (évite une fenêtre Google à chaque ouverture de l'appli)
     if(!userAction && items.every(it=>driveHashes[it.id] === it.hash)) return {ok:true, written:0};
     const authOk = await ensureValidToken(false, userAction);
-    if(!authOk){renderDriveStatus('Reconnexion nécessaire'); return {ok:false, reason:'auth'}}
+    if(!authOk){renderDriveStatus(); return {ok:false, reason:'auth'}} // état « autorisation expirée : touchez Synchroniser maintenant »
     let folderId;
     try{ folderId = await ensureDriveFolder() }
     catch(e){ renderDriveStatus('Impossible de créer le dossier Drive'); return {ok:false, reason:'folder'} }

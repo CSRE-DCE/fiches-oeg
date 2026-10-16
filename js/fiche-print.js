@@ -212,5 +212,11 @@
     window.print();
   }
   window.addEventListener('beforeprint',()=>{if(Date.now()<freshUntil&&ficheActive()){freshUntil=0;return}freshUntil=0;if(!startFichePrint())endFichePrint()});
+  // Logo, bandeau et polices chargés d'avance : une impression lancée par Ctrl+P (sans attente possible)
+  // les trouve prêts, au lieu d'un logo vide ou d'une police de remplacement
+  setTimeout(()=>{
+    ['img/logo-oeg-rond.png','img/bandeau-oeg.svg'].forEach(u=>{const i=new Image();i.src=u});
+    try{if(document.fonts)['400 10px Barlow','600 10px Barlow','700 10px Barlow','700 10px "Barlow Condensed"'].forEach(f=>document.fonts.load(f).catch(()=>{}))}catch(e){}
+  },2500);
   Object.assign(window,{buildFichePrint,printFiche,startFichePrint,endFichePrint});
 })();
