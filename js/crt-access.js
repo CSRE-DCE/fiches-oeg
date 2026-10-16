@@ -4,7 +4,7 @@
   const transportModes=['Voiture','4x4','À pied','Bateau motorisé','Bateau motorisé / pirogue','Canoë / kayak','Véhicule tout-terrain','Avion','Autre'];
   function ensureStationAccess(x){
     custom.stationAccess=custom.stationAccess||{};
-    const key=x?.code||x?.nom; if(!key)return {modes:[],etapes:'',pointDepart:'',difficulte:''};
+    const key=accessKey(x); if(!key)return {modes:[],etapes:'',pointDepart:'',difficulte:''};
     return custom.stationAccess[key]||{modes:(x?.transportModes&&x.transportModes.length?x.transportModes:(x?.transport?[x.transport]:[])),etapes:x?.itineraire||x?.acces||'',pointDepart:x?.pointDepart||'',marche:x?.marche||x?.market||'',bassin:x?.bassin||x?.bassinVersant||x?.bv||'',difficulte:x?.difficulte||''};
   }
   /* Accessibilite : 1 étoile = très facile … 5 étoiles = très difficile. Valeur stockée inchangée (1 = très difficile, 5 = très facile) pour conserver les saisies existantes. */
@@ -15,7 +15,7 @@
     return '★'.repeat(v)+'☆'.repeat(5-v)+' ('+v+'/5)';
   }
   function stationTransportDetailed(x){const a=ensureStationAccess(x);return (a.modes&&a.modes.length?a.modes:[stationTransport(x)]).filter(Boolean)}
-  function stationKey(x){return x?.code||x?.nom||''}
+  function stationKey(x){return accessKey(x)}
   function saveAccess(x,modes,etapes,depart,marche,difficulte){custom.stationAccess=custom.stationAccess||{};const prev=ensureStationAccess(x);custom.stationAccess[stationKey(x)]={...prev,modes,etapes,pointDepart:depart,marche,difficulte};saveLS(LSC,custom)}
   function openStationEnhanced(x){
     if(!x)return;

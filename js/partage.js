@@ -101,11 +101,8 @@
         const h=hashOf(v),e=meta[k];
         if(!e||e.d||e.h!==h){meta[k]={h,t:(first&&!e)?0:now};dirty=true}
       }
-      // Collection vidée d'un coup (au moins 3 éléments) : réinitialisation de l'appareil ou incident, pas une
-      // série de suppressions voulues — rien n'est retiré des autres tablettes, les éléments reviendront
-      const gone=Object.keys(meta).filter(k=>!(k in m)&&!meta[k].d),live=Object.keys(meta).filter(k=>!meta[k].d).length;
-      if(gone.length>=3&&gone.length===live&&!Object.keys(m).length){st.kinds[kind]={};dirty=true;continue}
-      gone.forEach(k=>{meta[k]={t:now,d:1};dirty=true});
+      // Suppression faite ici : notée (elle reste propre à cette tablette, l'élément n'y revient pas)
+      Object.keys(meta).forEach(k=>{if(!(k in m)&&!meta[k].d){meta[k]={t:now,d:1};dirty=true}});
       if(first){st.init[kind]=1;dirty=true}
     }
     if(dirty)saveState();
@@ -131,10 +128,14 @@
 
   // ---------- Fusion d'un fichier venu d'une autre tablette ----------
   // Ajoute ou met à jour, ne retire jamais rien. Renvoie {changed, kinds:[collections modifiées]}
+  // L'état du partage n'est PAS enregistré ici : l'appelant enregistre d'abord les données fusionnées, puis
+  // l'état (persist) — sinon un arrêt de l'appli entre les deux ferait passer d'anciennes valeurs pour
+  // des modifications récentes.
   async function mergeRemote(p){
     const res={changed:false,kinds:[]};
     if(!p||typeof p!=='object')return res;
     if(p.share&&p.share.deviceId===deviceId)return res; // notre propre fichier
+    stamp(); // modifications faites ici depuis le dernier envoi datées avant toute comparaison
     const rmetaAll=(p.share&&p.share.meta)||{};
     for(const [kind,K] of Object.entries(KINDS)){
       if(K.get(p)===undefined&&!rmetaAll[kind])continue;
@@ -152,7 +153,7 @@
         if(rt>lt){changes[k]=rv;meta[k]={h:rh,t:rt};touched=true}
       }
       if(Object.keys(changes).length){writeBack(kind,custom,changes);res.changed=true;res.kinds.push(kind)}
-      if(touched)saveState();
+      if(touched)res.touched=true;
     }
     // Journal d'audit : union sans doublon, ordre chronologique, 5000 lignes au plus (les plus récentes)
     if(Array.isArray(p.auditTrail)&&p.auditTrail.length){
@@ -210,5 +211,8 @@
   // envoi) aura sa date ; seul ce qui existait avant cette version garde une date inconnue
   try{stamp()}catch(e){}
 
-  window.OEGShare={deviceId,stamp,payload,mergeRemote,refreshUI,noteRecordDeleted,isDeletedVersion,_state:()=>st};
+  // Après une fusion : enregistrer l'état (une fois les données enregistrées), ou revenir à l'état enregistré
+  function persist(){saveState()}
+  function reloadState(){const x=loadJson(STATE_KEY,null);st=(x&&x.kinds)?x:{kinds:{},init:{}}}
+  window.OEGShare={deviceId,stamp,payload,mergeRemote,persist,reloadState,refreshUI,noteRecordDeleted,isDeletedVersion,_state:()=>st};
 })();

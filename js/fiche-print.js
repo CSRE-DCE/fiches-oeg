@@ -7,6 +7,7 @@
  * Boutons radio et cases à cocher deviennent le texte de la réponse choisie ; ni « non référencé »,
  * ni coches, ni statut de la fiche (le statut reste dans l'application). */
 (function(){
+  const ASSETS={}; // logo, bandeau, légende : data: URL préparées au démarrage (voir plus bas)
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // Éléments jamais imprimés : aides, boutons, outils de saisie
   const SKIP='.hint,.note,.banner,.actions,button,.btn,.drawToolbar,.photoSourceBtns,.metrologyStatus,.elProbeLabel,script,style,datalist,option';
@@ -19,7 +20,9 @@
     if(el.tagName==='SELECT'){const o=el.options[el.selectedIndex];return o&&el.value!==''?clean(o.text):''}
     const t=String(el.type||'').toLowerCase();
     if(t==='date'||t==='datetime-local')return frDate(el.value);
-    return el.tagName==='TEXTAREA'?String(el.value||'').trim():clean(el.value);
+    // Texte saisi par l'agent imprimé tel quel (seuls les espaces sont resserrés) : les mentions retirées par
+    // clean() ne concernent que les libellés et les options des listes
+    return el.tagName==='TEXTAREA'?String(el.value||'').trim():String(el.value||'').replace(/\s+/g,' ').trim();
   }
   // Texte affiché d'un bloc : valeurs des champs, réponse cochée (les options non cochées sont omises),
   // morceaux séparés par « · » entre blocs (le texte d'une même ligne reste collé)
@@ -36,7 +39,9 @@
         if(t==='radio'||t==='checkbox'){if(el.checked&&!el.closest('label')){flush();parts.push(clean(el.value))}return}
         if(t==='file'||t==='hidden'||t==='button')return;
         // Répétitions de turbidité (cases « M1 », « M2 », « M3 ») : repère gardé devant la valeur
-        flush();const v=controlValue(el),ph=/^M\d$/.test(el.placeholder||'')?el.placeholder+' : ':'';if(v)parts.push(ph+v);return;
+        // Unité indiquée dans la case (taille « mm », poids « g » des poissons…) imprimée avec la valeur
+        flush();const v=controlValue(el),phr=String(el.placeholder||'').trim();
+        if(v)parts.push(/^M\d$/.test(phr)?phr+' : '+v:/^(mm|cm|m|g|kg|mL|L|°C|NTU|%)$/i.test(phr)?v+' '+phr:v);return;
       }
       if(el.matches('.paramUnit')){const u=clean(el.textContent);if(u)cur+=' ('+u+')';return}
       const opt=el.tagName==='LABEL'&&el.querySelector('input[type=radio],input[type=checkbox]');
@@ -84,7 +89,7 @@
       if(el.matches('canvas')){const b=canvasBlock(el,el.id==='signature'?'Signature':'',el.id==='signature'?'fpSign':'fpDraw');if(b)blocks.push(b);return}
       if(el.matches('.schemaLegendBox')){
         // Légende de référence du schéma (image), puis l'élément ajouté à la main s'il y en a un
-        const img=el.querySelector('img');if(img)blocks.push({t:'img',src:img.getAttribute('src'),caption:'Légende du schéma',cls:'fpLegend'});
+        const img=el.querySelector('img');if(img)blocks.push({t:'img',src:ASSETS.legend||img.getAttribute('src'),caption:'Légende du schéma',cls:'fpLegend'});
         const extra=el.querySelector('input');if(extra&&extra.value.trim())kv({text:'Autre élément de légende',code:''},clean(extra.value));
         return;
       }
@@ -173,8 +178,8 @@
     let box=document.getElementById('fichePrint');
     if(!box){box=document.createElement('div');box.id='fichePrint';document.body.appendChild(box)}
     box.innerHTML=
-      '<div class="fpHead"><img src="img/logo-oeg-rond.png" alt=""><div class="fpOrg"><div class="fpOrgName">OFFICE DE L’EAU DE GUYANE</div><div class="fpOrgSub">Fiche terrain'+(rm?' — '+esc(rm):'')+'</div></div><div class="fpRef"><div>'+esc(code||state.station||'')+'</div><span>'+esc(date)+'</span></div></div>'+
-      '<div class="fpFoot"><div class="fpFootLine">Fiche terrain '+esc(net)+(state.station?' — '+esc(state.station):'')+(date?' — '+esc(date):'')+' · éditée le '+esc(edited)+' · Office de l’Eau de Guyane</div><div class="fpSlogan">La connaissance aujourd’hui<br>pour les rivières de demain</div><div class="fpUrl">www.eauguyane.fr</div></div>'+
+      '<div class="fpHead"><img src="'+esc(ASSETS.logo||'img/logo-oeg-rond.png')+'" alt=""><div class="fpOrg"><div class="fpOrgName">OFFICE DE L’EAU DE GUYANE</div><div class="fpOrgSub">Fiche terrain'+(rm?' — '+esc(rm):'')+'</div></div><div class="fpRef"><div>'+esc(code||state.station||'')+'</div><span>'+esc(date)+'</span></div></div>'+
+      '<div class="fpFoot"><img class="fpBand" src="'+esc(ASSETS.band||'img/bandeau-oeg.svg')+'" alt=""><div class="fpFootLine">Fiche terrain '+esc(net)+(state.station?' — '+esc(state.station):'')+(date?' — '+esc(date):'')+' · éditée le '+esc(edited)+' · Office de l’Eau de Guyane</div><div class="fpSlogan">La connaissance aujourd’hui<br>pour les rivières de demain</div><div class="fpUrl">www.eauguyane.fr</div></div>'+
       '<table class="fpDoc"><thead><tr><td><div class="fpSpH"></div></td></tr></thead><tfoot><tr><td><div class="fpSpF"></div></td></tr></tfoot><tbody><tr><td>'+
       '<div class="fpKicker">FICHE TERRAIN'+(rm?' — '+esc(rm.toUpperCase()):'')+'</div><h1 class="fpTitle">'+esc(state.station?'Prélèvement '+(net?net+' — ':'')+state.station:'Fiche terrain')+'</h1>'+(sub?'<div class="fpSub">'+esc(sub)+'</div>':'')+
       (nonRealise?'<div class="fpAlert">PRÉLÈVEMENT NON RÉALISÉ — motif, photographies et coordonnées relevées sur place ci-dessous.</div>':'')+
@@ -212,11 +217,14 @@
     window.print();
   }
   window.addEventListener('beforeprint',()=>{if(Date.now()<freshUntil&&ficheActive()){freshUntil=0;return}freshUntil=0;if(!startFichePrint())endFichePrint()});
-  // Logo, bandeau et polices chargés d'avance : une impression lancée par Ctrl+P (sans attente possible)
-  // les trouve prêts, au lieu d'un logo vide ou d'une police de remplacement
-  setTimeout(()=>{
-    ['img/logo-oeg-rond.png','img/bandeau-oeg.svg'].forEach(u=>{const i=new Image();i.src=u});
+  // Logo, bandeau du pied de page et légende du schéma gardés en mémoire sous forme de données (data:), et
+  // polices chargées d'avance : une impression par Ctrl+P (que l'appli ne peut pas faire attendre) les
+  // imprime sans délai de chargement — une image ordinaire créée au moment d'imprimer sortait vide
+  let assetsDone;window.fichePrintAssetsReady=new Promise(r=>{assetsDone=r});
+  setTimeout(async()=>{
+    const asData=async(u,k)=>{try{const r=await fetch(u);if(!r.ok)return;const b=await r.blob();ASSETS[k]=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(b)})}catch(e){}};
+    await asData('img/logo-oeg-rond.png','logo');await asData('img/bandeau-oeg.svg','band');await asData('img/legende-schema.png','legend');assetsDone();
     try{if(document.fonts)['400 10px Barlow','600 10px Barlow','700 10px Barlow','700 10px "Barlow Condensed"'].forEach(f=>document.fonts.load(f).catch(()=>{}))}catch(e){}
-  },2500);
+  },1500);
   Object.assign(window,{buildFichePrint,printFiche,startFichePrint,endFichePrint});
 })();

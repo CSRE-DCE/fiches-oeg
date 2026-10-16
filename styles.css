@@ -286,7 +286,9 @@ body.nonRealise .lblNonReal{display:inline;color:#a3261f}
   #fichePrint .fpOrgSub{font-size:8.5pt;color:#4c6180;margin-top:.6mm}
   #fichePrint .fpRef{text-align:right;font-weight:700;color:#0d3678;font-size:10pt;line-height:1.25}
   #fichePrint .fpRef span{display:block;font-weight:600;font-size:8.5pt;color:#4c6180}
-  #fichePrint .fpFoot{position:fixed;left:0;right:0;bottom:0;height:22.5mm;background:url(img/bandeau-oeg.svg) left bottom/100% 100% no-repeat}
+  #fichePrint .fpFoot{position:fixed;left:0;right:0;bottom:0;height:22.5mm}
+  /* Bandeau en image (et non en fond CSS d'impression, chargé trop tard : absent de la première impression) */
+  #fichePrint .fpBand{position:absolute;left:0;bottom:0;width:100%;height:100%;display:block}
   #fichePrint .fpFootLine{position:absolute;left:30mm;right:14mm;top:2.2mm;font-size:6.4pt;color:#4c6180;line-height:1.2}
   #fichePrint .fpFootLine span,#fichePrint .fpFootLine{background:rgba(255,255,255,.86)}
   #fichePrint .fpSlogan{position:absolute;left:6mm;bottom:2.4mm;font-weight:600;font-size:7.6pt;line-height:1.2;color:#0d3678}

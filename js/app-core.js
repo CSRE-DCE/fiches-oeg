@@ -258,6 +258,11 @@ window.OEGRecordsReady=recordsReady;
 let custom=load(LSC,load('oeg_custom_v3',{preleveurs:[],stations:[],equipements:[]}));
 custom.preleveurs=(custom.preleveurs||[]).map(o=>typeof o==='string'?{nom:o,prenom:'',organisme:o==='PF'||o==='AA'||o==='SM'||o==='ML'||o==='MG'||o==='MB'?'Office de l\'Eau de Guyane':'',legacy:true}:o);
 custom.stations=custom.stations||[];
+// Clé des informations d'accès d'une station : son code, ou son nom quand elle n'a pas de code (« Non défini »
+// pour une station ajoutée sans code — toutes partageaient auparavant la même fiche d'accès)
+function accessKey(x){const c=x&&x.code;return (c&&c!=='Non défini')?String(c):String(x&&x.nom||'')}
+(function(){const a=custom.stationAccess;if(!a||!a['Non défini'])return;const nc=(custom.stations||[]).filter(s=>!s.code||s.code==='Non défini');
+  if(nc.length===1&&!a[nc[0].nom]){a[nc[0].nom]=a['Non défini'];delete a['Non défini']}})(); // une seule station sans code : sa fiche d'accès lui est rendue
 custom.equipements=custom.equipements||[];
 
 let state={network:null,activity:null,bioOperation:null,session:null,station:null,editing:null,preleveurs:[],photos:[],draw:null,signature:null};
@@ -1801,7 +1806,10 @@ function mergeCustomInto(target,incoming){
     const seen=new Set(target[k].map(x=>JSON.stringify(x)));
     incoming[k].forEach(x=>{const s=JSON.stringify(x);if(!seen.has(s)){target[k].push(x);seen.add(s)}});
   });
-  if(incoming.stationAccess)target.stationAccess=Object.assign({},target.stationAccess||{},incoming.stationAccess);
+  // Accès et configuration qualité : les valeurs déjà présentes ici sont gardées (une ancienne sauvegarde
+  // importée remplaçait des réglages plus récents, ensuite repris par les autres tablettes) ; seules les
+  // entrées manquantes sont ajoutées
+  if(incoming.stationAccess)target.stationAccess=Object.assign({},incoming.stationAccess,target.stationAccess||{});
   if(Array.isArray(incoming.receiverOrgs))target.receiverOrgs=[...new Set([...(target.receiverOrgs||[]),...incoming.receiverOrgs])];
   // Non-conformités et journal d'audit : réunis (par identifiant). Auparavant ils étaient ignorés
   // (tableaux déjà créés au démarrage) : une NC critique ouverte importée ne bloquait plus la validation.
@@ -1811,10 +1819,10 @@ function mergeCustomInto(target,incoming){
     const seen=new Set(target[k].map(x=>x&&x.id!=null?'id:'+x.id:JSON.stringify(x)));
     incoming[k].forEach(x=>{const key=x&&x.id!=null?'id:'+x.id:JSON.stringify(x);if(!seen.has(key)){target[k].push(x);seen.add(key)}});
   });
-  if(incoming.qualityConfig&&typeof incoming.qualityConfig==='object'){const appVersion=target.qualityConfig?.appVersion;target.qualityConfig=Object.assign({},target.qualityConfig||{},incoming.qualityConfig);if(appVersion)target.qualityConfig.appVersion=appVersion}
+  if(incoming.qualityConfig&&typeof incoming.qualityConfig==='object'){const appVersion=target.qualityConfig?.appVersion;target.qualityConfig=Object.assign({},incoming.qualityConfig,target.qualityConfig||{});if(appVersion)target.qualityConfig.appVersion=appVersion}
   if(incoming.crtMeta&&typeof incoming.crtMeta==='object')target.crtMeta=Object.assign({},incoming.crtMeta,target.crtMeta||{});
   Object.keys(incoming).forEach(k=>{
-    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs','nonConformites','auditTrail','qualityConfig','crtMeta'].includes(k))return;
+    if(['equipements','preleveurs','stations','stationAccess','receiverOrgs','nonConformites','auditTrail','qualityConfig','crtMeta','type','exportedAt','share','lastAutoBackup'].includes(k))return;
     if(target[k]===undefined)target[k]=incoming[k];
   });
 }

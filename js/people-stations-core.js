@@ -59,7 +59,7 @@ function photoGroups(){
   drawPhotoGroups();
 }
 function stations(){let a=[];Object.values(DATA||{}).forEach(v=>Array.isArray(v)&&v.forEach(x=>a.push(x)));return a.concat(custom.stations||[]).filter(x=>x.nom)}
-function meta(x){const a=(custom.stationAccess||{})[x?.code||x?.nom]||{};return {m:x.marche||x.market||a.marche||'',b:x.bassin||x.bassinVersant||x.bv||a.bassin||'',x:+x.x,y:+x.y}}
+function meta(x){const a=(custom.stationAccess||{})[accessKey(x)]||{};return {m:x.marche||x.market||a.marche||'',b:x.bassin||x.bassinVersant||x.bv||a.bassin||'',x:+x.x,y:+x.y}}
 window.guyaneMap=null;window.guyaneLayer=null;
 /* utmToLatLon() est fournie par js/geo.js (module ES partagé, voir window.utmToLatLon). */
 function stationLatLon(x){if(Number.isFinite(+x.lat)&&Number.isFinite(+x.lon))return [+x.lat,+x.lon];const ex=Number(x.x),ny=Number(x.y);if(!Number.isFinite(ex)||!Number.isFinite(ny))return null;if(typeof utmToLatLon!=='function')return null;const proj=String(x.projection||x.refSpatial||x.reference||'RGFG 95 / UTM 22N');return utmToLatLon(ex,ny,/21/.test(proj)?21:22)}

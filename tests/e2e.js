@@ -1190,7 +1190,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.emulateMedia({media:'print'});
     await p.evaluate(()=>Promise.all([...document.querySelectorAll('#fichePrint img')].map(i=>i.decode?i.decode().catch(()=>{}):null)));
     const lay=await p.evaluate(()=>{const cs=e=>getComputedStyle(e),f=$('fichePrint'),ph=f.querySelector('.fpPhoto img').getBoundingClientRect();
-      return {form:$('missionCard').getClientRects().length?'visible':'none',box:cs(f).display,head:cs(f.querySelector('.fpHead')).position,foot:cs(f.querySelector('.fpFoot')).backgroundImage,font:cs(f).fontFamily,logo:f.querySelector('.fpHead img').naturalWidth,slogan:f.querySelector('.fpSlogan').textContent,page:$('fichePrintPage')?.textContent||'',photoH:ph.height,bar:cs(f.querySelector('.fpBar')).backgroundColor}});
+      return {form:$('missionCard').getClientRects().length?'visible':'none',box:cs(f).display,head:cs(f.querySelector('.fpHead')).position,foot:(f.querySelector('.fpBand')?.naturalWidth>0?'bandeau-oeg.svg':''),font:cs(f).fontFamily,logo:f.querySelector('.fpHead img').naturalWidth,slogan:f.querySelector('.fpSlogan').textContent,page:$('fichePrintPage')?.textContent||'',photoH:ph.height,bar:cs(f.querySelector('.fpBar')).backgroundColor}});
     ok(lay.form==='none'&&lay.box==='block','fiche imprimée : seule la fiche mise en page est imprimée (pas le formulaire)');
     ok(lay.head==='fixed'&&/bandeau-oeg\.svg/.test(lay.foot)&&/connaissance aujourd’hui/.test(lay.slogan)&&lay.logo>0,'fiche imprimée : en-tête (logo) et bandeau de pied de page répétés sur chaque page');
     ok(/Barlow/.test(lay.font)&&lay.bar==='rgb(13, 54, 120)','fiche imprimée : police Barlow et bandeaux bleu marine du modèle');
@@ -1206,6 +1206,15 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     // Impression depuis un autre onglet (CRT) : la fiche et ses marges de page sont retirées
     await p.click('.tab[data-tab="crt"]');await p.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));
     ok(await p.evaluate(()=>!document.body.classList.contains('fpPrinting')&&!$('fichePrintPage')&&!$('fichePrint').innerHTML),'impression d’un autre onglet : fiche mise en page retirée (le CRT garde ses marges)');
+    // Texte saisi imprimé tel quel ; unité d'une case (« g ») imprimée avec la valeur
+    await p.click('.tab[data-tab="new"]');
+    await p.evaluate(()=>{$('methodRef').value='MO-12 (non référencé au programme) ✅';const f=document.createElement('div');f.className='field';f.id='zzUnit';f.innerHTML='<label>Poids test</label><input placeholder="g" value="45">';$('missionCard').appendChild(f)});
+    const typed=await p.evaluate(()=>{startFichePrint();const T=$('fichePrint').textContent;$('zzUnit').remove();return {m:T.includes('MO-12 (non référencé au programme) ✅'),g:/45 g/.test(T)}});
+    ok(typed.m&&typed.g,'fiche imprimée : texte saisi intact (mentions et pictogrammes tapés gardés), unité « g » avec la valeur '+JSON.stringify(typed));
+    // Ctrl+P (impression lancée par le navigateur, sans attente possible) : logo, bandeau et légende déjà prêts
+    await p.evaluate(()=>window.fichePrintAssetsReady);
+    const ctrlp=await p.evaluate(()=>{window.dispatchEvent(new Event('beforeprint'));const f=$('fichePrint');return {logo:f.querySelector('.fpHead img').getAttribute('src').slice(0,5),band:f.querySelector('.fpBand').getAttribute('src').slice(0,5),leg:(f.querySelector('.fpLegend img')?.getAttribute('src')||'data:').slice(0,5)}});
+    ok(ctrlp.logo==='data:'&&ctrlp.band==='data:'&&ctrlp.leg==='data:','Ctrl+P : logo, bandeau et légende imprimés sans délai de chargement '+JSON.stringify(ctrlp));
     // PDF réel (Chromium) : plusieurs pages, sans erreur
     await p.click('.tab[data-tab="new"]');await p.evaluate(()=>startFichePrint());await p.emulateMedia({media:'print'});
     const pdf=await p.pdf({preferCSSPageSize:true,printBackground:true});const pages=(pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g)||[]).length;
@@ -1311,8 +1320,18 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await A.evaluate(()=>{const r=records.find(r=>r.id==='R1');if(r){r.comment='touché';saveLS(LS,records)}});await sync(A); // A renvoie encore R1
     await B.evaluate(()=>OEGSync.pullFromDrive());await B.evaluate(()=>OEGSync.autoPull());
     ok(await B.evaluate(()=>!records.some(r=>r.id==='R1')),'fiche supprimée sur cette tablette : ne revient pas (réception, « Récupérer l’historique complet »)');
+    // Modification faite ici juste avant une réception (pas encore envoyée) : gardée face à une version plus ancienne
+    await B.evaluate(()=>{custom.equipements.find(e=>e.gmao==='SD-9').echeance='2027-01-15';saveLS(LSC,custom)});await sync(B);
+    await A.evaluate(()=>{custom.equipements.find(e=>e.gmao==='SD-9').echeance='2027-09-30';localStorage.setItem(LSC,JSON.stringify(custom))}); // pas d'envoi
+    await A.evaluate(()=>OEGSync.autoPull());
+    ok(await A.evaluate(()=>custom.equipements.find(e=>e.gmao==='SD-9').echeance)==='2027-09-30','modification faite juste avant une réception : gardée (non remplacée par une version plus ancienne)');
+    await sync(A);await B.evaluate(()=>OEGSync.autoPull());
+    ok(await B.evaluate(()=>custom.equipements.find(e=>e.gmao==='SD-9').echeance)==='2027-09-30','… et transmise ensuite à l’autre tablette');
     // Suppression d'un opérateur sur A : non transmise à B, et l'opérateur ne revient pas sur A
-    await A.evaluate(()=>{custom.preleveurs=custom.preleveurs.filter(o=>o.nom!=='Durand');saveLS(LSC,custom)});await sync(A);
+    await A.evaluate(()=>{custom.preleveurs=custom.preleveurs.filter(o=>o.nom!=='Durand');localStorage.setItem(LSC,JSON.stringify(custom))});
+    await A.evaluate(()=>OEGSync.pullFromDrive()); // récupération complète aussitôt après la suppression
+    ok(await A.evaluate(()=>!custom.preleveurs.some(o=>o.nom==='Durand')),'opérateur supprimé puis « Récupérer l’historique complet » aussitôt : ne revient pas');
+    await sync(A);
     await B.evaluate(()=>OEGSync.autoPull());
     ok(await B.evaluate(()=>custom.preleveurs.some(o=>o.nom==='Durand')),'suppression d’un opérateur sur l’autre tablette : non transmise');
     await B.evaluate(()=>{custom.equipements.push({type:'boitier',gmao:'BX-7',nom:'Multi',serie:'B7'});saveLS(LSC,custom)});await sync(B); // B republie son référentiel (avec l'opérateur)
@@ -1335,7 +1354,10 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     acct.files.set('old1',{name:'_referentiel_operateurs_equipements_stations.json',text:JSON.stringify({type:'referentiel_operateurs_equipements_stations',preleveurs:['MB',{nom:'Old',prenom:'Ana',organisme:'OEG'}],equipements:[{gmao:'SD-9',echeance:'2000-01-01'}],stations:[],stationAccess:{}}),v:1,parent:[...acct.folders.keys()][0]});
     await A.evaluate(()=>OEGSync.autoPull());
     a=await A.evaluate(()=>({old:custom.preleveurs.some(o=>o.nom==='Old'),mb:custom.preleveurs.find(o=>o.nom==='MB')?.organisme,eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance}));
-    ok(a.old&&a.eq==='2027-06-01'&&(a.mb===undefined||a.mb==="Office de l'Eau de Guyane"),'ancien format : opérateurs ajoutés (initiales converties), équipement plus récent non remplacé '+JSON.stringify(a));
+    ok(a.old&&a.eq!=='2000-01-01'&&(a.mb===undefined||a.mb==="Office de l'Eau de Guyane"),'ancien format : opérateurs ajoutés (initiales converties), équipement plus récent non remplacé '+JSON.stringify(a));
+    // « Importer JSON » d'une ancienne sauvegarde : accès et configuration déjà présents gardés, manquants ajoutés
+    ok(await A.evaluate(()=>{const t={stationAccess:{K1:{etapes:'récent'}},qualityConfig:{qualityMethodRef:'MO-12 v2'}};mergeCustomInto(t,{stationAccess:{K1:{etapes:'ancien'},K2:{etapes:'x'}},qualityConfig:{qualityMethodRef:'MO-12 v1',autre:'y'},type:'t',share:{}});return t.stationAccess.K1.etapes==='récent'&&t.stationAccess.K2.etapes==='x'&&t.qualityConfig.qualityMethodRef==='MO-12 v2'&&t.qualityConfig.autre==='y'&&!('share' in t)&&!('type' in t)}),'import JSON : réglages récents gardés, éléments manquants ajoutés, sans clés parasites');
+    ok(await A.evaluate(()=>accessKey({code:'Non défini',nom:'Crique A'})==='Crique A'&&accessKey({code:'Non défini',nom:'Crique B'})!=='Crique A'&&accessKey({code:'0914',nom:'X'})==='0914'),'stations sans code : chacune sa fiche d’accès (plus de clé commune « Non défini »)');
     // Pas d'allers-retours sans fin
     await sync(A);await sync(B);await A.waitForTimeout(1800);
     const snap=new Map([...acct.files].map(([id,f])=>[id,f.v]));

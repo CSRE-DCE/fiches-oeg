@@ -621,7 +621,14 @@
       if(!/^_(referentiel|qualite)/.test(f.name)||ownIds.has(f.id)||!isNew(f))continue;
       try{
         const p=await driveDownloadJson(f.id);
-        if(window.OEGShare){const r=await window.OEGShare.mergeRemote(p);if(r.changed){share.changed=true;share.kinds.push(...r.kinds)}}
+        if(window.OEGShare){
+          const r=await window.OEGShare.mergeRemote(p);
+          // Données fusionnées enregistrées AVANT l'état du partage (arrêt de l'appli, stockage plein : rien
+          // n'est faussement daté) ; en cas d'échec d'enregistrement, l'état enregistré est conservé
+          if(r.changed&&saveLS(LSC,custom)===false){window.OEGShare.reloadState();failed++;continue}
+          window.OEGShare.persist();
+          if(r.changed){share.changed=true;share.kinds.push(...r.kinds)}
+        }
         driveSeen[f.id]=String(f.version);
       }catch(e){failed++}
     }
@@ -655,7 +662,7 @@
       if(typeof updateCount==='function')updateCount();
       if(typeof renderList==='function')renderList();
     }
-    if(share.changed){saveLS(LSC,custom);if(window.OEGShare)window.OEGShare.refreshUI(share)}
+    if(share.changed&&window.OEGShare)window.OEGShare.refreshUI(share); // données déjà enregistrées à la fusion
     localStorage.setItem('oeg_sync_drive_pull_last',new Date().toISOString());
     lastPullAt=Date.now();
     renderDriveStatus();
