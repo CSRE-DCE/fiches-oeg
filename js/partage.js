@@ -6,19 +6,20 @@
  * Les éléments partagés (opérateurs, équipements, stations ajoutées, accès, programme de marché,
  * organismes récepteurs ; non-conformités, configuration qualité, métadonnées CRT, fiches supprimées)
  * n'ont pas de date de modification : cette tablette mémorise, pour chacun, l'empreinte de son contenu
- * et la date à laquelle elle l'a vu changer (ou supprimé). À la fusion, pour un même élément, la
- * modification la plus récente l'emporte ; une suppression plus récente qu'une modification retire
- * l'élément partout. Un élément dont la date est inconnue (présent avant cette version, ou venant d'une
+ * et la date à laquelle elle l'a vu changer. À la fusion, pour un même élément, la modification la plus
+ * récente l'emporte. Un élément dont la date est inconnue (présent avant cette version, ou venant d'une
  * tablette pas encore à jour) ne remplace jamais un élément local : il est seulement ajouté s'il manque.
  * Le journal d'audit est réuni (union, sans doublon).
  *
- * Les fiches terrain voyagent, elles, dans leurs propres fichiers (js/sync.js) ; une fiche supprimée est
- * notée ici (deletedRecords) pour ne pas revenir à la récupération suivante, et retirée des autres
- * tablettes si elle n'y a pas été modifiée depuis.
+ * Les suppressions ne se propagent PAS (choix de l'OEG) : un élément ou une fiche supprimé sur une
+ * tablette reste sur les autres. Sur la tablette qui l'a supprimé, il ne revient pas à la réception
+ * suivante (sauf s'il a été modifié ensuite sur une autre tablette). Les fiches terrain voyagent dans
+ * leurs propres fichiers (js/sync.js) ; leurs suppressions sont notées ici, sur cette tablette seulement.
  */
 (function(){
   'use strict';
   const STATE_KEY='oeg_share_state_v1';
+  const DELETED_KEY='oeg_deleted_records_v1'; // fiches supprimées sur CETTE tablette : {id: date ISO}
   const DEVICE_KEY='oeg_device_id';
   const AUDIT_MAX=5000;
 
@@ -48,8 +49,7 @@
     // Qualité
     nonConformites:{group:'qual',type:'list',get:c=>c.nonConformites,set:(c,v)=>{c.nonConformites=v},key:n=>String(n&&n.id||'')},
     qualityConfig:{group:'qual',type:'map',get:c=>c.qualityConfig,set:(c,v)=>{c.qualityConfig=v},skip:['appVersion']},
-    crtMeta:{group:'qual',type:'map',get:c=>c.crtMeta,set:(c,v)=>{c.crtMeta=v}},
-    deletedRecords:{group:'qual',type:'map',get:c=>c.deletedRecords,set:(c,v)=>{c.deletedRecords=v}}
+    crtMeta:{group:'qual',type:'map',get:c=>c.crtMeta,set:(c,v)=>{c.crtMeta=v}}
   };
   // Collection -> {clé: élément}. En cas de doublon local (ancienne fusion), le premier est retenu ; les
   // autres sont conservés tels quels à la réécriture (rien n'est perdu).
@@ -120,7 +120,8 @@
     Object.entries(KINDS).forEach(([kind,K])=>{
       if(K.group!==group)return;
       o[kind]=K.get(custom)||(K.type==='list'?[]:{});
-      const mm={};Object.entries(st.kinds[kind]||{}).forEach(([k,e])=>{mm[k]=e.d?{t:e.t,d:1}:{t:e.t}});meta[kind]=mm;
+      // Dates des éléments présents seulement : une suppression n'est jamais transmise aux autres tablettes
+      const mm={};Object.entries(st.kinds[kind]||{}).forEach(([k,e])=>{if(!e.d)mm[k]={t:e.t}});meta[kind]=mm;
     });
     if(group==='qual')o.auditTrail=custom.auditTrail||[];
     o.share={format:2,deviceId,meta};
@@ -129,9 +130,9 @@
   }
 
   // ---------- Fusion d'un fichier venu d'une autre tablette ----------
-  // Renvoie {changed, kinds:[collections modifiées], records:nb de fiches retirées}
+  // Ajoute ou met à jour, ne retire jamais rien. Renvoie {changed, kinds:[collections modifiées]}
   async function mergeRemote(p){
-    const res={changed:false,kinds:[],records:0};
+    const res={changed:false,kinds:[]};
     if(!p||typeof p!=='object')return res;
     if(p.share&&p.share.deviceId===deviceId)return res; // notre propre fichier
     const rmetaAll=(p.share&&p.share.meta)||{};
@@ -139,17 +140,11 @@
       if(K.get(p)===undefined&&!rmetaAll[kind])continue;
       const rmap=toMap(kind,p),rmeta=rmetaAll[kind]||{},lmap=toMap(kind,custom),meta=st.kinds[kind]||(st.kinds[kind]={});
       const changes={};let touched=false;
-      const keys=new Set([...Object.keys(rmap),...Object.keys(rmeta).filter(k=>rmeta[k]&&rmeta[k].d)]);
-      for(const k of keys){
+      for(const k of Object.keys(rmap)){
         const re=rmeta[k]||{},rt=Number(re.t)||0,le=meta[k],lt=le?Number(le.t)||0:0;
-        if(!(k in rmap)){ // supprimé sur l'autre tablette
-          if(k in lmap){if(rt>lt){changes[k]=null;meta[k]={t:rt,d:1};touched=true}}
-          else if(!le||(!le.d&&rt>lt)||(le.d&&rt>lt)){meta[k]={t:rt,d:1};touched=true}
-          continue;
-        }
         const rv=rmap[k],rh=hashOf(rv);
         if(!(k in lmap)){
-          if(le&&le.d&&lt>=rt)continue; // supprimé ici après cette version
+          if(le&&le.d&&lt>=rt)continue; // supprimé ici après cette version : ne revient pas sur cette tablette
           changes[k]=rv;meta[k]={h:rh,t:rt};touched=true;continue;
         }
         const lh=le&&le.h?le.h:hashOf(lmap[k]);
@@ -170,32 +165,22 @@
         if(all.some(a=>addIds.has(a.id))){custom.auditTrail=all;res.changed=true;res.kinds.push('auditTrail')}
       }
     }
-    res.records=applyRecordDeletions();
-    if(res.records)res.changed=true;
     return res;
   }
 
-  // Fiches supprimées sur une tablette : retirées ici, sauf si elles y ont été modifiées après la
-  // suppression (la modification l'emporte) ou si elles sont ouvertes en modification.
-  function deletedAt(id){const d=(custom.deletedRecords||{})[id];const t=d?Date.parse(d):NaN;return isNaN(t)?null:t}
+  // Fiches supprimées sur cette tablette : une version reçue de Drive qui n'a pas été modifiée depuis la
+  // suppression n'est pas réimportée ici. Les autres tablettes gardent la fiche (rien ne leur est transmis).
+  let deletedRecords=loadJson(DELETED_KEY,{});
+  if(!deletedRecords||typeof deletedRecords!=='object')deletedRecords={};
   function isDeletedVersion(rec){
-    if(!rec||!rec.id)return false;const t=deletedAt(rec.id);if(t===null)return false;
-    const s=Date.parse(typeof recordStamp==='function'?recordStamp(rec):'');
-    return isNaN(s)||s<=t;
-  }
-  function applyRecordDeletions(){
-    if(!custom.deletedRecords||typeof records==='undefined')return 0;
-    const editing=(typeof state!=='undefined'&&state)?state.editing:null;
-    const before=records.length;
-    const keep=records.filter(r=>r.id===editing||!isDeletedVersion(r));
-    if(keep.length===before)return 0;
-    records.length=0;keep.forEach(r=>records.push(r));
-    return before-keep.length;
+    if(!rec||!rec.id||!deletedRecords[rec.id])return false;
+    const t=Date.parse(deletedRecords[rec.id]),s=Date.parse(typeof recordStamp==='function'?recordStamp(rec):'');
+    return isNaN(t)?false:(isNaN(s)||s<=t);
   }
   function noteRecordDeleted(id){
     if(!id)return;
-    custom.deletedRecords=custom.deletedRecords||{};
-    custom.deletedRecords[id]=new Date().toISOString();
+    deletedRecords[id]=new Date().toISOString();
+    try{localStorage.setItem(DELETED_KEY,JSON.stringify(deletedRecords))}catch(e){}
   }
 
   // ---------- Écrans à rafraîchir après une fusion ----------
@@ -217,7 +202,6 @@
     if(k.has('equipements'))call(typeof renderEquipment==='function'?renderEquipment:null);
     if(k.has('qualityConfig'))call(typeof loadQualityConfig==='function'?loadQualityConfig:null);
     if(k.has('stations')||k.has('preleveurs')||k.has('equipements'))call(typeof renderAdmin==='function'?renderAdmin:null);
-    if(res.records){call(typeof updateCount==='function'?updateCount:null);call(typeof renderList==='function'?renderList:null)}
     if($('quality')?.classList.contains('active'))call(typeof renderQuality==='function'?renderQuality:null);
     if($('suivi')?.classList.contains('active'))call(typeof renderSuivi==='function'?renderSuivi:null);
   }
@@ -226,5 +210,5 @@
   // envoi) aura sa date ; seul ce qui existait avant cette version garde une date inconnue
   try{stamp()}catch(e){}
 
-  window.OEGShare={deviceId,stamp,payload,mergeRemote,refreshUI,noteRecordDeleted,isDeletedVersion,applyRecordDeletions,_state:()=>st};
+  window.OEGShare={deviceId,stamp,payload,mergeRemote,refreshUI,noteRecordDeleted,isDeletedVersion,_state:()=>st};
 })();

@@ -1245,7 +1245,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
     await p.evaluate(()=>{const s=$('crtRecord');s.value='H2';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(500);
     const ht=await p.evaluate(()=>$('crtPreviewBox').textContent);
-    ok(/Suivi historique à la station \(2 visite/.test(ht)&&!/4\.10/.test(ht),'CRT : visite « prélèvement non réalisé » exclue de l’historique de la station');
+    ok(/Suivi historique à la station \(3 visite/.test(ht),'CRT : visite « prélèvement non réalisé » conservée dans l’historique de la station');
     // Brouillon de modification : fiche remplacée entre-temps, version enregistrée plus récente, fiche supprimée
     await p.click('.tab[data-tab="new"]');
     const mk=(id,extra)=>p.evaluate(([id,extra])=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records=records.filter(r=>r.id!==id);records.push({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',heureDebut:'08:00',heureFin:'09:00',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-05T08:00:00Z'},auditRefs:[],photos:[],insitu:{},conditions:{},sample:{},specific:{},obs:'saved obs',comment:'',...extra});saveLS(LS,records)},[id,extra||{}]);
@@ -1291,7 +1291,8 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     const sync=async p=>{await p.evaluate(()=>OEGSync.manualSyncNow());await p.waitForTimeout(1800);await p.evaluate(()=>OEGSync.manualSyncNow())};
     await A.evaluate(([r1,r2])=>{custom.preleveurs.push({nom:'Durand',prenom:'Léa',organisme:'HYDRECO'});custom.equipements.push({type:'sonde',gmao:'SD-9',nom:'Sonde pH',serie:'S9',echeance:'2026-12-01'});custom.nonConformites.push({id:'NC1',recordId:'R1',status:'Ouverte',severity:'Majeure'});custom.qualityConfig.maxDelayHours=24;custom.crtMeta={R2:{ref:'CRT-1'}};custom.stationOverrides={RCO13:[{code:'09141515',nom:'Ineri (import)'}]};records.push(r1,r2);saveLS(LS,records);saveLS(LSC,custom)},[mk('R1'),mk('R2')]);
     await sync(A);
-    ok([...acct.files.values()].filter(f=>/^_referentiel.*_T[A-Z0-9]+\.json$/.test(f.name)).length===1,'partage : un fichier de référentiel propre à la tablette');
+    const devA=await A.evaluate(()=>OEGShare.deviceId);
+    ok([...acct.files.values()].filter(f=>f.name.startsWith('_referentiel')&&f.name.endsWith('_'+devA+'.json')).length===1,'partage : un fichier de référentiel propre à la tablette');
     await sync(B);
     let b=await B.evaluate(()=>({recs:records.map(r=>r.id).sort().join(),op:custom.preleveurs.some(o=>o.nom==='Durand'),eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance,nc:custom.nonConformites.find(n=>n.id==='NC1')?.status,cfg:custom.qualityConfig.maxDelayHours,crt:custom.crtMeta?.R2?.ref,ov:DATA.RCO13.find(s=>s.code==='09141515')?.nom,opUI:$('operatorData').textContent.includes('Durand')}));
     ok(b.recs==='R1,R2','partage : fiches de l’autre tablette reçues');
@@ -1303,17 +1304,25 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     media=0;await A.evaluate(()=>OEGSync.autoPull());
     let a=await A.evaluate(()=>({recs:records.map(r=>r.id).sort().join(),eq:custom.equipements.find(e=>e.gmao==='SD-9')?.echeance,nc:custom.nonConformites.find(n=>n.id==='NC1')?.status}));
     ok(a.eq==='2027-06-01'&&a.nc==='Clôturée','réception automatique : équipement réétalonné et non-conformité clôturée sur l’autre tablette '+JSON.stringify(a));
-    ok(a.recs==='R2','réception automatique : fiche supprimée sur l’autre tablette retirée ici');
+    ok(a.recs==='R1,R2','suppression d’une fiche sur l’autre tablette : la fiche reste ici (suppressions non transmises)');
     media=0;await A.evaluate(()=>OEGSync.autoPull());
     ok(media===0,'réception automatique : rien de nouveau, aucun fichier téléchargé (seuls les fichiers modifiés le sont)');
-    await A.evaluate(()=>OEGSync.pullFromDrive());
-    ok(await A.evaluate(()=>!records.some(r=>r.id==='R1')),'fiche supprimée : ne revient pas avec « Récupérer l’historique complet »');
-    // Suppression d'un opérateur sur A, propagée à B ; organisme et signataire en cours conservés sur B
-    await B.evaluate(()=>{const o=$('org');o.value=[...o.options].find(x=>x.value==='HYDRECO')?.value||o.value;o.dispatchEvent(new Event('change'));});
-    const orgB=await B.evaluate(()=>$('org').value);
+    await A.evaluate(()=>{const r=records.find(r=>r.id==='R1');if(r){r.comment='touché';saveLS(LS,records)}});await sync(A); // A renvoie encore R1
+    await B.evaluate(()=>OEGSync.pullFromDrive());await B.evaluate(()=>OEGSync.autoPull());
+    ok(await B.evaluate(()=>!records.some(r=>r.id==='R1')),'fiche supprimée sur cette tablette : ne revient pas (réception, « Récupérer l’historique complet »)');
+    // Suppression d'un opérateur sur A : non transmise à B, et l'opérateur ne revient pas sur A
     await A.evaluate(()=>{custom.preleveurs=custom.preleveurs.filter(o=>o.nom!=='Durand');saveLS(LSC,custom)});await sync(A);
     await B.evaluate(()=>OEGSync.autoPull());
-    ok(await B.evaluate(()=>!custom.preleveurs.some(o=>o.nom==='Durand')&&!$('operatorData').textContent.includes('Durand')),'partage : suppression d’un opérateur propagée');
+    ok(await B.evaluate(()=>custom.preleveurs.some(o=>o.nom==='Durand')),'suppression d’un opérateur sur l’autre tablette : non transmise');
+    await B.evaluate(()=>{custom.equipements.push({type:'boitier',gmao:'BX-7',nom:'Multi',serie:'B7'});saveLS(LSC,custom)});await sync(B); // B republie son référentiel (avec l'opérateur)
+    await A.evaluate(()=>OEGSync.autoPull());
+    ok(await A.evaluate(()=>!custom.preleveurs.some(o=>o.nom==='Durand')&&custom.equipements.some(e=>e.gmao==='BX-7')),'opérateur supprimé ici : ne revient pas depuis l’autre tablette (le reste du référentiel arrive)');
+    // Nouvel opérateur reçu pendant la saisie d'une fiche : organisme choisi conservé
+    await B.evaluate(()=>{const o=$('org');o.value=[...o.options].find(x=>x.value==='HYDRECO')?.value||o.value;o.dispatchEvent(new Event('change'));});
+    const orgB=await B.evaluate(()=>$('org').value);
+    await A.evaluate(()=>{custom.preleveurs.push({nom:'Martin',prenom:'Paul',organisme:'NBC'});saveLS(LSC,custom)});await sync(A);
+    await B.evaluate(()=>OEGSync.autoPull());
+    ok(await B.evaluate(()=>custom.preleveurs.some(o=>o.nom==='Martin')&&$('operatorData').textContent.includes('Martin')),'partage : nouvel opérateur reçu et affiché');
     ok(await B.evaluate(()=>$('org').value)===orgB,'partage : organisme choisi dans la fiche en cours conservé à la réception');
     // Fiche modifiée sur les deux tablettes : version la plus récente + copie de conflit
     await A.evaluate(()=>{const r=records.find(r=>r.id==='R2');r.comment='A';r.lifecycle.updatedAt='2026-10-05T08:00:00.000Z';saveLS(LS,records)});

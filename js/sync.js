@@ -582,7 +582,7 @@
   // Réception depuis le dossier Drive commun (plusieurs tablettes connectées au même compte Google) :
   //  - fiches des autres tablettes, fusionnées dans "records" (ajoutées si nouvelles ; pour une fiche déjà
   //    connue, la version la plus récente l'emporte et une version divergente est conservée en copie de
-  //    conflit) ; une fiche supprimée sur une tablette ne revient pas ;
+  //    conflit) ; une fiche supprimée sur cette tablette n'y revient pas (rien n'est retiré ailleurs) ;
   //  - référentiel et données qualité des autres tablettes (js/partage.js).
   // full : tout relire (bouton « Récupérer l'historique complet », rend aussi leurs photos aux fiches
   // allégées) ; sinon seuls les fichiers modifiés depuis le dernier passage sont téléchargés.
@@ -592,13 +592,13 @@
     const ownIds=new Set([driveFileIds[REF_KEY],driveFileIds[QUALITE_KEY],driveFileIds[INDEX_KEY]].filter(Boolean));
     const isNew=f=>full||driveSeen[f.id]!==String(f.version);
     let failed=0;
-    // 1) Référentiel et qualité des autres tablettes (avant les fiches : fiches supprimées ailleurs)
-    const share={changed:false,kinds:[],records:0};
+    // 1) Référentiel et qualité des autres tablettes
+    const share={changed:false,kinds:[]};
     for(const f of files){
       if(!/^_(referentiel|qualite)/.test(f.name)||ownIds.has(f.id)||!isNew(f))continue;
       try{
         const p=await driveDownloadJson(f.id);
-        if(window.OEGShare){const r=await window.OEGShare.mergeRemote(p);if(r.changed){share.changed=true;share.kinds.push(...r.kinds);share.records+=r.records}}
+        if(window.OEGShare){const r=await window.OEGShare.mergeRemote(p);if(r.changed){share.changed=true;share.kinds.push(...r.kinds)}}
         driveSeen[f.id]=String(f.version);
       }catch(e){failed++}
     }
@@ -620,13 +620,13 @@
     await (window.OEGRecordsReady||Promise.resolve());
     const stats={imported:0,updated:0,kept:0,conflicts:0,deleted:0};
     for(const {rec,fileId,name,version} of remoteById.values()){
-      if(window.OEGShare&&window.OEGShare.isDeletedVersion(rec)){stats.deleted++;continue} // supprimée sur une tablette
+      if(window.OEGShare&&window.OEGShare.isDeletedVersion(rec)){stats.deleted++;continue} // supprimée sur CETTE tablette : ne revient pas
       await mergeRemoteRecord(rec,fileId,name,version,stats);
     }
     fetched.forEach(f=>{driveSeen[f.id]=String(f.version)});
     saveDriveFileIds();saveDriveHashes();saveDriveNames();saveDriveVersions();saveDriveSeen();
-    const restored=stats.restoredPhotos||0,removed=share.records;
-    if(stats.imported||stats.updated||stats.conflicts||restored||removed){
+    const restored=stats.restoredPhotos||0;
+    if(stats.imported||stats.updated||stats.conflicts||restored){
       saveLS(LS,records);
       if(typeof updateCount==='function')updateCount();
       if(typeof renderList==='function')renderList();
@@ -636,7 +636,7 @@
     lastPullAt=Date.now();
     renderDriveStatus();
     window.dispatchEvent(new Event('oeg:sync-done'));
-    return {ok:true,imported:stats.imported,updated:stats.updated,kept:stats.kept,conflicts:stats.conflicts,restored,removed,shareChanged:share.changed,shareKinds:[...new Set(share.kinds)],failed};
+    return {ok:true,imported:stats.imported,updated:stats.updated,kept:stats.kept,conflicts:stats.conflicts,restored,shareChanged:share.changed,shareKinds:[...new Set(share.kinds)],failed};
   }
 
   // Bouton « Récupérer l'historique complet depuis Drive »
@@ -667,7 +667,6 @@
     const parts=[];
     if(r.imported)parts.push(r.imported+' nouvelle(s) fiche(s)');
     if(r.updated)parts.push(r.updated+' fiche(s) mise(s) à jour');
-    if(r.removed)parts.push(r.removed+' fiche(s) supprimée(s) ailleurs retirée(s)');
     if(r.shareChanged)parts.push('référentiel / qualité mis à jour');
     if((parts.length||r.conflicts)&&typeof toast==='function')toast('📥 Reçu des autres tablettes : '+(parts.join(', ')||'')+(r.conflicts?(parts.length?' — ':'')+`⚠ ${r.conflicts} conflit(s) : une copie a été conservée, vérifiez l'onglet Fiches.`:''));
     return r;
