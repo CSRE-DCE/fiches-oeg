@@ -302,6 +302,7 @@
       // partagées avec l'onglet Suivi, EL_DEPTHS dans app-core.js). Auparavant : la surface seule,
       // en barres (et l'intermédiaire à sa place quand la surface manquait). ----
       function elDepthValue(rec,k,d){
+        if(rec.prelevementRealise==='Non')return null; // non réalisé : mesures éventuellement saisies avant « Non » ignorées
         const i=rec.insitu||{};
         if(k==='turb')return num(i.turbidite?.[d.key]?.moyenne);
         const p=i.params?.[k]||{};return num(d.field==='intermediaire'?(p.intermediaire??p.inter):p[d.field]);
@@ -360,7 +361,7 @@
           return '<h3 style="margin-top:5mm">📈 Suivi historique à la station ('+history.length+' visite(s))</h3><div class="crtGraphLegend">Valeurs mesurées lors des visites successives à cette station, pour chaque profondeur : '+key+'. La visite du présent rapport est surlignée, avec ses valeurs.</div><div class="crtGraphGrid">'+cards+'</div>';
         }
         const cards=defs.map(([k,label,unit])=>{
-          const points=history.map(rec=>({label:/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',nr:rec.prelevementRealise==='Non',value:paramValue(rec,network,k)})).filter(p=>p.value!==null||p.nr);
+          const points=history.map(rec=>({label:/^\d{4}-\d{2}-\d{2}/.test(rec.date||'')?rec.date.slice(8,10)+'/'+rec.date.slice(5,7)+'/'+rec.date.slice(2,4):'—',nr:rec.prelevementRealise==='Non',value:rec.prelevementRealise==='Non'?null:paramValue(rec,network,k)})).filter(p=>p.value!==null||p.nr);
           if(points.filter(p=>p.value!==null).length<2)return '';
           return '<div class="crtGraphCard"><h3>'+esc(label)+' <span class="crtSmall">('+esc(unit)+')</span></h3>'+histogramSvg(points)+'</div>';
         }).filter(Boolean).join('');

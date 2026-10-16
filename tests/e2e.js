@@ -535,9 +535,11 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.click('#qualityReject');await p.waitForTimeout(500);await p.click('#qualityControl');await p.waitForTimeout(500);
     ok(e9.length===before&&await p.evaluate(()=>records.find(r=>r.id==='M1').lifecycle.status==='À contrôler'),'onglet Qualité : rejeter puis remettre à contrôler sans erreur '+JSON.stringify(e9.slice(before)));
     // 7) Réinitialisation : l'appli redémarre proprement et une nouvelle fiche s'enregistre
+    await p.evaluate(()=>OEGStore.set('oeg_draft_edit_v1',{M1:{record:{id:'M1',network:'RCO',station:'x'},savedAt:new Date().toISOString()}})); // brouillon de modification en attente
     await p.click('.tab[data-tab="data"]');
     await Promise.all([p.waitForNavigation(),p.click('#reset')]);await p.evaluate(()=>window.OEGRecordsReady);
     ok(await p.evaluate(()=>records.length===0&&!JSON.parse(localStorage.getItem('oeg_sync_drive_cfg_v1')||'{}').connected),'réinitialisation : appareil vidé, Drive déconnecté');
+    ok(await p.evaluate(async()=>!(await OEGStore.get('oeg_draft_edit_v1'))&&!document.querySelector('[id^="editDraftBanner_"]')),'réinitialisation : brouillons de modification effacés (les fiches effacées ne reviennent pas)');
     await p.click('#networks .chip[data-n="RCO"]');
     for(const id of ['session','activity','station'])await p.evaluate(id=>{const s=$(id);s.value=[...s.options].find(o=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}))},id);
     await p.fill('#date','2026-10-08');for(const n of [1,2,3])await p.fill('#iv_turb_'+n,'4');
@@ -1252,14 +1254,14 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.setViewportSize({width:1280,height:900});
     // Export CSV : anciennes fiches EL avec les codes SANDRE
     ok(await p.evaluate(()=>flatRecordForCsv({id:'Z',network:'EL',conditions:{meteo:'Ensoleillé',irisations:'Oui'}}).cond_meteo===elLegacyValue('meteo','Ensoleillé')&&elLegacyValue('meteo','Ensoleillé')!=='Ensoleillé'),'export CSV : anciennes fiches EL avec les codes SANDRE (comme les récentes)');
-    // CRT : visite « non réalisée » (sans mesure) conservée dans l'historique
+    // CRT : visite « non réalisée » conservée dans l'historique (pH saisi avant de passer à « Non » : ignoré)
     const hist=await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[2],m={lifecycle:{status:'À contrôler'},auditRefs:[],photos:[],activity:RCO_COMBINED_ACTIVITY};
-      records.push({id:'H1',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',...m,insitu:{ph:{value:'7.0'}}},{id:'HN',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-02',savedAt:'2026-10-02T08:00:00Z',...m,prelevementRealise:'Non'},{id:'H2',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-03',savedAt:'2026-10-03T08:00:00Z',...m,insitu:{ph:{value:'7.2'}}});saveLS(LS,records)});
+      records.push({id:'H1',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-01',savedAt:'2026-10-01T08:00:00Z',...m,insitu:{ph:{value:'7.0'}}},{id:'HN',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-02',savedAt:'2026-10-02T08:00:00Z',...m,prelevementRealise:'Non',insitu:{ph:{value:'4.1'}}},{id:'H2',network:'RCO',station:st.nom,stationInfo:st,date:'2026-10-03',savedAt:'2026-10-03T08:00:00Z',...m,insitu:{ph:{value:'7.2'}}});saveLS(LS,records)});
     await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
     await p.evaluate(()=>{const s=$('crtRecord');s.value='H2';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(500);
     const ht=await p.evaluate(()=>$('crtPreviewBox').textContent);
     ok(/Suivi historique à la station \(3 visite/.test(ht)&&/non réalisé/.test(await p.evaluate(()=>[...document.querySelectorAll('#crtPreviewBox svg')].map(s=>s.textContent).join(' '))),'CRT : visite « prélèvement non réalisé » conservée dans l’historique de la station, signalée sous sa date');
-    ok(await p.evaluate(()=>{const s=[...document.querySelectorAll('#crtPreviewBox svg')].find(s=>/non réalisé/.test(s.textContent)&&s.querySelectorAll('rect[fill="#00AC97"]').length);return !!s&&s.querySelectorAll('rect[fill="#00AC97"]').length===2&&/02\/10\/26/.test(s.textContent)}),'CRT : visite non réalisée sans mesure gardée à sa date dans le graphe (sans barre)');
+    ok(await p.evaluate(()=>{const s=[...document.querySelectorAll('#crtPreviewBox svg')].find(s=>/non réalisé/.test(s.textContent)&&s.querySelectorAll('rect[fill="#00AC97"]').length);return !!s&&s.querySelectorAll('rect[fill="#00AC97"]').length===2&&/02\/10\/26/.test(s.textContent)&&!/4\.10/.test(s.textContent)}),'CRT : visite non réalisée gardée à sa date dans le graphe, sans barre (mesure saisie avant « Non » ignorée)');
     // Brouillon de modification : fiche remplacée entre-temps, version enregistrée plus récente, fiche supprimée
     await p.click('.tab[data-tab="new"]');
     const mk=(id,extra)=>p.evaluate(([id,extra])=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records=records.filter(r=>r.id!==id);records.push({id,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:sessions('RCO')[0],station:st.nom,stationInfo:st,date:'2026-10-05',heureDebut:'08:00',heureFin:'09:00',savedAt:'2026-10-05T08:00:00Z',lifecycle:{status:'À contrôler',version:1,updatedAt:'2026-10-05T08:00:00Z'},auditRefs:[],photos:[],insitu:{},conditions:{},sample:{},specific:{},obs:'saved obs',comment:'',...extra});saveLS(LS,records)},[id,extra||{}]);
@@ -1320,6 +1322,12 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.evaluate(()=>sessionStorage.removeItem('oeg_sw_reload_at'));
     publish(build+3);await update();await p.waitForTimeout(3000);
     ok(loads===3&&await p.evaluate(()=>!!document.getElementById('updateBanner')&&/enregistrez la fiche/.test(document.getElementById('updateBanner').textContent)),'fiche en cours : pas de rechargement, bandeau « enregistrez la fiche » ('+loads+')');
+    // Rechargement forcé (page non pilotée alors qu'un service worker est actif), puis nouvelle version : appliquée
+    await p.evaluate(()=>{clearFormNoConfirm();sessionStorage.removeItem('oeg_sw_reload_at')});
+    const cdp=await cx.newCDPSession(p);await cdp.send('Page.reload',{ignoreCache:true});await p.waitForTimeout(1500);await p.waitForLoadState('load');
+    const hard=loads;ok(await p.evaluate(()=>!navigator.serviceWorker.controller),'rechargement forcé : page non pilotée (situation de test)');
+    publish(build+4);await update();await p.waitForTimeout(3000);await p.waitForLoadState('load');
+    ok(loads===hard+1&&await p.evaluate(b=>self.OEG_BUILD===b,build+4),'après un rechargement forcé, la nouvelle version est quand même appliquée ('+(loads-hard)+' rechargement)');
     delete OVERRIDES['/version.js'];
     ok(ex.length===0,'aucune erreur JavaScript (mise à jour) '+JSON.stringify(ex));
     await cx.close();

@@ -827,6 +827,9 @@ if('serviceWorker' in navigator){
   let hadController=!!navigator.serviceWorker.controller;
   window.addEventListener('load',()=>{
     navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg=>{
+      // Service worker déjà actif mais page non pilotée (rechargement forcé…) : ce n'est pas une
+      // première installation, le prochain changement sera une vraie mise à jour à vérifier
+      if(!hadController&&reg.active)hadController=true;
       // Vérifie activement une nouvelle version à chaque ouverture et lors du retour au
       // premier plan (utile pour une appli installée, rarement fermée complètement).
       reg.update().catch(()=>{});
@@ -869,7 +872,8 @@ if('serviceWorker' in navigator){
         b.onclick=()=>{if(ficheOpen()&&!confirm('La fiche en cours n’est peut-être pas enregistrée. Mettre à jour maintenant quand même ?'))return;doReload()};
         document.body.appendChild(b);
       }
-      if(ficheOpen()){const t=setInterval(()=>{if(!ficheOpen()){clearInterval(t);if(!recentlyReloaded())doReload()}},2000)}
+      if(ficheOpen()){const t=setInterval(()=>{if(ficheOpen())return;clearInterval(t);if(!recentlyReloaded()){doReload();return}
+        const b=document.getElementById('updateBanner');if(b)b.textContent='🔄 Nouvelle version disponible — touchez ici pour l’afficher.'},2000)}
     });
   });
 }

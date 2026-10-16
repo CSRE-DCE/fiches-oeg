@@ -1836,7 +1836,7 @@ $('reset').onclick=async()=>{
   if(!confirm('Effacer toutes les fiches et données de CET appareil ?\n\nLes sauvegardes déjà faites (dossier, Google Drive, exports) ne sont pas touchées. La connexion Google Drive et le dossier de sauvegarde devront être reconfigurés.'))return;
   try{
     Object.keys(localStorage).filter(k=>k.startsWith('oeg_')).forEach(k=>localStorage.removeItem(k));
-    await OEGStore.del(LS).catch(()=>{});await OEGStore.del('oeg_draft_v1').catch(()=>{});
+    await OEGStore.del(LS).catch(()=>{});await OEGStore.del('oeg_draft_v1').catch(()=>{});await OEGStore.del('oeg_draft_edit_v1').catch(()=>{}); // brouillons de modification compris
     await new Promise(res=>{try{const rq=indexedDB.deleteDatabase('oeg-sync-db');rq.onsuccess=rq.onerror=rq.onblocked=()=>res()}catch(e){res()}});
   }finally{location.reload()}
 };
