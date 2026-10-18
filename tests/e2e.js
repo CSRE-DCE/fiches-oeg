@@ -185,7 +185,9 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
       saveLS(LS,records);
     });
     const pix=id=>p.evaluate(id=>{const c=document.getElementById(id),g=c.getContext('2d'),d=window.devicePixelRatio||1,r=c.getBoundingClientRect();
-      const at=(x,y)=>{const v=g.getImageData(Math.round(x*r.width/600*d),Math.round(y*r.height/220*d),1,1).data;return v[3]===0?'vide':v[0]>200&&v[2]<50?'rouge':v[2]>200&&v[0]<50?'bleu':'autre'};
+      // image 600×220 : étirée dans la signature, placée entière et centrée (sans déformation) dans le schéma
+      const sx=c.width/600,sy=c.height/220,k=id==='draw'?Math.min(sx,sy):0,ox=id==='draw'?(c.width-600*k)/2:0,oy=id==='draw'?(c.height-220*k)/2:0;
+      const at=(x,y)=>{const v=g.getImageData(Math.round(id==='draw'?ox+x*k:x*sx),Math.round(id==='draw'?oy+y*k:y*sy),1,1).data;return v[3]===0?'vide':v[0]>200&&v[2]<50?'rouge':v[2]>200&&v[0]<50?'bleu':'autre'};
       return at(60,100)+'/'+at(450,100)},id);
     const open=async id=>{await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},id);await p.waitForTimeout(500)};
     await open('A');
@@ -1282,6 +1284,47 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(async()=>$('obs').value==='Modif fiche supprimée'&&!state.editing&&!((await OEGStore.get('oeg_draft_edit_v1'))||{}).XD),'brouillon d’une fiche supprimée : repris comme nouvelle fiche, puis plus proposé à chaque démarrage');
     ok(e27.length===0,'aucune erreur JavaScript (corrections de relecture) '+JSON.stringify(e27));
     await c27.close();
+  }
+  // --- AF : schéma plus grand (zone de dessin 3:2, schéma imprimé en grand, anciens dessins non déformés) ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block',viewport:{width:800,height:1100}});await cx.route('https://unpkg.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.click('#networks .chip[data-n="RCO"]');
+    await p.evaluate(()=>{for(const id of ['session','activity','station']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}});
+    await p.waitForTimeout(300);await p.locator('#draw').scrollIntoViewIfNeeded();
+    const ratio=await p.evaluate(()=>{const r=$('draw').getBoundingClientRect();return r.width/r.height});
+    ok(Math.abs(ratio-1.5)<0.02,'zone de dessin du schéma plus haute (proportions 3:2, auparavant bande de 220 px) — '+ratio.toFixed(2));
+    // Tracé couvrant la zone, puis fiche imprimée : schéma sur toute la largeur et en grand
+    const bb=await p.locator('#draw').boundingBox();
+    await p.mouse.move(bb.x+bb.width*.1,bb.y+bb.height*.1);await p.mouse.down();await p.mouse.move(bb.x+bb.width*.9,bb.y+bb.height*.9,{steps:10});await p.mouse.up();
+    await p.evaluate(()=>startFichePrint());await p.emulateMedia({media:'print'});
+    await p.evaluate(()=>Promise.all([...document.querySelectorAll('#fichePrint .fpDraw img')].map(i=>i.decode?i.decode().catch(()=>{}):null)));
+    const pr=await p.evaluate(()=>{const i=document.querySelector('#fichePrint .fpDraw img'),r=i.getBoundingClientRect(),mm=v=>v/96*25.4;return {w:mm(r.width),h:mm(r.height),same:i.getAttribute('src')===canvasData('draw')}});
+    ok(pr.h>=100&&pr.w>=150&&pr.same,'fiche imprimée : schéma en grand ('+Math.round(pr.w)+' × '+Math.round(pr.h)+' mm, auparavant ≈ 55 mm de haut), tel qu’enregistré');
+    await p.emulateMedia({media:'screen'});await p.evaluate(()=>endFichePrint());
+    // Ancien schéma (bande 600 × 220) : affiché entier et centré, sans déformation ; non modifié à l'enregistrement
+    const old=await p.evaluate(async()=>{
+      const c=document.createElement('canvas');c.width=600;c.height=220;const g=c.getContext('2d');g.fillStyle='#ff0000';g.fillRect(250,60,100,100);const data=c.toDataURL('image/png');
+      clearFormNoConfirm();const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];
+      records.push({id:'SCHOLD',network:'RCO',activity:RCO_COMBINED_ACTIVITY,station:st.nom,stationInfo:st,date:'2026-09-01',savedAt:'2026-09-01T08:00:00Z',lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],dessin:data});saveLS(LS,records);
+      loadRecord('SCHOLD');showTab('new');await new Promise(r=>setTimeout(r,600));
+      const cv=$('draw'),d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;let x0=1e9,y0=1e9,x1=-1,y1=-1;
+      for(let y=0;y<cv.height;y++)for(let x=0;x<cv.width;x++){const k=(y*cv.width+x)*4;if(d[k+3]>200&&d[k]>200&&d[k+2]<60){x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y)}}
+      return {w:x1-x0+1,h:y1-y0+1,cy:(y0+y1)/2/cv.height,same:canvasData('draw')===data};
+    });
+    ok(Math.abs(old.w/old.h-1)<0.06&&Math.abs(old.cy-0.5)<0.05,'ancien schéma (bande) : carré resté carré, centré dans la zone plus haute (pas d’étirement) '+JSON.stringify(old));
+    ok(old.same,'ancien schéma : enregistré tel quel si on n’y touche pas');
+    // CRT : schéma recadré sur la partie dessinée (cadre de 50 mm : reste lisible)
+    const big=await p.evaluate(()=>{const c=document.createElement('canvas');c.width=900;c.height=600;const g=c.getContext('2d');g.lineWidth=6;g.strokeStyle='#17212b';g.beginPath();g.moveTo(90,250);g.lineTo(810,250);g.moveTo(90,350);g.lineTo(810,350);g.stroke();
+      const r=records.find(r=>r.id==='SCHOLD');r.dessin=c.toDataURL('image/png');saveLS(LS,records);return r.dessin.length});
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='SCHOLD';s.dispatchEvent(new Event('change',{bubbles:true}));$('crtPreview').click()});await p.waitForTimeout(1200);
+    const crt=await p.evaluate(()=>{const i=document.querySelector('#crtPreviewBox .crtSchema img');return i?{w:i.naturalWidth,h:i.naturalHeight,data:i.src.startsWith('data:image/png')}:null});
+    ok(crt&&crt.data&&crt.w<900&&crt.h<300&&crt.w/crt.h>2,'CRT : schéma recadré sur la partie dessinée (marges vides retirées) '+JSON.stringify(crt));
+    ok(await p.evaluate(()=>records.find(r=>r.id==='SCHOLD').dessin.length)===big,'CRT : le schéma enregistré dans la fiche n’est pas modifié');
+    ok(ex.length===0,'aucune erreur JavaScript (schéma plus grand) '+JSON.stringify(ex));
+    await cx.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

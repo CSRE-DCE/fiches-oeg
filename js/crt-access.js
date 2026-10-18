@@ -619,12 +619,39 @@
       // la carte schématique de la Guyane plutôt que d'imprimer un cadre vide.
       window.crtMapFail=img=>{const box=img.closest('.crtMapPlaceholder');if(!box||box.dataset.failed)return;box.dataset.failed='1';
         [...box.children].forEach(ch=>{if(!ch.classList.contains('crtMapFallback'))ch.remove()});const fb=box.querySelector('.crtMapFallback');if(fb)fb.hidden=false};
+      // Schéma de station : le CRT n'en montre que la partie dessinée (marges vides retirées), pour qu'il
+      // reste lisible dans son cadre maintenant que la zone de dessin de la fiche est plus haute. Un petit
+      // croquis n'est pas grossi à l'excès (au moins 40 % de la zone gardés en largeur et en hauteur).
+      const schemaCrops=new Map();
+      function cropSchema(src){
+        if(!schemaCrops.has(src)){
+          if(schemaCrops.size>30)schemaCrops.clear();
+          schemaCrops.set(src,new Promise(res=>{const im=new Image();im.onerror=()=>res(src);im.onload=()=>{
+            try{
+              const w=im.naturalWidth,h=im.naturalHeight;if(!w||!h)return res(src);
+              const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(im,0,0);
+              const d=x.getImageData(0,0,w,h).data;let x0=w,y0=h,x1=-1,y1=-1;
+              for(let y=0;y<h;y++)for(let i=0;i<w;i++){const k=(y*w+i)*4;if(d[k+3]>8&&!(d[k]>245&&d[k+1]>245&&d[k+2]>245)){if(i<x0)x0=i;if(i>x1)x1=i;if(y<y0)y0=y;if(y>y1)y1=y}}
+              if(x1<0)return res(src);
+              const m=Math.round(Math.max(w,h)*0.03)+4,span=(a,b,len)=>{a=Math.max(0,a-m);b=Math.min(len-1,b+m);const min=Math.round(len*0.4);if(b-a+1<min){const cmid=(a+b)/2;a=Math.max(0,Math.min(len-min,Math.round(cmid-min/2)));b=a+min-1}return [a,b]};
+              [x0,x1]=span(x0,x1,w);[y0,y1]=span(y0,y1,h);
+              const cw=x1-x0+1,ch=y1-y0+1;if(cw*ch>w*h*0.9)return res(src);
+              const o=document.createElement('canvas');o.width=cw;o.height=ch;o.getContext('2d').drawImage(c,x0,y0,cw,ch,0,0,cw,ch);res(o.toDataURL('image/png'));
+            }catch(e){res(src)}
+          };im.src=src}));
+        }
+        return schemaCrops.get(src);
+      }
+      function cropSchemas(box){
+        return Promise.all([...box.querySelectorAll('.crtSchema img')].map(i=>{const src=i.getAttribute('src')||'';if(!src.startsWith('data:image/'))return null;
+          return cropSchema(src).then(out=>{if(out!==src&&i.isConnected&&i.getAttribute('src')===src){i.src=out;return i.decode?i.decode().catch(()=>{}):null}})}));
+      }
       // N'ouvre l'impression qu'une fois les images (photos, schéma, logo, carte) chargées — sinon
       // elles pouvaient sortir blanches dans le PDF — avec un délai maximal de 8 s.
       function printWhenReady(title){
         const box=$('crtPreviewBox');
         const imgs=[...box.querySelectorAll('img')].filter(i=>!i.complete);
-        const ready=Promise.all(imgs.map(i=>new Promise(res=>{i.addEventListener('load',res,{once:true});i.addEventListener('error',res,{once:true})})));
+        const ready=Promise.all(imgs.map(i=>new Promise(res=>{i.addEventListener('load',res,{once:true});i.addEventListener('error',res,{once:true})})).concat(cropSchemas(box)));
         if(imgs.length)toast('Préparation de l’impression…');
         Promise.race([ready,new Promise(res=>setTimeout(res,8000))]).then(()=>{
           // Fond de carte encore incomplet après 8 s (réseau lent) : carte schématique plutôt qu'une carte trouée
@@ -637,6 +664,7 @@
       function render(){
         const r=getR(),box=$('crtPreviewBox');if(!r){box.innerHTML='<div class="hint">Sélectionnez une fiche puis cliquez sur « Aperçu du CRT ».</div>';return}
         box.innerHTML='<div class="crtReport">'+buildFicheHtml(r)+'</div>';
+        cropSchemas(box);
       }
       // ---- CRT consolidé : compile en un seul fichier tous les CRT d'un même réseau/session ----
       function batchMatches(){

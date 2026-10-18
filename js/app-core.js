@@ -1437,8 +1437,14 @@ function setCanvasContent(c,data){
     // dimensionné (fiche ouverte depuis un autre onglet), sans quoi l'image était réduite dans
     // un coin puis enregistrée ainsi. "destination-over" place l'image SOUS un éventuel trait
     // fait pendant son chargement.
+    // Schéma dont les proportions diffèrent de la zone de dessin (dessin fait avant qu'elle soit
+    // agrandie, ou sur un écran d'une autre taille) : placé entier et centré, sans être déformé.
+    let dx=0,dy=0,dw=c.width,dh=c.height;
+    if(key==='draw'&&im.width&&im.height&&c.width&&c.height&&Math.abs(im.width/im.height-c.width/c.height)>0.02*c.width/c.height){
+      const s=Math.min(c.width/im.width,c.height/im.height);dw=im.width*s;dh=im.height*s;dx=(c.width-dw)/2;dy=(c.height-dh)/2;
+    }
     x.save();x.setTransform(1,0,0,1,0,0);x.globalCompositeOperation='destination-over';
-    x.drawImage(im,0,0,c.width,c.height);x.restore();
+    x.drawImage(im,dx,dy,dw,dh);x.restore();
     applyPen(c);
     if(c.width>0&&c.height>0&&isCanvasBlank(c)){
       // Image entièrement transparente (fiche non signée d'une ancienne version, enregistrée

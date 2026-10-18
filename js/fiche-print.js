@@ -71,7 +71,9 @@
     return {t:'table',head,body};
   }
   function canvasBlock(cv,caption,cls){
-    let src='';try{src=cv.toDataURL('image/png')}catch(e){}
+    // Le schéma / la signature tels qu'enregistrés (state.draw / state.signature) ; à défaut, le canevas
+    let src=typeof canvasData==='function'?canvasData(cv.id):'';
+    if(!src)try{src=cv.toDataURL('image/png')}catch(e){}
     return src?{t:'img',src,caption,cls}:null;
   }
   function photosBlock(){
