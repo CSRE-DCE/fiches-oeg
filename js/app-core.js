@@ -630,7 +630,17 @@ $('station').onchange=()=>{
 // photos, le motif (champ observation) et la signature restent à remplir ; les autres rubriques sont masquées
 // (CSS body.nonRealise). Les valeurs déjà saisies y sont conservées (rien n'est perdu si on revient à Oui).
 function isNonRealise(){return !!state.network&&radioValue('prelevementRealise')==='Non'}
-function applyRealise(){document.body.classList.toggle('nonRealise',isNonRealise())}
+function applyRealise(){
+  document.body.classList.toggle('nonRealise',isNonRealise());
+  // Heure de passage proposée à partir de l'heure de début déjà saisie
+  if(isNonRealise()&&$('passage')&&!$('passage').value&&val('start')){$('passage').value=val('start');$('passage').dispatchEvent(new Event('input',{bubbles:true}))}
+}
+// Heures affichées d'une fiche : heure de passage si le prélèvement n'a pas été réalisé, sinon début – fin
+function recordHours(r){
+  if(r?.prelevementRealise==='Non')return 'passage '+(r.heurePassage||r.heureDebut||'—');
+  return (r?.heureDebut||'—')+' – '+(r?.heureFin||'—');
+}
+window.recordHours=recordHours;
 window.applyRealise=applyRealise;
 document.querySelectorAll('input[name="prelevementRealise"]').forEach(r=>r.addEventListener('change',applyRealise));
 
@@ -998,15 +1008,17 @@ function filterPanel(prefix=''){
   const idk=k=>p+k;
   const col=(key,label)=>`<div class="filterCol">
     <div class="filterHead"><label class="check" style="border:0;padding:0;background:transparent"><input type="checkbox" id="filtreParam_${idk(key)}" value="Oui"><span>${label}${key==='autres'?`: <input id="filtre_${idk(key)}_nom" type="text" placeholder="préciser" style="width:120px;display:inline-block;margin-left:4px">`:''}</span></label></div>
+    <div class="filterBody">
     <div class="field"><label>Volume filtré (mL)</label><input id="filtre_${idk(key)}_volume" type="number" step="any" disabled></div>
     <div class="field"><label>Mode de filtration réalisé</label><div class="radioGrid filterModes">
       <label class="radio"><input type="radio" name="filtreMode_${idk(key)}" value="Sous vide à l’aide d’une pompe" disabled> Sous vide à l’aide d’une pompe</label>
       <label class="radio"><input type="radio" name="filtreMode_${idk(key)}" value="À l’aide d’une seringue + filtre" disabled> À l’aide d’une seringue + filtre</label>
     </div></div>
+    </div>
   </div>`;
   return `<div class="field"><label>Échantillons filtrés sur site ?</label>${yesNo('filtresSite'+(p||''))}</div>
   <div id="filterDateWrap${p}" class="grid2 hide"><div class="field"><label>Date de filtration</label><input id="filtreDate${p}" type="date"></div><div class="field"><label>Heure de filtration</label><input id="filtreHeure${p}" type="time"></div></div>
-  <div class="filterTable"><div class="filterBanner"><div>Paramètre(s) filtré(s)</div>${col('chloro','Chlorophylle')}${col('metaux','Métaux')}${col('autres','Autre')}</div></div>
+  <div class="filterTable"><div class="filterBanner"><div>Paramètre(s) filtré(s)<span class="hint filterHint">Cochez un paramètre pour saisir le volume filtré et le mode de filtration.</span></div>${col('chloro','Chlorophylle')}${col('metaux','Métaux')}${col('autres','Autre')}</div></div>
   <h3>Agents de conservation rajoutés sur site ?</h3>${yesNo('consOui'+(p||''))}
   <div id="consFields${p}" class="hide">
     ${(state.network==='BIO'?['HYDRECO']:['HYDRECO','EUROFINS']).map((lab,i)=>`<div class="labBlock"><div class="labTitle">Flaconnage du laboratoire ${i+1} : <input id="consLab${p}${i}" value="${lab}" class="labInput"></div>
@@ -1028,11 +1040,14 @@ function bindFilterPanel(prefix=''){
   });
   ['chloro','metaux','autres'].forEach(k=>{
     const ck=$(`filtreParam_${p+k}`); if(!ck)return;
+    // Case cochée : le volume filtré et le mode de filtration apparaissent (masqués sinon, valeurs gardées)
     ck.onchange=()=>{
       const active=ck.checked;
+      ck.closest('.filterCol')?.classList.toggle('on',active);
       const v=$(`filtre_${p+k}_volume`); if(v)v.disabled=!active;
       document.querySelectorAll(`input[name="filtreMode_${p+k}"]`).forEach(i=>i.disabled=!active);
     };
+    ck.onchange();
   });
 }
 
@@ -1503,7 +1518,7 @@ function collectRecord(){
   const r={
     id:state.editing||Date.now()+'_'+Math.random().toString(36).slice(2,7),
     network:state.network,activity:state.activity,bioOperation:state.bioOperation,session:state.session,station:state.station,stationInfo:s,
-    date:val('date'),heureDebut:val('start'),heureFin:val('end'),organisme:val('org'),preleveurs:state.preleveurs,
+    date:val('date'),heureDebut:val('start'),heureFin:val('end'),heurePassage:val('passage'),photoAnnexeObs:val('photoAnnexeObs'),organisme:val('org'),preleveurs:state.preleveurs,
     xTheorique:(stationXY22(s)?.[0]??s?.x)??'',yTheorique:(stationXY22(s)?.[1]??s?.y)??'',xTerrain:val('xT'),yTerrain:val('yT'),ecartM:$('distance').textContent,
     conditions:collectConditions(),insitu:collectInsitu(),sample:collectSample(),specific:collectSpecific(),
     photos:(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p),projection:val('projection'),schemaLegend:{ecoulement:!!$('legendeEcoulement')?.checked,prelevement:!!$('legendePrelevement')?.checked,berges:!!$('legendeBerges')?.checked,acces:!!$('legendeAcces')?.checked,autre:val('legendeAutre')},dessin:canvasData('draw'),signature:canvasData('signature'),signName:val('signName'),
@@ -1593,7 +1608,7 @@ function loadRecord(id){
       refreshELTurb(dn);
     });
   }
-  const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
+  const mainMap={date:f.date,start:f.heureDebut,end:f.heureFin,passage:f.heurePassage,photoAnnexeObs:f.photoAnnexeObs,org:f.organisme,xT:f.xTerrain,yT:f.yTerrain,signName:f.signName,qcType:f.qcType,obs:f.obs,comment:f.comment,...(f.conditions||{})}; if($('projection'))$('projection').value=f.projection||'RGFG 95 / UTM 22N'; ['ecoulement','prelevement','sediment','foret','herbes','branche','arbre','tronc','plantes','voiture','roches','bateauNonMotorise','bateau','carbet','boues','pont','maison','village','activite','sables','route','cale','industrielle'].forEach(k=>{const id='legende'+k.charAt(0).toUpperCase()+k.slice(1);if($(id))$(id).checked=!!f.schemaLegend?.[k]}); if($('legendeAutre'))$('legendeAutre').value=f.schemaLegend?.autre||'';
   Object.entries(mainMap).forEach(([k,v])=>{const e=$(k);if(!e)return;if(f.network==='EL')v=elLegacyValue(k,v);if(e.tagName==='SELECT')setSelectKeep(e,v);else e.value=v||''});
   if(f.insituBoitier)setSelectKeep($('insituBoitier'),f.insituBoitier,EQ_KEEP); // boîtier / appareil multiparamètre
   refreshBoitierInfo();refreshProbeBadges(); // sonde à l'étalonnage expiré signalée aussi à la réouverture

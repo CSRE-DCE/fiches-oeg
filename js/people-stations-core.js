@@ -48,18 +48,27 @@ function photoGroups(){
   const camera=q('photosCamera'),gallery=q('photosGallery'),root=q('mediaGrid');
   if(!camera||!gallery||!root||camera.dataset.grouped)return;
   camera.dataset.grouped='1';
-  const sel=document.createElement('select');sel.id='photoGroup';sel.innerHTML='<option>Amont</option><option>Aval</option><option>Rive gauche</option><option>Rive droite</option>';
+  // Groupe « Annexe » : photos supplémentaires d'une observation inhabituelle (pollution…), en plus des 5 photos du site
+  const sel=document.createElement('select');sel.id='photoGroup';sel.innerHTML='<option>Amont</option><option>Aval</option><option>Rive gauche</option><option>Rive droite</option><option value="Annexe">Annexe — observation inhabituelle (pollution…)</option>';
   camera.closest('.field').appendChild(sel);
-  const holder=document.createElement('div');holder.className='photoGroups';holder.innerHTML=['Amont','Aval','Rive gauche','Rive droite'].map(g=>'<div class="photoGroup"><h4>'+g+'</h4><div class="mediaGrid" data-group="'+g+'"></div></div>').join('');
+  const holder=document.createElement('div');holder.className='photoGroups';holder.innerHTML=['Amont','Aval','Rive gauche','Rive droite'].map(g=>'<div class="photoGroup"><h4>'+g+'</h4><div class="mediaGrid" data-group="'+g+'"></div></div>').join('')
+    +'<div class="photoGroup photoAnnexe"><h4>Photos annexes — observation inhabituelle (pollution, déchets…)</h4><div class="mediaGrid" data-group="Annexe"></div></div>';
   root.parentElement.insertBefore(holder,root);root.classList.add('hide');
-  const addFiles=async fileList=>{for(const file of [...fileList].slice(0,5-state.photos.length))state.photos.push({data:await compress(file),group:sel.value});drawPhotoGroups();if(window.markDraftDirty)window.markDraftDirty()};
+  const obs=document.createElement('div');obs.className='field';obs.innerHTML='<label>Observation inhabituelle (photos annexes)</label><input id="photoAnnexeObs" placeholder="ex. : traces d’hydrocarbures en rive gauche, déchets…">';
+  root.parentElement.insertBefore(obs,root);
+  const isAnnexe=p=>p&&typeof p==='object'&&p.group==='Annexe';
+  const addFiles=async fileList=>{
+    const annexe=sel.value==='Annexe',room=5-(state.photos||[]).filter(p=>isAnnexe(p)===annexe).length;
+    if(room<=0){if(typeof toast==='function')toast(annexe?'5 photos annexes au maximum':'5 photos du site au maximum — les photos d’une observation inhabituelle vont dans « Annexe »');return}
+    for(const file of [...fileList].slice(0,room))state.photos.push({data:await compress(file),group:sel.value});drawPhotoGroups();if(window.markDraftDirty)window.markDraftDirty()};
   camera.onchange=e=>{addFiles(e.target.files);e.target.value=''};
   gallery.onchange=e=>{addFiles(e.target.files);e.target.value=''};
   window.drawPhotoGroups=()=>{holder.querySelectorAll('[data-group]').forEach(h=>h.innerHTML='');(state.photos||[]).forEach((p,i)=>{const data=typeof p==='string'?p:p.data,g=typeof p==='string'?'Amont':(p.group||'Amont'),h=holder.querySelector('[data-group="'+g+'"]');if(h)h.insertAdjacentHTML('beforeend','<div class="thumb"><img src="'+data+'"><button data-i="'+i+'">×</button></div>')});holder.querySelectorAll('button').forEach(b=>b.onclick=()=>{state.photos.splice(+b.dataset.i,1);drawPhotoGroups();if(window.markDraftDirty)window.markDraftDirty()})};
   drawPhotoGroups();
 }
 function stations(){let a=[];Object.values(DATA||{}).forEach(v=>Array.isArray(v)&&v.forEach(x=>a.push(x)));return a.concat(custom.stations||[]).filter(x=>x.nom)}
-function meta(x){const a=(custom.stationAccess||{})[accessKey(x)]||{};return {m:x.marche||x.market||a.marche||'',b:x.bassin||x.bassinVersant||x.bv||a.bassin||'',x:+x.x,y:+x.y}}
+// meta : marché et bassin d'une station, accès communs à toutes les tablettes (js/acces-stations.js) compris
+function meta(x){const a=(typeof window.ensureStationAccess==='function'?window.ensureStationAccess(x):(custom.stationAccess||{})[accessKey(x)])||{};return {m:x.marche||x.market||a.marche||'',b:x.bassin||x.bassinVersant||x.bv||a.bassin||'',x:+x.x,y:+x.y}}
 window.guyaneMap=null;window.guyaneLayer=null;
 /* utmToLatLon() est fournie par js/geo.js (module ES partagé, voir window.utmToLatLon). */
 function stationLatLon(x){if(Number.isFinite(+x.lat)&&Number.isFinite(+x.lon))return [+x.lat,+x.lon];const ex=Number(x.x),ny=Number(x.y);if(!Number.isFinite(ex)||!Number.isFinite(ny))return null;if(typeof utmToLatLon!=='function')return null;const proj=String(x.projection||x.refSpatial||x.reference||'RGFG 95 / UTM 22N');return utmToLatLon(ex,ny,/21/.test(proj)?21:22)}

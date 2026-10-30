@@ -94,11 +94,14 @@
   <div class="field"><label>Date</label>
   <input type="date" id="date">
   </div>
-  <div class="field"><label>Heure de début</label>
+  <div class="field horaireField"><label>Heure de début</label>
   <input type="time" id="start">
   </div>
-  <div class="field"><label>Heure de fin</label>
+  <div class="field horaireField"><label>Heure de fin</label>
   <input type="time" id="end">
+  </div>
+  <div class="field passageField"><label>Heure de passage</label>
+  <input type="time" id="passage">
   </div>
   <div class="field"><label>Organisme préleveur</label>
   <select id="org">
@@ -156,7 +159,7 @@
 <label class="btn primary small">📷 Prendre une photo<input type="file" id="photosCamera" accept="image/*" capture="environment" style="display:none"></label>
 <label class="btn ghost small">🖼️ Choisir depuis la galerie<input type="file" id="photosGallery" accept="image/*" multiple style="display:none"></label>
 </div>
-<div class="hint">Maximum 5 photos, compressées et stockées localement.</div>
+<div class="hint">Maximum 5 photos du site (amont, aval, rives), compressées et stockées localement, plus 5 photos annexes pour une observation inhabituelle (pollution, déchets, mortalité…).</div>
 </div>
 <div id="mediaGrid" class="mediaGrid">
 </div>
@@ -813,7 +816,7 @@ id="managementCard"><h2>Gestion opérateur & équipements GMAO</h2>
 
 <body>
 
-<script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/suivi-el.js"></script><script src="js/fiche-print.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script><script src="js/terrain.js"></script>
+<script type="module" src="js/geo.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="js/data.js"></script><script src="js/app-core.js"></script><script src="js/suivi-el.js"></script><script src="js/fiche-print.js"></script><script src="js/dashboard.js"></script><script src="js/quality.js"></script><script src="js/quality-automation.js"></script><script src="js/people-stations-core.js"></script><script src="js/acces-stations.js"></script><script src="js/crt-access.js"></script><script src="js/stations-map.js"></script><script src="js/sync.js"></script><script src="js/terrain.js"></script>
 <script src="version.js"></script>
 <script>
 window.APP_BUILD=(self.OEG_BUILD_DATE||'?')+' · build '+(self.OEG_BUILD||'?');

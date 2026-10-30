@@ -1326,6 +1326,119 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(ex.length===0,'aucune erreur JavaScript (schéma plus grand) '+JSON.stringify(ex));
     await cx.close();
   }
+  // --- AG : heure de passage, paramètres filtrés, CRT (µS/cm, schéma, signature), photos annexes, dates, accès ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block',viewport:{width:900,height:1100}});await cx.route('https://unpkg.com/**',r=>r.abort());
+    await cx.route('https://*.tile.openstreetmap.org/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const pick=async net=>{await p.click('.tab[data-tab="new"]');await p.click(`#networks .chip[data-n="${net}"]`);
+      await p.evaluate(()=>{for(const id of ['session','activity','bioOperation','station']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}});await p.waitForTimeout(400)};
+    const shown=id=>p.evaluate(id=>{const e=$(id);return !!e&&e.getClientRects().length>0},id);
+    // 1) Prélèvement non réalisé : heure de passage à la place des heures de début et de fin
+    await pick('RCO');
+    await p.evaluate(()=>{$('start').value='09:15';$('start').dispatchEvent(new Event('input',{bubbles:true}))});
+    ok(await shown('start')&&await shown('end')&&!await shown('passage'),'prélèvement réalisé : heures de début et de fin (pas d’heure de passage)');
+    await p.evaluate(()=>{radioSet('prelevementRealise','Non');document.querySelector('input[name="prelevementRealise"][value="Non"]').dispatchEvent(new Event('change',{bubbles:true}))});
+    ok(!await shown('start')&&!await shown('end')&&await shown('passage')&&await p.evaluate(()=>$('passage').value)==='09:15','prélèvement non réalisé : « Heure de passage » seule (proposée d’après l’heure de début)');
+    const nr=await p.evaluate(()=>{$('passage').value='10:40';const r=collectRecord();r.id='NRP';r.prelevementRealise='Non';r.date='2026-10-20';r.obs='Accès impossible (crue)';r.photos=[{data:'data:image/png;base64,iVBORw0KGgo=',group:'Amont'}];r.dessin='';records.push(r);saveLS(LS,records);renderList();
+      const q=qualityChecksFor(r);return {stored:r.heurePassage,list:$('records').textContent.includes('passage 10:40'),dh:(q.find(c=>/Heure de passage|Date et horaires/.test(c.label))||{}).ok,se:q.some(c=>/début\/fin/.test(c.label))}});
+    ok(nr.stored==='10:40'&&nr.list&&nr.dh&&!nr.se,'heure de passage enregistrée, affichée dans la liste et contrôlée (pas de contrôle début / fin) '+JSON.stringify(nr));
+    ok(await p.evaluate(()=>flatRecordForCsv(records.find(r=>r.id==='NRP')).heurePassage==='10:40'),'export CSV : colonne heurePassage');
+    // CRT : heure de passage, pas d'horaires, pas de schéma pour une visite non réalisée
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='NRP';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(600);
+    const crtNr=await p.evaluate(()=>{const t=$('crtPreviewBox').textContent;return {passage:/Heure de passage\s*10:40/.test(t),horaires:/Horaires/.test(t),schema:!!document.querySelector('#crtPreviewBox .crtSchema')||/Schéma de station/i.test(t)}});
+    ok(crtNr.passage&&!crtNr.horaires&&!crtNr.schema,'CRT d’une visite non réalisée : heure de passage, ni horaires ni schéma '+JSON.stringify(crtNr));
+    // 2) Paramètres filtrés : volume et mode de filtration seulement quand le paramètre est coché
+    await p.evaluate(()=>clearFormNoConfirm());await pick('RCO');
+    const f0=await p.evaluate(()=>{const v=$('filtre_chloro_volume');return v&&v.getClientRects().length});
+    await p.evaluate(()=>{const c=$('filtreParam_chloro');c.scrollIntoView();c.click()});
+    const f1=await p.evaluate(()=>{const v=$('filtre_chloro_volume');return {vol:v.getClientRects().length>0&&!v.disabled,mode:[...document.getElementsByName('filtreMode_chloro')].every(i=>i.getClientRects().length>0&&!i.disabled),other:$('filtre_metaux_volume').getClientRects().length}});
+    ok(!f0&&f1.vol&&f1.mode&&!f1.other,'paramètre filtré : volume filtré et mode de filtration affichés une fois la case cochée (masqués sinon) '+JSON.stringify(f1));
+    // 3) CRT : conductivité en µS/cm (EL : colonne mS/cm convertie ; autre réseau : unité mS/cm indiquée)
+    const condRes=await p.evaluate(()=>{
+      const el=stationsFor('EL')[0],rc=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[1],m={lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[]};
+      records.push({id:'ELC',network:'EL',session:'S1 - Septembre 2026 (saison sèche)',station:el.nom,stationInfo:el,date:'2026-10-21',savedAt:'2026-10-21T08:00:00Z',...m,insitu:{profondeurs:{surface:'0.5',fond:'3'},params:{condms:{surface:'45.2',fond:'47',sonde:'SD-C'},condus:{fond:'46800'}}}},
+        {id:'RCC',network:'RCO',activity:RCO_COMBINED_ACTIVITY,station:rc.nom,stationInfo:rc,date:'2026-10-21',savedAt:'2026-10-21T08:00:00Z',...m,insitu:{cond:{value:'0.065',unit:'mS/cm'}}});saveLS(LS,records);return true});
+    await p.evaluate(()=>{const s=$('crtRecord');s.innerHTML+='<option value="ELC">ELC</option><option value="RCC">RCC</option>';s.value='ELC';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(700);
+    const elCrt=await p.evaluate(()=>{const t=$('crtPreviewBox').textContent;return {ms:/mS\/cm/.test(t),conv:/45200/.test(t.replace(/\s/g,'')),keep:/46800/.test(t.replace(/\s/g,''))}});
+    ok(!elCrt.ms&&elCrt.conv&&elCrt.keep,'CRT EL : conductivité en mS/cm convertie en µS/cm (45,2 → 45 200), valeur µS/cm saisie gardée '+JSON.stringify(elCrt));
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='RCC';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(700);
+    ok(await p.evaluate(()=>{const t=$('crtPreviewBox').textContent.replace(/\s/g,'');return /65µS\/cm/.test(t)&&!/mS\/cm/.test($('crtPreviewBox').textContent)}),'CRT autre réseau : valeur indiquée en mS/cm convertie en µS/cm');
+    // 4) Signature au niveau des initiales ; 5) photos annexes dans le CRT
+    const sig=await p.evaluate(async()=>{
+      const c=document.createElement('canvas');c.width=1400;c.height=320;const g=c.getContext('2d');g.lineWidth=5;g.beginPath();g.moveTo(600,200);g.lineTo(800,140);g.stroke();
+      const r=records.find(r=>r.id==='RCC');r.signName='PF';r.signature=c.toDataURL('image/png');
+      const ph=col=>{const x=document.createElement('canvas');x.width=40;x.height=30;const gg=x.getContext('2d');gg.fillStyle=col;gg.fillRect(0,0,40,30);return x.toDataURL('image/jpeg',.6)};
+      r.photos=[{data:ph('#7aa'),group:'Amont'},{data:ph('#c33'),group:'Annexe'}];r.photoAnnexeObs='Irisations en rive gauche';saveLS(LS,records);
+      const s=$('crtRecord');s.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(res=>setTimeout(res,900));
+      const img=document.querySelector('#crtPreviewBox img.crtSignature'),row=img.closest('tr'),cs=getComputedStyle(row.querySelector('td'));
+      const t=$('crtPreviewBox').textContent;
+      return {va:cs.verticalAlign,h:img.naturalHeight,w:img.naturalWidth,annexe:/Photos annexes — observation inhabituelle/.test(t)&&/Irisations en rive gauche/.test(t),site:document.querySelectorAll('#crtPreviewBox .crtPhotoGrid').length};
+    });
+    ok(sig.va==='middle'&&sig.h<200&&sig.w<1400,'CRT : signature recadrée sur le tracé et alignée avec les initiales du signataire '+JSON.stringify(sig));
+    ok(sig.annexe&&sig.site===2,'CRT : photos annexes à part, avec l’observation inhabituelle');
+    // Photos annexes dans le formulaire : groupe à part, au-delà des 5 photos du site
+    await p.evaluate(()=>clearFormNoConfirm());await pick('RCO');
+    const ann=await p.evaluate(()=>{const opt=[...$('photoGroup').options].some(o=>o.value==='Annexe');const mk=()=>({data:'data:image/png;base64,iVBORw0KGgo=',group:'Amont'});state.photos=[mk(),mk(),mk(),mk(),mk(),{data:'data:image/png;base64,iVBORw0KGgo=',group:'Annexe'}];drawPhotoGroups();
+      return {opt,grp:document.querySelectorAll('.photoGroup.photoAnnexe .thumb').length,obs:!!$('photoAnnexeObs')}});
+    ok(ann.opt&&ann.grp===1&&ann.obs,'photos annexes : groupe « Annexe » et champ d’observation dans la fiche '+JSON.stringify(ann));
+    await p.evaluate(()=>{$('photoAnnexeObs').value='Déchets en berge';startFichePrint()});
+    ok(await p.evaluate(()=>{const f=$('fichePrint').textContent;return /Annexe \(observation inhabituelle\)/.test(f)&&/Déchets en berge/.test(f)}),'fiche imprimée : photos annexes légendées et observation inhabituelle');
+    await p.evaluate(()=>endFichePrint());
+    // 6) Dates de modification : affichées dans la liste ; validation datée à l'heure réelle
+    const dates=await p.evaluate(async()=>{
+      const r=records.find(r=>r.id==='RCC');r.lifecycle={...r.lifecycle,createdAt:'2026-10-21T08:00:00.000Z',updatedAt:'2026-10-25T14:30:00.000Z',updatedBy:'PF'};saveLS(LS,records);renderList();
+      const card=[...document.querySelectorAll('#records .listcard')].find(c=>c.querySelector('.recDates')&&/25\/10\/2026/.test(c.textContent));
+      return {card:!!card,txt:card?card.querySelector('.recDates').textContent:''};
+    });
+    ok(dates.card&&/Créée le 21\/10\/2026/.test(dates.txt)&&/modifiée le 25\/10\/2026/.test(dates.txt)&&/par PF/.test(dates.txt),'liste des fiches : dates de création et de dernière modification '+dates.txt);
+    const conf=await p.evaluate(()=>{const o=records.find(r=>r.id==='RCC'),c=JSON.parse(JSON.stringify(o));c.id='RCC_conflit_x';c.conflict={originalId:'RCC',origine:'Google Drive',detectedAt:'2026-10-26T09:00:00Z'};c.lifecycle.updatedAt='2026-10-24T10:00:00.000Z';records.push(c);saveLS(LS,records);renderList();
+      return [...document.querySelectorAll('#records .listcard')].map(x=>x.textContent).find(t=>/Copie de conflit/.test(t))||''});
+    ok(/cette copie : modifiée le 24\/10\/2026/.test(conf)&&/fiche d’origine : modifiée le 25\/10\/2026.*plus récente/.test(conf),'copie de conflit : dates de modification des deux versions comparées');
+    await p.evaluate(()=>{records=records.filter(r=>r.id!=='RCC_conflit_x');saveLS(LS,records)});
+    const val=await p.evaluate(async()=>{
+      const r=records.find(r=>r.id==='RCC');const before=r.lifecycle.updatedAt;
+      showTab('quality');await new Promise(res=>setTimeout(res,300));const s=$('qualityRecord');if(![...s.options].some(o=>o.value==='RCC'))s.innerHTML+='<option value="RCC">RCC</option>';s.value='RCC';s.dispatchEvent(new Event('change',{bubbles:true}));
+      const v=$('qualityValidator');if(v.tagName==='SELECT'){if(!v.options.length||!v.value){v.innerHTML+='<option value="PF">PF</option>';v.value='PF'}}else v.value='PF';
+      $('qualityValidationDate').value='2026-10-22T08:00';$('qualityValidationComment').value='ok';
+      window.qualityChecksFor=()=>[]; // contrôles neutralisés pour ce test de date
+      $('qualityValidate').click();await new Promise(res=>setTimeout(res,400));
+      const l=records.find(r=>r.id==='RCC').lifecycle;return {status:l.status,validatedAt:l.validatedAt,updatedAt:l.updatedAt,before};
+    });
+    ok(val.status==='Validée'&&val.validatedAt.startsWith('2026-10-22')&&val.updatedAt>val.before&&val.updatedAt>'2026-10-29','validation datée du 22/10 : date de modification = heure réelle (plus de copie de conflit à la synchronisation) '+JSON.stringify(val));
+    // 7) Accès aux stations : données communes, saisie locale plus récente, import d'un fichier
+    const acc=await p.evaluate(()=>{
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[2],k=accessKey(st);
+      window.OEG_ACCES_STATIONS={majLe:'2026-10-01',stations:{[k]:{pointDepart:'Régina',modes:['4x4','À pied'],niveau:'Difficile',etapes:'Piste puis 20 min de marche'}}};
+      delete custom.stationAccess[k];
+      const a=ensureStationAccess(st);
+      custom.stationAccess[k]={...a,pointDepart:'Cacao',savedAt:'2026-10-20T10:00:00Z'};const b=ensureStationAccess(st);
+      custom.stationAccess[k]={...a,pointDepart:'Cacao',savedAt:'2026-09-01T10:00:00Z'};const c=ensureStationAccess(st);
+      delete custom.stationAccess[k];
+      return {a:[a.pointDepart,a.modes.join('+'),a.difficulte,a.etapes],b:b.pointDepart,c:c.pointDepart,crt:typeof meta==='function'};
+    });
+    ok(acc.a.join('|')==='Régina|4x4+À pied|2|Piste puis 20 min de marche','accès communs (js/acces-stations.js) repris pour la station sur toutes les tablettes '+JSON.stringify(acc.a));
+    ok(acc.b==='Cacao'&&acc.c==='Régina','accès : une saisie de la tablette plus récente l’emporte, une plus ancienne est remplacée par les données communes');
+    await p.click('.tab[data-tab="data"]');await p.waitForTimeout(400);
+    const imp=await p.evaluate(async()=>{
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[3],eso=DATA.ESO[0];
+      const csv='Réseau(x);Code station;Nom de la station;Bassin versant;Marché;Point de départ / base;Moyens de transport (séparés par des points-virgules);Niveau d’accessibilité;Étapes / consignes d’accès\n'
+        +`RCO;${st.code};${st.nom};;;Saint-Georges;"4x4; bateau motorisé";Très difficile;Dégrad puis 2 h de pirogue\n`
+        +`ESO;${eso.code_bss};${eso.nom};;;Maripasoula;Avion;Moyen;\n`+';999;Station inconnue;;;X;;;\n';
+      const f=new File([csv],'acces.csv',{type:'text/csv'}),dt=new DataTransfer();dt.items.add(f);const inp=$('accessImport');inp.files=dt.files;inp.dispatchEvent(new Event('change'));
+      await new Promise(res=>setTimeout(res,500));
+      const a=ensureStationAccess(st),b=ensureStationAccess(eso);
+      return {a:[a.pointDepart,a.modes.join('+'),a.difficulte,a.etapes],b:[b.pointDepart,b.difficulte],res:$('accessImportResult').textContent};
+    });
+    ok(imp.a.join('|')==='Saint-Georges|4x4+Bateau motorisé|1|Dégrad puis 2 h de pirogue'&&imp.b.join('|')==='Maripasoula|3','import du fichier des accès : stations reconnues par leur code (ESO : code BSS) et mises à jour '+JSON.stringify(imp));
+    ok(/2 station\(s\) mise\(s\) à jour/.test(imp.res)&&/1 ligne\(s\) non reconnue\(s\) : Station inconnue/.test(imp.res),'import : résumé (stations mises à jour, lignes non reconnues) '+imp.res);
+    const expRows=await p.evaluate(async()=>{let blob=null;const orig=URL.createObjectURL;URL.createObjectURL=b=>{blob=b;return orig.call(URL,b)};$('accessExport').click();await new Promise(res=>setTimeout(res,600));URL.createObjectURL=orig;const t=blob?await blob.text():'';return {lines:t.split(/\r\n/).length,head:t.split(/\r\n/)[0],st:/Saint-Georges/.test(t)}});
+    ok(expRows.lines>100&&/Niveau d’accessibilité/.test(expRows.head)&&expRows.st,'fichier des accès à remplir : une ligne par station, valeurs déjà connues reprises ('+expRows.lines+' lignes)');
+    ok(ex.length===0,'aucune erreur JavaScript (passage, filtres, CRT, annexes, dates, accès) '+JSON.stringify(ex));
+    await cx.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());

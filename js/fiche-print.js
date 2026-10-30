@@ -78,7 +78,9 @@
   }
   function photosBlock(){
     const ph=(state.photos||[]).map(p=>typeof p==='string'?{data:p,group:'Amont'}:p).filter(p=>p&&p.data);
-    return {t:'photos',items:ph.map((p,i)=>({src:p.data,caption:'Photo '+(i+1)+(p.group?' — '+p.group:'')}))};
+    // Photos du site d'abord, puis les photos annexes (observation inhabituelle)
+    const order=ph.filter(p=>p.group!=='Annexe').concat(ph.filter(p=>p.group==='Annexe'));
+    return {t:'photos',items:order.map((p,i)=>({src:p.data,caption:'Photo '+(i+1)+(p.group==='Annexe'?' — Annexe (observation inhabituelle)':p.group?' — '+p.group:'')}))};
   }
   function walkCard(card,blocks){
     const kv=(label,value,o)=>blocks.push({t:'kv',label:label.text,code:label.code,value,wide:!!(o&&o.wide)});
@@ -106,7 +108,7 @@
         const box=el.querySelector('.filterHead input[type=checkbox]'),nm=clean(String(el.querySelector('.filterHead span')?.firstChild?.nodeValue||'Paramètre').replace(/:\s*$/,''));
         const extra=el.querySelector('.filterHead input[type=text]');
         kv({text:'Paramètre filtré — '+nm,code:''},box&&box.checked?'Oui'+(extra&&extra.value.trim()?' · '+extra.value.trim():''):'Non');
-        if(box&&box.checked)el.querySelectorAll(':scope > .field').forEach(f=>{if(shown(f))kv({text:nm+' — '+labelOf(f.querySelector(':scope > label')).text,code:''},collect(f,f.querySelector(':scope > label')))});
+        if(box&&box.checked)el.querySelectorAll(':scope > .field, :scope > .filterBody > .field').forEach(f=>{if(shown(f))kv({text:nm+' — '+labelOf(f.querySelector(':scope > label')).text,code:''},collect(f,f.querySelector(':scope > label')))});
         return;
       }
       if(el.matches('.filterBanner')){const t=el.firstElementChild;if(t&&!t.classList.contains('filterCol'))blocks.push({t:'h',text:collect(t)});[...el.children].forEach(c=>{if(c!==t)visit(c)});return}
@@ -145,6 +147,9 @@
     rows.forEach(r=>{
       const wide=r.wide||String(r.value).length>42||String(r.label).length>48;
       if(wide){if(pend){html+='<tr>'+cell(pend)+val(pend)+'<th class="fpVoid"></th><td class="fpVoid"></td></tr>';pend=null}html+='<tr>'+cell(r)+'<td colspan="3">'+esc(r.value).replace(/\n/g,'<br>')+'</td></tr>';return}
+      // Coordonnée X : toujours en début de ligne, pour que son Y soit à côté (X / Y théoriques et terrain), quel
+      // que soit le nombre de champs avant (une fiche « non réalisé » n'a qu'une heure de passage)
+      if(pend&&/^X\s/.test(String(r.label))){html+='<tr>'+cell(pend)+val(pend)+'<th class="fpVoid"></th><td class="fpVoid"></td></tr>';pend=null}
       if(pend){html+='<tr>'+cell(pend)+val(pend)+cell(r)+val(r)+'</tr>';pend=null}else pend=r;
     });
     if(pend)html+='<tr>'+cell(pend)+val(pend)+'<th class="fpVoid"></th><td class="fpVoid"></td></tr>';
@@ -184,7 +189,7 @@
     if(!box){box=document.createElement('div');box.id='fichePrint';document.body.appendChild(box)}
     box.innerHTML=
       '<div class="fpHead"><img src="'+esc(ASSETS.logo||'img/logo-oeg-rond.png')+'" alt=""><div class="fpOrg"><div class="fpOrgName">OFFICE DE L’EAU DE GUYANE</div><div class="fpOrgSub">Fiche terrain'+(rm?' — '+esc(rm):'')+'</div></div><div class="fpRef"><div>'+esc(code||state.station||'')+'</div><span>'+esc(date)+'</span></div></div>'+
-      '<div class="fpFoot"><img class="fpBand" src="'+esc(ASSETS.band||'img/bandeau-oeg.svg')+'" alt=""><div class="fpFootLine">Fiche terrain '+esc(net)+(state.station?' — '+esc(state.station):'')+(date?' — '+esc(date):'')+' · éditée le '+esc(edited)+' · Office de l’Eau de Guyane</div><div class="fpSlogan">La connaissance aujourd’hui<br>pour les rivières de demain</div><div class="fpUrl">www.eauguyane.fr</div></div>'+
+      '<div class="fpFoot"><img class="fpBand" src="'+esc(ASSETS.band||'img/bandeau-oeg.svg')+'" alt=""><div class="fpFootLine">Fiche terrain '+esc(net)+(state.station?' — '+esc(state.station):'')+(date?' — '+esc(date):'')+(()=>{const r=state.editing&&typeof records!=='undefined'?records.find(x=>x.id===state.editing):null,u=r&&typeof recordStamp==='function'?recordStamp(r):'';if(!u)return '';const d=new Date(u);return ' · modifiée le '+esc(isNaN(d)?u:d.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}))})()+' · éditée le '+esc(edited)+' · Office de l’Eau de Guyane</div><div class="fpSlogan">La connaissance aujourd’hui<br>pour les rivières de demain</div><div class="fpUrl">www.eauguyane.fr</div></div>'+
       '<table class="fpDoc"><thead><tr><td><div class="fpSpH"></div></td></tr></thead><tfoot><tr><td><div class="fpSpF"></div></td></tr></tfoot><tbody><tr><td>'+
       '<div class="fpKicker">FICHE TERRAIN'+(rm?' — '+esc(rm.toUpperCase()):'')+'</div><h1 class="fpTitle">'+esc(state.station?'Prélèvement '+(net?net+' — ':'')+state.station:'Fiche terrain')+'</h1>'+(sub?'<div class="fpSub">'+esc(sub)+'</div>':'')+
       (nonRealise?'<div class="fpAlert">PRÉLÈVEMENT NON RÉALISÉ — motif, photographies et coordonnées relevées sur place ci-dessous.</div>':'')+

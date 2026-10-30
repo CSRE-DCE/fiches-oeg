@@ -112,6 +112,7 @@
     // Prélèvement non réalisé : motif, photo(s) et coordonnées obligatoires ; pas de contrôle des mesures (masquées)
     if(typeof isNonRealise==='function'&&isNonRealise()){
       if(!val('obs').trim()){blocking.push('Motif du prélèvement non réalisé (rubrique 9)');fields.push('obs')}
+      if(!val('passage')){warnings.push('Heure de passage');fields.push('passage')}
       if(!(state.photos||[]).length){blocking.push('Au moins une photo du site');fields.push('mediaCard')}
       if(!val('xT')||!val('yT')){blocking.push('Coordonnées terrain (X / Y) — bouton « Géolocalise-moi »');fields.push('xT','yT')}
       return {blocking,warnings,fields};

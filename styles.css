@@ -169,7 +169,9 @@ input.valueWarn{border-color:#e0a100!important;background:#fff6df!important}
 @media print{.backupPill,#endOfDayCard{display:none!important}}
 .offTab{display:none!important}
 .crtMapFallback{height:100%;display:flex;align-items:center;justify-content:center}.crtMapFallback[hidden]{display:none}
-.crtDraftBand{margin-top:6mm;border:1.5px solid #a3261f;color:#a3261f;background:#fde9e7;font-weight:800;letter-spacing:.4px;padding:3mm 5mm;font-size:9.5pt;text-align:center}.crtSignature{max-height:18mm;max-width:60mm;object-fit:contain;display:block}
+.crtDraftBand{margin-top:6mm;border:1.5px solid #a3261f;color:#a3261f;background:#fde9e7;font-weight:800;letter-spacing:.4px;padding:3mm 5mm;font-size:9.5pt;text-align:center}.crtSignature{max-height:12mm;max-width:60mm;object-fit:contain;display:block}
+/* Signature au niveau des initiales du signataire (ligne centrée verticalement, signature recadrée sur son tracé) */
+.crtTable .crtSignRow th,.crtTable .crtSignRow td{vertical-align:middle}
 /* ---- CRT imprimé (audit) ---- */
 /* Carte : contenu (tuiles de 900 px) confiné au cadre, sans élargir la page imprimée */
 .crtMapPlaceholder{contain:layout paint}
@@ -247,6 +249,16 @@ body.nonRealise #obsCard>*:not(h2):not(.obsKeep){display:none!important}
 .lblNonReal{display:none}
 body.nonRealise .lblReal{display:none}
 body.nonRealise .lblNonReal{display:inline;color:#a3261f}
+/* Paramètres filtrés : volume et mode de filtration affichés quand le paramètre est coché (deux règles :
+   un navigateur sans :has() ignorerait toute la règle) */
+.filterCol .filterBody{display:none}
+.filterCol.on .filterBody{display:block}
+.filterCol:has(.filterHead input[type=checkbox]:checked) .filterBody{display:block}
+.filterHint{display:block;font-weight:500;margin-top:3px}
+/* Prélèvement non réalisé : une heure de passage à la place des heures de début et de fin */
+.passageField{display:none}
+body.nonRealise .passageField{display:block}
+body.nonRealise .horaireField{display:none!important}
 #prelevementRealiseWrap{border:1.5px solid var(--brand);border-radius:10px;padding:8px 10px;background:var(--soft)}
 /* Champs du cours d'eau (macrophytes, largeur, profondeur moyenne) dans le panneau sédiments */
 .riverFields{padding:6px 10px 2px;border-bottom:1px solid var(--line);background:#fff}
@@ -334,3 +346,6 @@ body.nonRealise .lblNonReal{display:inline;color:#a3261f}
 /* Tableau « Mesures in situ » : défile dans son cadre à toutes les largeurs (en tablette portrait,
    768 à 912 px, il élargissait toute la page) */
 @media screen{#insitu{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}}
+/* Photos annexes (observation inhabituelle) : sur toute la largeur, cadre orangé */
+.photoGroup.photoAnnexe{grid-column:1/-1;border-color:#e3a33b;background:#fff8ec}
+.photoGroup.photoAnnexe h4{color:#9a5a00}

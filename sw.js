@@ -35,6 +35,7 @@ const APP_SHELL = [
   './js/quality.js',
   './js/quality-automation.js',
   './js/people-stations-core.js',
+  './js/acces-stations.js',
   './js/crt-access.js',
   './js/stations-map.js',
   './js/sync.js',
