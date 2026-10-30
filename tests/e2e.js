@@ -1333,6 +1333,9 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
   {
     const cx=await browser.newContext({serviceWorkers:'block',viewport:{width:900,height:1100}});await cx.route('https://unpkg.com/**',r=>r.abort());
     await cx.route('https://*.tile.openstreetmap.org/**',r=>r.abort());
+    // Bibliothèque Excel bloquée : l'export du fichier des accès prend sa forme CSV (sans réseau), la même
+    // en local et sur le serveur de vérification (où la bibliothèque se charge et produit un .xlsx)
+    await cx.route('https://cdn.sheetjs.com/**',r=>r.abort());
     const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
     await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
     const pick=async net=>{await p.click('.tab[data-tab="new"]');await p.click(`#networks .chip[data-n="${net}"]`);
