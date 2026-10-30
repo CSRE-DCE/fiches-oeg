@@ -199,6 +199,17 @@
   // ---------- Impression ----------
   const PAGE_CSS='@page{size:A4;margin:7mm 0 0 0;@top-right{content:"Page " counter(page) " / " counter(pages);font-family:Barlow,Arial,sans-serif;font-size:7.5pt;color:#4c6180;margin-right:14mm;vertical-align:bottom}@bottom-right{content:none}}';
   function ficheActive(){const v=document.getElementById('new');return !!(v&&v.classList.contains('active'))}
+  // Titre de la page pendant l'impression = nom proposé pour le PDF : FT_Réseau-marché_année_session_station
+  let titleBefore=null;
+  function setPrintTitle(){
+    if(typeof ficheFileBase!=='function')return;
+    const ed=state.editing&&typeof records!=='undefined'?records.find(x=>x.id===state.editing):null;
+    const st=typeof getStation==='function'?getStation():null;
+    if(titleBefore===null)titleBefore=document.title;
+    document.title=ficheFileBase({network:state.network,session:state.session,station:state.station,stationInfo:st,date:val('date'),conflict:ed?.conflict});
+  }
+  function restoreTitle(){if(titleBefore!==null){document.title=titleBefore;titleBefore=null}}
+  window.addEventListener('afterprint',()=>setTimeout(restoreTitle,500));
   function startFichePrint(){
     if(!ficheActive())return false;
     // Formulaire à nouveau visible le temps de le relire (le mode impression d'une fiche précédente le masque)
@@ -207,9 +218,11 @@
     let s=document.getElementById('fichePrintPage');
     if(!s){s=document.createElement('style');s.id='fichePrintPage';document.head.appendChild(s)}
     s.textContent=PAGE_CSS;document.body.classList.add('fpPrinting');
+    setPrintTitle();
     return true;
   }
   function endFichePrint(){
+    restoreTitle();
     document.body.classList.remove('fpPrinting');
     document.getElementById('fichePrintPage')?.remove();
     const b=document.getElementById('fichePrint');if(b)b.innerHTML='';

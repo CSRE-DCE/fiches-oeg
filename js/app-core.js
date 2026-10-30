@@ -276,6 +276,18 @@ const NETWORKS=[
 ];
 
 function netLabel(n){return ({RCO:'RCO',BIO:'BIO',ESO:'ESO',Chimie:'Chimie ESC',EL:'EL — suivi littoral'})[n]||n}
+// Nom des documents d'une fiche terrain (fichiers enregistrés dans le dossier / sur Drive, PDF imprimé) :
+// FT_Réseau-marché_année_session_station, ex. FT_RCO_2026_S1_Affluent_crique_Ineri
+function fichePart(s,max){return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,max||50).replace(/_+$/,'')}
+function ficheFileBase(r){
+  let marche='';try{const st=r?.stationInfo||(typeof stations==='function'?stations().find(x=>x.nom===r?.station):null);marche=st&&typeof meta==='function'?meta(st).m:''}catch(e){}
+  const reseau=[fichePart(r?.network,12)||'Reseau',fichePart(marche,30)].filter(Boolean).join('-');
+  const annee=(/^\d{4}/.exec(String(r?.date||''))||/^\d{4}/.exec(String(r?.savedAt||''))||['AAAA'])[0];
+  const ses=(/^\s*(S\d+)/i.exec(String(r?.session||''))||[])[1];
+  const session=ses?ses.toUpperCase():(fichePart(r?.session,16)||'SansSession');
+  return ['FT',reseau,annee,session,fichePart(r?.station,60)||'Station'].join('_')+(r?.conflict?'_conflit':'');
+}
+window.ficheFileBase=ficheFileBase;
 
 /* Icônes des moyens de transport, partagées par la carte, l'itinéraire, l'éditeur d'accès et le CRT. */
 const TRANSPORT_ICONS={

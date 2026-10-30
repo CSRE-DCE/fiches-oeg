@@ -62,7 +62,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
   // --- C: fusion Drive ---
   const res0=await page.evaluate(()=>OEGSync.manualSyncNow());
   await page.waitForTimeout(2500);
-  const byRid=()=>{const m={};for(const [fid,f] of drive){if(f.name.startsWith('fiche_')){const r=JSON.parse(f.text);m[r.id]=fid}}return m};
+  const byRid=()=>{const m={};for(const [fid,f] of drive){if(/^(FT_|fiche_)/.test(f.name)){const r=JSON.parse(f.text);m[r.id]=fid}}return m};
   // (les fiches volumineuses de l'étape B peuvent aussi avoir été envoyées selon le moment où la
   // synchronisation automatique s'est déclenchée : on vérifie précisément les 4 fiches attendues)
   const fids=byRid();ok(['1','2','3','4'].every(id=>fids[id]),'envoi initial : les 4 fiches sur Drive');
@@ -106,7 +106,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     g('9').comment='tablette A seule';g('9').lifecycle.updatedAt='2026-10-07T12:00:00.000Z';
     saveLS(LS,records)});
   await page.waitForTimeout(6000);
-  const texts=[...drive.values()].filter(f=>f.name.startsWith('fiche_')).map(f=>JSON.parse(f.text).comment);
+  const texts=[...drive.values()].filter(f=>/^(FT_|fiche_)/.test(f.name)).map(f=>JSON.parse(f.text).comment);
   ok(remoteOf('1').comment==='tablette B (récente)','D fiche 1 : version récente de B NON écrasée sur Drive');
   ok(texts.includes('tablette A (ancienne)'),'D fiche 1 : saisie de A conservée (copie envoyée sur Drive)');
   ok(remoteOf('4').comment==='tablette A (récente)','D fiche 4 : version récente de A envoyée');
@@ -487,28 +487,31 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.evaluate(r=>{records.push(r);saveLS(LS,records)},mk('M1',{comment:'v1'}));
     // 1) Nouveau dossier de sauvegarde : il reçoit toutes les fiches
     await p.evaluate(()=>OEGSync.chooseLocalFolder());await p.waitForTimeout(300);
-    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier1).some(f=>f.startsWith('fiche_'))),'dossier de sauvegarde 1 : fiche écrite');
+    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier1).some(f=>/^FT_/.test(f))),'dossier de sauvegarde 1 : fiche écrite');
+    // Nomenclature : FT_Réseau-marché_année_session_station ; deux fiches de même nom ne s'écrasent pas (_2)
+    const names=await p.evaluate(()=>Object.keys(window.__folders.dossier1).filter(f=>/^FT_/.test(f)));
+    ok(names.length>0&&names.every(f=>/^FT_[A-Za-z]+(-[A-Za-z0-9_]+)?_(\d{4}|AAAA)_(S\d+|[A-Za-z0-9_-]+)_[A-Za-z0-9_-]+(_\d+)?\.json$/.test(f)),'fichiers des fiches nommés FT_Réseau-marché_année_session_station '+JSON.stringify(names.slice(0,3)));
     await p.evaluate(()=>OEGSync.forgetLocalFolder());await p.evaluate(()=>OEGSync.chooseLocalFolder());await p.waitForTimeout(300);
-    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier2).some(f=>f.startsWith('fiche_'))),'nouveau dossier de sauvegarde : toutes les fiches y sont réécrites (auparavant vide)');
+    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier2).some(f=>/^FT_/.test(f))),'nouveau dossier de sauvegarde : toutes les fiches y sont réécrites (auparavant vide)');
     await p.evaluate(()=>OEGSync.forgetLocalFolder());
     // 2) Drive : changement de compte / dossier supprimé / fichier supprimé
     await p.evaluate(()=>{localStorage.setItem('oeg_sync_drive_cfg_v1',JSON.stringify({clientId:'x',folderId:'',connected:true}))});
     await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
     await p.evaluate(()=>OEGSync.manualSyncNow());
-    const count=()=>[...acct.files.values()].filter(f=>f.name.startsWith('fiche_')).length;
+    const count=()=>[...acct.files.values()].filter(f=>/^(FT_|fiche_)/.test(f.name)).length;
     ok(count()===1,'Drive : fiche envoyée');
     acct={folders:new Map(),files:new Map()}; // autre compte Google (ou dossier supprimé)
     await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
     await p.evaluate(()=>OEGSync.manualSyncNow());
     ok(count()===1&&acct.folders.size===1,'Drive : autre compte / dossier supprimé → dossier recréé et fiches réenvoyées (auparavant jamais)');
-    const fid=[...acct.files].find(([id,f])=>f.name.startsWith('fiche_'))[0];acct.files.delete(fid); // fichier supprimé sur Drive
+    const fid=[...acct.files].find(([id,f])=>/^(FT_|fiche_)/.test(f.name))[0];acct.files.delete(fid); // fichier supprimé sur Drive
     await p.evaluate(()=>{records.find(r=>r.id==='M1').comment='v2';records.find(r=>r.id==='M1').lifecycle.updatedAt='2026-10-02T08:00:00.000Z';saveLS(LS,records)});
     await p.evaluate(()=>OEGSync.manualSyncNow());await p.evaluate(()=>OEGSync.manualSyncNow());
     ok(count()===1&&[...acct.files.values()].some(f=>f.text.includes('"v2"')),'Drive : fichier supprimé → recréé avec la dernière version');
-    // 3) Changement de date : le fichier Drive est renommé en place (un seul fichier par fiche)
-    await p.evaluate(()=>{const r=records.find(r=>r.id==='M1');r.date='2026-09-30';r.lifecycle.updatedAt='2026-10-03T08:00:00.000Z';saveLS(LS,records)});
+    // 3) Changement de date (d'année : le nom FT_… contient l'année) : le fichier Drive est renommé en place
+    await p.evaluate(()=>{const r=records.find(r=>r.id==='M1');r.date='2027-01-15';r.lifecycle.updatedAt='2026-10-03T08:00:00.000Z';saveLS(LS,records)});
     await p.evaluate(()=>OEGSync.manualSyncNow());
-    ok(count()===1&&[...acct.files.values()].some(f=>f.name.includes('2026-09-30')),'Drive : date corrigée → même fichier renommé (plus de second fichier)');
+    ok(count()===1&&[...acct.files.values()].some(f=>/^FT_.+_2027_/.test(f.name)),'Drive : date corrigée → même fichier renommé (plus de second fichier)');
     // 4) Fiche allégée : jamais réécrite sans ses photos ; la récupération lui rend ses photos
     const full=mk('M2',{photos:[{data:'data:image/png;base64,AAAA',group:'Amont'},{data:'data:image/png;base64,BBBB',group:'Aval'}]});
     await p.evaluate(r=>{records.push(r);saveLS(LS,records)},full);await p.evaluate(()=>OEGSync.manualSyncNow());
@@ -1437,6 +1440,35 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     const expRows=await p.evaluate(async()=>{let blob=null;const orig=URL.createObjectURL;URL.createObjectURL=b=>{blob=b;return orig.call(URL,b)};$('accessExport').click();await new Promise(res=>setTimeout(res,600));URL.createObjectURL=orig;const t=blob?await blob.text():'';return {lines:t.split(/\r\n/).length,head:t.split(/\r\n/)[0],st:/Saint-Georges/.test(t)}});
     ok(expRows.lines>100&&/Niveau d’accessibilité/.test(expRows.head)&&expRows.st,'fichier des accès à remplir : une ligne par station, valeurs déjà connues reprises ('+expRows.lines+' lignes)');
     ok(ex.length===0,'aucune erreur JavaScript (passage, filtres, CRT, annexes, dates, accès) '+JSON.stringify(ex));
+    await cx.close();
+  }
+  // --- AH : nomenclature des documents d'une fiche (FT_Réseau-marché_année_session_station) ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block'});await cx.route('https://unpkg.com/**',r=>r.abort());
+    await cx.addInitScript(()=>{window.__files={};window.showDirectoryPicker=async()=>({name:'d',queryPermission:async()=>'granted',requestPermission:async()=>'granted',getFileHandle:async fn=>({createWritable:async()=>{let b='';return {write:async t=>{b+=t},close:async()=>{window.__files[fn]=b}}}})})});
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const nm=await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY).find(s=>s.nom==='Affluent crique Ineri')||stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0],el=stationsFor('EL')[0];
+      return {rco:ficheFileBase({network:'RCO',session:'S1 - Sept.26',station:st.nom,stationInfo:st,date:'2026-09-14'}),st:st.nom,
+        el:ficheFileBase({network:'EL',session:'S2 - Novembre 2026 (saison des pluies)',station:el.nom,stationInfo:el,date:'2026-11-03'}),elst:el.nom,
+        none:ficheFileBase({network:'BIO',station:'Crique à l’Est',date:'2027-02-01'})}});
+    const part=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9-]+/g,'_').replace(/^_+|_+$/g,'');
+    ok(nm.rco==='FT_RCO_2026_S1_'+part(nm.st)&&nm.el==='FT_EL_2026_S2_'+part(nm.elst)&&nm.none==='FT_BIO_2027_SansSession_Crique_a_l_Est','nom de document : FT_Réseau-marché_année_session_station '+JSON.stringify(nm));
+    // Marché connu pour la station : ajouté au réseau
+    ok(await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];custom.stationAccess[accessKey(st)]={...ensureStationAccess(st),marche:'Lot 2 Est',savedAt:new Date().toISOString()};const n=ficheFileBase({network:'RCO',session:'S3 - Fév.27',station:st.nom,stationInfo:st,date:'2027-02-10'});delete custom.stationAccess[accessKey(st)];return /^FT_RCO-Lot_2_Est_2027_S3_/.test(n)}),'nom de document : marché de la station ajouté au réseau (FT_RCO-Lot_2_Est_…)');
+    // Dossier de sauvegarde : deux fiches de même station et même session → _2 pour la plus récente ; PDF imprimé au même nom
+    await p.evaluate(async()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0],m={lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:'S1 - Sept.26',station:st.nom,stationInfo:st};
+      records.push({...m,id:'N1',date:'2026-09-14',savedAt:'2026-09-14T08:00:00Z',lifecycle:{...m.lifecycle,createdAt:'2026-09-14T08:00:00Z'}},{...m,id:'N2',date:'2026-09-15',savedAt:'2026-09-15T08:00:00Z',lifecycle:{...m.lifecycle,createdAt:'2026-09-15T08:00:00Z'}});saveLS(LS,records);
+      await OEGSync.chooseLocalFolder();await new Promise(r=>setTimeout(r,600))});
+    const files=await p.evaluate(()=>Object.keys(window.__files).filter(f=>/^FT_/.test(f)).sort());
+    const want=await p.evaluate(()=>ficheFileBase(records.find(r=>r.id==='N1')));
+    const who=await p.evaluate(()=>Object.fromEntries(Object.entries(window.__files).filter(([f])=>/^FT_/.test(f)).map(([f,t])=>[f,JSON.parse(t).id])));
+    ok(who[want+'.json']==='N1'&&who[want+'_2.json']==='N2','dossier de sauvegarde : '+want+'.json et '+want+'_2.json (aucune fiche n’en écrase une autre) '+JSON.stringify(files));
+    await p.click('#networks .chip[data-n="RCO"]');
+    await p.evaluate(()=>{for(const id of ['session','activity','station']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}$('date').value='2026-09-20'});await p.waitForTimeout(300);
+    const title=await p.evaluate(()=>{const before=document.title;startFichePrint();const t=document.title;endFichePrint();return {t,back:document.title===before,want:ficheFileBase({network:state.network,session:state.session,station:state.station,stationInfo:getStation(),date:'2026-09-20'})}});
+    ok(title.t===title.want&&/^FT_RCO_2026_/.test(title.t)&&title.back,'fiche imprimée : PDF proposé sous le nom '+title.t+' (titre rétabli ensuite)');
+    ok(ex.length===0,'aucune erreur JavaScript (nomenclature) '+JSON.stringify(ex));
     await cx.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
