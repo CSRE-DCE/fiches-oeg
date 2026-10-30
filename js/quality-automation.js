@@ -47,7 +47,7 @@
   }
   function eqStatusFor(gmao){return equipStatus(equipmentByGmao(gmao))}
   function stationCoords(r){const s=r?.stationInfo||getStation();if(!s)return null;const z=(typeof stationXY22==='function')?stationXY22(s):null;return z?{...s,x:z[0],y:z[1]}:s}
-  function dateTimeOfRecord(r){return dtLocal(r?.date,r?.heureDebut)}
+  function dateTimeOfRecord(r){return dtLocal(r?.date,r?.prelevementRealise==='Non'?(r?.heurePassage||r?.heureDebut):r?.heureDebut)}
   function custodyDateOfRecord(r){return asDate(r?.sampleTrace?.custodyDate||r?.sample?.remise||r?.sample?.esoRemise||r?.custodyDate||'')}
   function filtrationCheck(r){
     const s=r?.sample||{}; const out=[];
@@ -140,7 +140,9 @@
     const ps=programmedStation(r);checks.push({label:'Station programmée pour la session / opération',ok:ps.ok,level:'critical'});checks.push({label:'Session cohérente avec la station',ok:ps.ok,level:'critical'});
     if(r?.network==='EL')checks.push({label:'Campagne / session renseignée (obligatoire EL)',ok:!!r?.session,level:'critical'});
     checks.push({label:'Date renseignée',ok:!!r?.date,level:'critical'});
-    const start=dtLocal(r?.date,r?.heureDebut), end=dtLocal(r?.date,r?.heureFin);checks.push({label:'Heure début/fin cohérentes',ok:!!start&&!!end&&end>=start,level:'critical'});
+    // Prélèvement non réalisé : une heure de passage (pas d'heures de début et de fin)
+    if(r?.prelevementRealise==='Non')checks.push({label:'Heure de passage renseignée',ok:!!dtLocal(r?.date,r?.heurePassage||r?.heureDebut),level:'critical'});
+    else{const start=dtLocal(r?.date,r?.heureDebut), end=dtLocal(r?.date,r?.heureFin);checks.push({label:'Heure début/fin cohérentes',ok:!!start&&!!end&&end>=start,level:'critical'})}
     const ops=r?.preleveurs||[]; if(ops.length){ops.forEach(op=>{const st=operatorStatus(op);checks.push({label:`Opérateur ${op} : habilitation`,ok:st.state==='valid'||(st.state==='unknown'),level:st.state==='expired'||st.state==='missing'?'critical':'warning',warn:st.state==='unknown',detail:st.label})})}
     else checks.push({label:'Opérateur(s) renseigné(s)',ok:false,level:'critical'});
     checks.push({label:'Signature présente',ok:!!(r?.signature&&r.signature.length>100),level:'critical'});

@@ -62,7 +62,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
   // --- C: fusion Drive ---
   const res0=await page.evaluate(()=>OEGSync.manualSyncNow());
   await page.waitForTimeout(2500);
-  const byRid=()=>{const m={};for(const [fid,f] of drive){if(f.name.startsWith('fiche_')){const r=JSON.parse(f.text);m[r.id]=fid}}return m};
+  const byRid=()=>{const m={};for(const [fid,f] of drive){if(/^(FT_|fiche_)/.test(f.name)){const r=JSON.parse(f.text);m[r.id]=fid}}return m};
   // (les fiches volumineuses de l'étape B peuvent aussi avoir été envoyées selon le moment où la
   // synchronisation automatique s'est déclenchée : on vérifie précisément les 4 fiches attendues)
   const fids=byRid();ok(['1','2','3','4'].every(id=>fids[id]),'envoi initial : les 4 fiches sur Drive');
@@ -106,7 +106,7 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     g('9').comment='tablette A seule';g('9').lifecycle.updatedAt='2026-10-07T12:00:00.000Z';
     saveLS(LS,records)});
   await page.waitForTimeout(6000);
-  const texts=[...drive.values()].filter(f=>f.name.startsWith('fiche_')).map(f=>JSON.parse(f.text).comment);
+  const texts=[...drive.values()].filter(f=>/^(FT_|fiche_)/.test(f.name)).map(f=>JSON.parse(f.text).comment);
   ok(remoteOf('1').comment==='tablette B (récente)','D fiche 1 : version récente de B NON écrasée sur Drive');
   ok(texts.includes('tablette A (ancienne)'),'D fiche 1 : saisie de A conservée (copie envoyée sur Drive)');
   ok(remoteOf('4').comment==='tablette A (récente)','D fiche 4 : version récente de A envoyée');
@@ -185,7 +185,9 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
       saveLS(LS,records);
     });
     const pix=id=>p.evaluate(id=>{const c=document.getElementById(id),g=c.getContext('2d'),d=window.devicePixelRatio||1,r=c.getBoundingClientRect();
-      const at=(x,y)=>{const v=g.getImageData(Math.round(x*r.width/600*d),Math.round(y*r.height/220*d),1,1).data;return v[3]===0?'vide':v[0]>200&&v[2]<50?'rouge':v[2]>200&&v[0]<50?'bleu':'autre'};
+      // image 600×220 : étirée dans la signature, placée entière et centrée (sans déformation) dans le schéma
+      const sx=c.width/600,sy=c.height/220,k=id==='draw'?Math.min(sx,sy):0,ox=id==='draw'?(c.width-600*k)/2:0,oy=id==='draw'?(c.height-220*k)/2:0;
+      const at=(x,y)=>{const v=g.getImageData(Math.round(id==='draw'?ox+x*k:x*sx),Math.round(id==='draw'?oy+y*k:y*sy),1,1).data;return v[3]===0?'vide':v[0]>200&&v[2]<50?'rouge':v[2]>200&&v[0]<50?'bleu':'autre'};
       return at(60,100)+'/'+at(450,100)},id);
     const open=async id=>{await p.click('.tab[data-tab="list"]');await p.evaluate(id=>{loadRecord(id);showTab('new')},id);await p.waitForTimeout(500)};
     await open('A');
@@ -485,28 +487,31 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     await p.evaluate(r=>{records.push(r);saveLS(LS,records)},mk('M1',{comment:'v1'}));
     // 1) Nouveau dossier de sauvegarde : il reçoit toutes les fiches
     await p.evaluate(()=>OEGSync.chooseLocalFolder());await p.waitForTimeout(300);
-    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier1).some(f=>f.startsWith('fiche_'))),'dossier de sauvegarde 1 : fiche écrite');
+    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier1).some(f=>/^FT_/.test(f))),'dossier de sauvegarde 1 : fiche écrite');
+    // Nomenclature : FT_Réseau-marché_année_session_station ; deux fiches de même nom ne s'écrasent pas (_2)
+    const names=await p.evaluate(()=>Object.keys(window.__folders.dossier1).filter(f=>/^FT_/.test(f)));
+    ok(names.length>0&&names.every(f=>/^FT_[A-Za-z]+(-[A-Za-z0-9_]+)?_(\d{4}|AAAA)_(S\d+|[A-Za-z0-9_-]+)_[A-Za-z0-9_-]+(_\d+)?\.json$/.test(f)),'fichiers des fiches nommés FT_Réseau-marché_année_session_station '+JSON.stringify(names.slice(0,3)));
     await p.evaluate(()=>OEGSync.forgetLocalFolder());await p.evaluate(()=>OEGSync.chooseLocalFolder());await p.waitForTimeout(300);
-    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier2).some(f=>f.startsWith('fiche_'))),'nouveau dossier de sauvegarde : toutes les fiches y sont réécrites (auparavant vide)');
+    ok(await p.evaluate(()=>Object.keys(window.__folders.dossier2).some(f=>/^FT_/.test(f))),'nouveau dossier de sauvegarde : toutes les fiches y sont réécrites (auparavant vide)');
     await p.evaluate(()=>OEGSync.forgetLocalFolder());
     // 2) Drive : changement de compte / dossier supprimé / fichier supprimé
     await p.evaluate(()=>{localStorage.setItem('oeg_sync_drive_cfg_v1',JSON.stringify({clientId:'x',folderId:'',connected:true}))});
     await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
     await p.evaluate(()=>OEGSync.manualSyncNow());
-    const count=()=>[...acct.files.values()].filter(f=>f.name.startsWith('fiche_')).length;
+    const count=()=>[...acct.files.values()].filter(f=>/^(FT_|fiche_)/.test(f.name)).length;
     ok(count()===1,'Drive : fiche envoyée');
     acct={folders:new Map(),files:new Map()}; // autre compte Google (ou dossier supprimé)
     await p.reload();await p.evaluate(()=>window.OEGRecordsReady);
     await p.evaluate(()=>OEGSync.manualSyncNow());
     ok(count()===1&&acct.folders.size===1,'Drive : autre compte / dossier supprimé → dossier recréé et fiches réenvoyées (auparavant jamais)');
-    const fid=[...acct.files].find(([id,f])=>f.name.startsWith('fiche_'))[0];acct.files.delete(fid); // fichier supprimé sur Drive
+    const fid=[...acct.files].find(([id,f])=>/^(FT_|fiche_)/.test(f.name))[0];acct.files.delete(fid); // fichier supprimé sur Drive
     await p.evaluate(()=>{records.find(r=>r.id==='M1').comment='v2';records.find(r=>r.id==='M1').lifecycle.updatedAt='2026-10-02T08:00:00.000Z';saveLS(LS,records)});
     await p.evaluate(()=>OEGSync.manualSyncNow());await p.evaluate(()=>OEGSync.manualSyncNow());
     ok(count()===1&&[...acct.files.values()].some(f=>f.text.includes('"v2"')),'Drive : fichier supprimé → recréé avec la dernière version');
-    // 3) Changement de date : le fichier Drive est renommé en place (un seul fichier par fiche)
-    await p.evaluate(()=>{const r=records.find(r=>r.id==='M1');r.date='2026-09-30';r.lifecycle.updatedAt='2026-10-03T08:00:00.000Z';saveLS(LS,records)});
+    // 3) Changement de date (d'année : le nom FT_… contient l'année) : le fichier Drive est renommé en place
+    await p.evaluate(()=>{const r=records.find(r=>r.id==='M1');r.date='2027-01-15';r.lifecycle.updatedAt='2026-10-03T08:00:00.000Z';saveLS(LS,records)});
     await p.evaluate(()=>OEGSync.manualSyncNow());
-    ok(count()===1&&[...acct.files.values()].some(f=>f.name.includes('2026-09-30')),'Drive : date corrigée → même fichier renommé (plus de second fichier)');
+    ok(count()===1&&[...acct.files.values()].some(f=>/^FT_.+_2027_/.test(f.name)),'Drive : date corrigée → même fichier renommé (plus de second fichier)');
     // 4) Fiche allégée : jamais réécrite sans ses photos ; la récupération lui rend ses photos
     const full=mk('M2',{photos:[{data:'data:image/png;base64,AAAA',group:'Amont'},{data:'data:image/png;base64,BBBB',group:'Aval'}]});
     await p.evaluate(r=>{records.push(r);saveLS(LS,records)},full);await p.evaluate(()=>OEGSync.manualSyncNow());
@@ -1282,6 +1287,192 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await p.evaluate(async()=>$('obs').value==='Modif fiche supprimée'&&!state.editing&&!((await OEGStore.get('oeg_draft_edit_v1'))||{}).XD),'brouillon d’une fiche supprimée : repris comme nouvelle fiche, puis plus proposé à chaque démarrage');
     ok(e27.length===0,'aucune erreur JavaScript (corrections de relecture) '+JSON.stringify(e27));
     await c27.close();
+  }
+  // --- AF : schéma plus grand (zone de dessin 3:2, schéma imprimé en grand, anciens dessins non déformés) ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block',viewport:{width:800,height:1100}});await cx.route('https://unpkg.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.click('#networks .chip[data-n="RCO"]');
+    await p.evaluate(()=>{for(const id of ['session','activity','station']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}});
+    await p.waitForTimeout(300);await p.locator('#draw').scrollIntoViewIfNeeded();
+    const ratio=await p.evaluate(()=>{const r=$('draw').getBoundingClientRect();return r.width/r.height});
+    ok(Math.abs(ratio-1.5)<0.02,'zone de dessin du schéma plus haute (proportions 3:2, auparavant bande de 220 px) — '+ratio.toFixed(2));
+    // Tracé couvrant la zone, puis fiche imprimée : schéma sur toute la largeur et en grand
+    const bb=await p.locator('#draw').boundingBox();
+    await p.mouse.move(bb.x+bb.width*.1,bb.y+bb.height*.1);await p.mouse.down();await p.mouse.move(bb.x+bb.width*.9,bb.y+bb.height*.9,{steps:10});await p.mouse.up();
+    await p.evaluate(()=>startFichePrint());await p.emulateMedia({media:'print'});
+    await p.evaluate(()=>Promise.all([...document.querySelectorAll('#fichePrint .fpDraw img')].map(i=>i.decode?i.decode().catch(()=>{}):null)));
+    const pr=await p.evaluate(()=>{const i=document.querySelector('#fichePrint .fpDraw img'),r=i.getBoundingClientRect(),mm=v=>v/96*25.4;return {w:mm(r.width),h:mm(r.height),same:i.getAttribute('src')===canvasData('draw')}});
+    ok(pr.h>=100&&pr.w>=150&&pr.same,'fiche imprimée : schéma en grand ('+Math.round(pr.w)+' × '+Math.round(pr.h)+' mm, auparavant ≈ 55 mm de haut), tel qu’enregistré');
+    await p.emulateMedia({media:'screen'});await p.evaluate(()=>endFichePrint());
+    // Ancien schéma (bande 600 × 220) : affiché entier et centré, sans déformation ; non modifié à l'enregistrement
+    const old=await p.evaluate(async()=>{
+      const c=document.createElement('canvas');c.width=600;c.height=220;const g=c.getContext('2d');g.fillStyle='#ff0000';g.fillRect(250,60,100,100);const data=c.toDataURL('image/png');
+      clearFormNoConfirm();const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];
+      records.push({id:'SCHOLD',network:'RCO',activity:RCO_COMBINED_ACTIVITY,station:st.nom,stationInfo:st,date:'2026-09-01',savedAt:'2026-09-01T08:00:00Z',lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],dessin:data});saveLS(LS,records);
+      loadRecord('SCHOLD');showTab('new');await new Promise(r=>setTimeout(r,600));
+      const cv=$('draw'),d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;let x0=1e9,y0=1e9,x1=-1,y1=-1;
+      for(let y=0;y<cv.height;y++)for(let x=0;x<cv.width;x++){const k=(y*cv.width+x)*4;if(d[k+3]>200&&d[k]>200&&d[k+2]<60){x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y)}}
+      return {w:x1-x0+1,h:y1-y0+1,cy:(y0+y1)/2/cv.height,same:canvasData('draw')===data};
+    });
+    ok(Math.abs(old.w/old.h-1)<0.06&&Math.abs(old.cy-0.5)<0.05,'ancien schéma (bande) : carré resté carré, centré dans la zone plus haute (pas d’étirement) '+JSON.stringify(old));
+    ok(old.same,'ancien schéma : enregistré tel quel si on n’y touche pas');
+    // CRT : schéma recadré sur la partie dessinée (cadre de 50 mm : reste lisible)
+    const big=await p.evaluate(()=>{const c=document.createElement('canvas');c.width=900;c.height=600;const g=c.getContext('2d');g.lineWidth=6;g.strokeStyle='#17212b';g.beginPath();g.moveTo(90,250);g.lineTo(810,250);g.moveTo(90,350);g.lineTo(810,350);g.stroke();
+      const r=records.find(r=>r.id==='SCHOLD');r.dessin=c.toDataURL('image/png');saveLS(LS,records);return r.dessin.length});
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='SCHOLD';s.dispatchEvent(new Event('change',{bubbles:true}));$('crtPreview').click()});await p.waitForTimeout(1200);
+    const crt=await p.evaluate(()=>{const i=document.querySelector('#crtPreviewBox .crtSchema img');return i?{w:i.naturalWidth,h:i.naturalHeight,data:i.src.startsWith('data:image/png')}:null});
+    ok(crt&&crt.data&&crt.w<900&&crt.h<300&&crt.w/crt.h>2,'CRT : schéma recadré sur la partie dessinée (marges vides retirées) '+JSON.stringify(crt));
+    ok(await p.evaluate(()=>records.find(r=>r.id==='SCHOLD').dessin.length)===big,'CRT : le schéma enregistré dans la fiche n’est pas modifié');
+    ok(ex.length===0,'aucune erreur JavaScript (schéma plus grand) '+JSON.stringify(ex));
+    await cx.close();
+  }
+  // --- AG : heure de passage, paramètres filtrés, CRT (µS/cm, schéma, signature), photos annexes, dates, accès ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block',viewport:{width:900,height:1100}});await cx.route('https://unpkg.com/**',r=>r.abort());
+    await cx.route('https://*.tile.openstreetmap.org/**',r=>r.abort());
+    // Bibliothèque Excel bloquée : l'export du fichier des accès prend sa forme CSV (sans réseau), la même
+    // en local et sur le serveur de vérification (où la bibliothèque se charge et produit un .xlsx)
+    await cx.route('https://cdn.sheetjs.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const pick=async net=>{await p.click('.tab[data-tab="new"]');await p.click(`#networks .chip[data-n="${net}"]`);
+      await p.evaluate(()=>{for(const id of ['session','activity','bioOperation','station']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}});await p.waitForTimeout(400)};
+    const shown=id=>p.evaluate(id=>{const e=$(id);return !!e&&e.getClientRects().length>0},id);
+    // 1) Prélèvement non réalisé : heure de passage à la place des heures de début et de fin
+    await pick('RCO');
+    await p.evaluate(()=>{$('start').value='09:15';$('start').dispatchEvent(new Event('input',{bubbles:true}))});
+    ok(await shown('start')&&await shown('end')&&!await shown('passage'),'prélèvement réalisé : heures de début et de fin (pas d’heure de passage)');
+    await p.evaluate(()=>{radioSet('prelevementRealise','Non');document.querySelector('input[name="prelevementRealise"][value="Non"]').dispatchEvent(new Event('change',{bubbles:true}))});
+    ok(!await shown('start')&&!await shown('end')&&await shown('passage')&&await p.evaluate(()=>$('passage').value)==='09:15','prélèvement non réalisé : « Heure de passage » seule (proposée d’après l’heure de début)');
+    const nr=await p.evaluate(()=>{$('passage').value='10:40';const r=collectRecord();r.id='NRP';r.prelevementRealise='Non';r.date='2026-10-20';r.obs='Accès impossible (crue)';r.photos=[{data:'data:image/png;base64,iVBORw0KGgo=',group:'Amont'}];r.dessin='';records.push(r);saveLS(LS,records);renderList();
+      const q=qualityChecksFor(r);return {stored:r.heurePassage,list:$('records').textContent.includes('passage 10:40'),dh:(q.find(c=>/Heure de passage|Date et horaires/.test(c.label))||{}).ok,se:q.some(c=>/début\/fin/.test(c.label))}});
+    ok(nr.stored==='10:40'&&nr.list&&nr.dh&&!nr.se,'heure de passage enregistrée, affichée dans la liste et contrôlée (pas de contrôle début / fin) '+JSON.stringify(nr));
+    ok(await p.evaluate(()=>flatRecordForCsv(records.find(r=>r.id==='NRP')).heurePassage==='10:40'),'export CSV : colonne heurePassage');
+    // CRT : heure de passage, pas d'horaires, pas de schéma pour une visite non réalisée
+    await p.click('.tab[data-tab="crt"]');await p.waitForTimeout(400);
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='NRP';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(600);
+    const crtNr=await p.evaluate(()=>{const t=$('crtPreviewBox').textContent;return {passage:/Heure de passage\s*10:40/.test(t),horaires:/Horaires/.test(t),schema:!!document.querySelector('#crtPreviewBox .crtSchema')||/Schéma de station/i.test(t)}});
+    ok(crtNr.passage&&!crtNr.horaires&&!crtNr.schema,'CRT d’une visite non réalisée : heure de passage, ni horaires ni schéma '+JSON.stringify(crtNr));
+    // 2) Paramètres filtrés : volume et mode de filtration seulement quand le paramètre est coché
+    await p.evaluate(()=>clearFormNoConfirm());await pick('RCO');
+    const f0=await p.evaluate(()=>{const v=$('filtre_chloro_volume');return v&&v.getClientRects().length});
+    await p.evaluate(()=>{const c=$('filtreParam_chloro');c.scrollIntoView();c.click()});
+    const f1=await p.evaluate(()=>{const v=$('filtre_chloro_volume');return {vol:v.getClientRects().length>0&&!v.disabled,mode:[...document.getElementsByName('filtreMode_chloro')].every(i=>i.getClientRects().length>0&&!i.disabled),other:$('filtre_metaux_volume').getClientRects().length}});
+    ok(!f0&&f1.vol&&f1.mode&&!f1.other,'paramètre filtré : volume filtré et mode de filtration affichés une fois la case cochée (masqués sinon) '+JSON.stringify(f1));
+    // 3) CRT : conductivité en µS/cm (EL : colonne mS/cm convertie ; autre réseau : unité mS/cm indiquée)
+    const condRes=await p.evaluate(()=>{
+      const el=stationsFor('EL')[0],rc=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[1],m={lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[]};
+      records.push({id:'ELC',network:'EL',session:'S1 - Septembre 2026 (saison sèche)',station:el.nom,stationInfo:el,date:'2026-10-21',savedAt:'2026-10-21T08:00:00Z',...m,insitu:{profondeurs:{surface:'0.5',fond:'3'},params:{condms:{surface:'45.2',fond:'47',sonde:'SD-C'},condus:{fond:'46800'}}}},
+        {id:'RCC',network:'RCO',activity:RCO_COMBINED_ACTIVITY,station:rc.nom,stationInfo:rc,date:'2026-10-21',savedAt:'2026-10-21T08:00:00Z',...m,insitu:{cond:{value:'0.065',unit:'mS/cm'}}});saveLS(LS,records);return true});
+    await p.evaluate(()=>{const s=$('crtRecord');s.innerHTML+='<option value="ELC">ELC</option><option value="RCC">RCC</option>';s.value='ELC';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(700);
+    const elCrt=await p.evaluate(()=>{const t=$('crtPreviewBox').textContent;return {ms:/mS\/cm/.test(t),conv:/45200/.test(t.replace(/\s/g,'')),keep:/46800/.test(t.replace(/\s/g,''))}});
+    ok(!elCrt.ms&&elCrt.conv&&elCrt.keep,'CRT EL : conductivité en mS/cm convertie en µS/cm (45,2 → 45 200), valeur µS/cm saisie gardée '+JSON.stringify(elCrt));
+    await p.evaluate(()=>{const s=$('crtRecord');s.value='RCC';s.dispatchEvent(new Event('change',{bubbles:true}))});await p.waitForTimeout(700);
+    ok(await p.evaluate(()=>{const t=$('crtPreviewBox').textContent.replace(/\s/g,'');return /65µS\/cm/.test(t)&&!/mS\/cm/.test($('crtPreviewBox').textContent)}),'CRT autre réseau : valeur indiquée en mS/cm convertie en µS/cm');
+    // 4) Signature au niveau des initiales ; 5) photos annexes dans le CRT
+    const sig=await p.evaluate(async()=>{
+      const c=document.createElement('canvas');c.width=1400;c.height=320;const g=c.getContext('2d');g.lineWidth=5;g.beginPath();g.moveTo(600,200);g.lineTo(800,140);g.stroke();
+      const r=records.find(r=>r.id==='RCC');r.signName='PF';r.signature=c.toDataURL('image/png');
+      const ph=col=>{const x=document.createElement('canvas');x.width=40;x.height=30;const gg=x.getContext('2d');gg.fillStyle=col;gg.fillRect(0,0,40,30);return x.toDataURL('image/jpeg',.6)};
+      r.photos=[{data:ph('#7aa'),group:'Amont'},{data:ph('#c33'),group:'Annexe'}];r.photoAnnexeObs='Irisations en rive gauche';saveLS(LS,records);
+      const s=$('crtRecord');s.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(res=>setTimeout(res,900));
+      const img=document.querySelector('#crtPreviewBox img.crtSignature'),row=img.closest('tr'),cs=getComputedStyle(row.querySelector('td'));
+      const t=$('crtPreviewBox').textContent;
+      return {va:cs.verticalAlign,h:img.naturalHeight,w:img.naturalWidth,annexe:/Photos annexes — observation inhabituelle/.test(t)&&/Irisations en rive gauche/.test(t),site:document.querySelectorAll('#crtPreviewBox .crtPhotoGrid').length};
+    });
+    ok(sig.va==='middle'&&sig.h<200&&sig.w<1400,'CRT : signature recadrée sur le tracé et alignée avec les initiales du signataire '+JSON.stringify(sig));
+    ok(sig.annexe&&sig.site===2,'CRT : photos annexes à part, avec l’observation inhabituelle');
+    // Photos annexes dans le formulaire : groupe à part, au-delà des 5 photos du site
+    await p.evaluate(()=>clearFormNoConfirm());await pick('RCO');
+    const ann=await p.evaluate(()=>{const opt=[...$('photoGroup').options].some(o=>o.value==='Annexe');const mk=()=>({data:'data:image/png;base64,iVBORw0KGgo=',group:'Amont'});state.photos=[mk(),mk(),mk(),mk(),mk(),{data:'data:image/png;base64,iVBORw0KGgo=',group:'Annexe'}];drawPhotoGroups();
+      return {opt,grp:document.querySelectorAll('.photoGroup.photoAnnexe .thumb').length,obs:!!$('photoAnnexeObs')}});
+    ok(ann.opt&&ann.grp===1&&ann.obs,'photos annexes : groupe « Annexe » et champ d’observation dans la fiche '+JSON.stringify(ann));
+    await p.evaluate(()=>{$('photoAnnexeObs').value='Déchets en berge';startFichePrint()});
+    ok(await p.evaluate(()=>{const f=$('fichePrint').textContent;return /Annexe \(observation inhabituelle\)/.test(f)&&/Déchets en berge/.test(f)}),'fiche imprimée : photos annexes légendées et observation inhabituelle');
+    await p.evaluate(()=>endFichePrint());
+    // 6) Dates de modification : affichées dans la liste ; validation datée à l'heure réelle
+    const dates=await p.evaluate(async()=>{
+      const r=records.find(r=>r.id==='RCC');r.lifecycle={...r.lifecycle,createdAt:'2026-10-21T08:00:00.000Z',updatedAt:'2026-10-25T14:30:00.000Z',updatedBy:'PF'};saveLS(LS,records);renderList();
+      const card=[...document.querySelectorAll('#records .listcard')].find(c=>c.querySelector('.recDates')&&/25\/10\/2026/.test(c.textContent));
+      return {card:!!card,txt:card?card.querySelector('.recDates').textContent:''};
+    });
+    ok(dates.card&&/Créée le 21\/10\/2026/.test(dates.txt)&&/modifiée le 25\/10\/2026/.test(dates.txt)&&/par PF/.test(dates.txt),'liste des fiches : dates de création et de dernière modification '+dates.txt);
+    const conf=await p.evaluate(()=>{const o=records.find(r=>r.id==='RCC'),c=JSON.parse(JSON.stringify(o));c.id='RCC_conflit_x';c.conflict={originalId:'RCC',origine:'Google Drive',detectedAt:'2026-10-26T09:00:00Z'};c.lifecycle.updatedAt='2026-10-24T10:00:00.000Z';records.push(c);saveLS(LS,records);renderList();
+      return [...document.querySelectorAll('#records .listcard')].map(x=>x.textContent).find(t=>/Copie de conflit/.test(t))||''});
+    ok(/cette copie : modifiée le 24\/10\/2026/.test(conf)&&/fiche d’origine : modifiée le 25\/10\/2026.*plus récente/.test(conf),'copie de conflit : dates de modification des deux versions comparées');
+    await p.evaluate(()=>{records=records.filter(r=>r.id!=='RCC_conflit_x');saveLS(LS,records)});
+    const val=await p.evaluate(async()=>{
+      const r=records.find(r=>r.id==='RCC');const before=r.lifecycle.updatedAt;
+      showTab('quality');await new Promise(res=>setTimeout(res,300));const s=$('qualityRecord');if(![...s.options].some(o=>o.value==='RCC'))s.innerHTML+='<option value="RCC">RCC</option>';s.value='RCC';s.dispatchEvent(new Event('change',{bubbles:true}));
+      const v=$('qualityValidator');if(v.tagName==='SELECT'){if(!v.options.length||!v.value){v.innerHTML+='<option value="PF">PF</option>';v.value='PF'}}else v.value='PF';
+      $('qualityValidationDate').value='2026-10-22T08:00';$('qualityValidationComment').value='ok';
+      window.qualityChecksFor=()=>[]; // contrôles neutralisés pour ce test de date
+      $('qualityValidate').click();await new Promise(res=>setTimeout(res,400));
+      const l=records.find(r=>r.id==='RCC').lifecycle;return {status:l.status,validatedAt:l.validatedAt,updatedAt:l.updatedAt,before};
+    });
+    ok(val.status==='Validée'&&val.validatedAt.startsWith('2026-10-22')&&val.updatedAt>val.before&&val.updatedAt>'2026-10-29','validation datée du 22/10 : date de modification = heure réelle (plus de copie de conflit à la synchronisation) '+JSON.stringify(val));
+    // 7) Accès aux stations : données communes, saisie locale plus récente, import d'un fichier
+    const acc=await p.evaluate(()=>{
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[2],k=accessKey(st);
+      window.OEG_ACCES_STATIONS={majLe:'2026-10-01',stations:{[k]:{pointDepart:'Régina',modes:['4x4','À pied'],niveau:'Difficile',etapes:'Piste puis 20 min de marche'}}};
+      delete custom.stationAccess[k];
+      const a=ensureStationAccess(st);
+      custom.stationAccess[k]={...a,pointDepart:'Cacao',savedAt:'2026-10-20T10:00:00Z'};const b=ensureStationAccess(st);
+      custom.stationAccess[k]={...a,pointDepart:'Cacao',savedAt:'2026-09-01T10:00:00Z'};const c=ensureStationAccess(st);
+      delete custom.stationAccess[k];
+      return {a:[a.pointDepart,a.modes.join('+'),a.difficulte,a.etapes],b:b.pointDepart,c:c.pointDepart,crt:typeof meta==='function'};
+    });
+    ok(acc.a.join('|')==='Régina|4x4+À pied|2|Piste puis 20 min de marche','accès communs (js/acces-stations.js) repris pour la station sur toutes les tablettes '+JSON.stringify(acc.a));
+    ok(acc.b==='Cacao'&&acc.c==='Régina','accès : une saisie de la tablette plus récente l’emporte, une plus ancienne est remplacée par les données communes');
+    await p.click('.tab[data-tab="data"]');await p.waitForTimeout(400);
+    const imp=await p.evaluate(async()=>{
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[3],eso=DATA.ESO[0];
+      const csv='Réseau(x);Code station;Nom de la station;Bassin versant;Marché;Point de départ / base;Moyens de transport (séparés par des points-virgules);Niveau d’accessibilité;Étapes / consignes d’accès\n'
+        +`RCO;${st.code};${st.nom};;;Saint-Georges;"4x4; bateau motorisé";Très difficile;Dégrad puis 2 h de pirogue\n`
+        +`ESO;${eso.code_bss};${eso.nom};;;Maripasoula;Avion;Moyen;\n`+';999;Station inconnue;;;X;;;\n';
+      const f=new File([csv],'acces.csv',{type:'text/csv'}),dt=new DataTransfer();dt.items.add(f);const inp=$('accessImport');inp.files=dt.files;inp.dispatchEvent(new Event('change'));
+      await new Promise(res=>setTimeout(res,500));
+      const a=ensureStationAccess(st),b=ensureStationAccess(eso);
+      return {a:[a.pointDepart,a.modes.join('+'),a.difficulte,a.etapes],b:[b.pointDepart,b.difficulte],res:$('accessImportResult').textContent};
+    });
+    ok(imp.a.join('|')==='Saint-Georges|4x4+Bateau motorisé|1|Dégrad puis 2 h de pirogue'&&imp.b.join('|')==='Maripasoula|3','import du fichier des accès : stations reconnues par leur code (ESO : code BSS) et mises à jour '+JSON.stringify(imp));
+    ok(/2 station\(s\) mise\(s\) à jour/.test(imp.res)&&/1 ligne\(s\) non reconnue\(s\) : Station inconnue/.test(imp.res),'import : résumé (stations mises à jour, lignes non reconnues) '+imp.res);
+    const expRows=await p.evaluate(async()=>{let blob=null;const orig=URL.createObjectURL;URL.createObjectURL=b=>{blob=b;return orig.call(URL,b)};$('accessExport').click();await new Promise(res=>setTimeout(res,600));URL.createObjectURL=orig;const t=blob?await blob.text():'';return {lines:t.split(/\r\n/).length,head:t.split(/\r\n/)[0],st:/Saint-Georges/.test(t)}});
+    ok(expRows.lines>100&&/Niveau d’accessibilité/.test(expRows.head)&&expRows.st,'fichier des accès à remplir : une ligne par station, valeurs déjà connues reprises ('+expRows.lines+' lignes)');
+    ok(ex.length===0,'aucune erreur JavaScript (passage, filtres, CRT, annexes, dates, accès) '+JSON.stringify(ex));
+    await cx.close();
+  }
+  // --- AH : nomenclature des documents d'une fiche (FT_Réseau-marché_année_session_station) ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block'});await cx.route('https://unpkg.com/**',r=>r.abort());
+    await cx.addInitScript(()=>{window.__files={};window.showDirectoryPicker=async()=>({name:'d',queryPermission:async()=>'granted',requestPermission:async()=>'granted',getFileHandle:async fn=>({createWritable:async()=>{let b='';return {write:async t=>{b+=t},close:async()=>{window.__files[fn]=b}}}})})});
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const nm=await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY).find(s=>s.nom==='Affluent crique Ineri')||stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0],el=stationsFor('EL')[0];
+      return {rco:ficheFileBase({network:'RCO',session:'S1 - Sept.26',station:st.nom,stationInfo:st,date:'2026-09-14'}),st:st.nom,
+        el:ficheFileBase({network:'EL',session:'S2 - Novembre 2026 (saison des pluies)',station:el.nom,stationInfo:el,date:'2026-11-03'}),elst:el.nom,
+        none:ficheFileBase({network:'BIO',station:'Crique à l’Est',date:'2027-02-01'})}});
+    const part=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9-]+/g,'_').replace(/^_+|_+$/g,'');
+    ok(nm.rco==='FT_RCO_2026_S1_'+part(nm.st)&&nm.el==='FT_EL_2026_S2_'+part(nm.elst)&&nm.none==='FT_BIO_2027_SansSession_Crique_a_l_Est','nom de document : FT_Réseau-marché_année_session_station '+JSON.stringify(nm));
+    // Marché connu pour la station : ajouté au réseau
+    ok(await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];custom.stationAccess[accessKey(st)]={...ensureStationAccess(st),marche:'Lot 2 Est',savedAt:new Date().toISOString()};const n=ficheFileBase({network:'RCO',session:'S3 - Fév.27',station:st.nom,stationInfo:st,date:'2027-02-10'});delete custom.stationAccess[accessKey(st)];return /^FT_RCO-Lot_2_Est_2027_S3_/.test(n)}),'nom de document : marché de la station ajouté au réseau (FT_RCO-Lot_2_Est_…)');
+    // Dossier de sauvegarde : deux fiches de même station et même session → _2 pour la plus récente ; PDF imprimé au même nom
+    await p.evaluate(async()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0],m={lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:'S1 - Sept.26',station:st.nom,stationInfo:st};
+      records.push({...m,id:'N1',date:'2026-09-14',savedAt:'2026-09-14T08:00:00Z',lifecycle:{...m.lifecycle,createdAt:'2026-09-14T08:00:00Z'}},{...m,id:'N2',date:'2026-09-15',savedAt:'2026-09-15T08:00:00Z',lifecycle:{...m.lifecycle,createdAt:'2026-09-15T08:00:00Z'}});saveLS(LS,records);
+      await OEGSync.chooseLocalFolder();await new Promise(r=>setTimeout(r,600))});
+    const files=await p.evaluate(()=>Object.keys(window.__files).filter(f=>/^FT_/.test(f)).sort());
+    const want=await p.evaluate(()=>ficheFileBase(records.find(r=>r.id==='N1')));
+    const who=await p.evaluate(()=>Object.fromEntries(Object.entries(window.__files).filter(([f])=>/^FT_/.test(f)).map(([f,t])=>[f,JSON.parse(t).id])));
+    ok(who[want+'.json']==='N1'&&who[want+'_2.json']==='N2','dossier de sauvegarde : '+want+'.json et '+want+'_2.json (aucune fiche n’en écrase une autre) '+JSON.stringify(files));
+    await p.click('#networks .chip[data-n="RCO"]');
+    await p.evaluate(()=>{for(const id of ['session','activity','station']){const s=$(id);if(!s||s.closest('.hide'))continue;const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}$('date').value='2026-09-20'});await p.waitForTimeout(300);
+    const title=await p.evaluate(()=>{const before=document.title;startFichePrint();const t=document.title;endFichePrint();return {t,back:document.title===before,want:ficheFileBase({network:state.network,session:state.session,station:state.station,stationInfo:getStation(),date:'2026-09-20'})}});
+    ok(title.t===title.want&&/^FT_RCO_2026_/.test(title.t)&&title.back,'fiche imprimée : PDF proposé sous le nom '+title.t+' (titre rétabli ensuite)');
+    ok(ex.length===0,'aucune erreur JavaScript (nomenclature) '+JSON.stringify(ex));
+    await cx.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();

@@ -2,10 +2,39 @@
   const $=id=>document.getElementById(id), E=escapeHTML; /* echappement HTML unifie (voir app-core.js) */
   const val=id=>$(id)?.value||'';
   const transportModes=['Voiture','4x4','À pied','Bateau motorisé','Bateau motorisé / pirogue','Canoë / kayak','Véhicule tout-terrain','Avion','Autre'];
+  // Niveau d'accessibilité : valeur stockée 5 = très facile … 1 = très difficile (saisies existantes conservées)
+  const ACCESS_LEVELS=[['5','Très facile'],['4','Facile'],['3','Moyen'],['2','Difficile'],['1','Très difficile']];
+  const fold=s=>String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+  function levelValue(t){
+    const s=String(t??'').trim();if(!s)return '';
+    const hit=ACCESS_LEVELS.find(([,l])=>fold(l)===fold(s));if(hit)return hit[0];
+    const stars=(s.match(/★/g)||[]).length,n=stars||Number((s.match(/^\d/)||[''])[0]); // nombre d'étoiles : 1 = très facile
+    return n>=1&&n<=5?String(6-n):'';
+  }
+  function levelLabel(v){return (ACCESS_LEVELS.find(x=>x[0]===String(v))||[])[1]||''}
+  // Accès commun à toutes les tablettes (js/acces-stations.js), champs vides ignorés
+  function sharedAccess(key){
+    const e=(window.OEG_ACCES_STATIONS&&window.OEG_ACCES_STATIONS.stations||{})[key];if(!e)return null;
+    const o={};
+    if(String(e.pointDepart||'').trim())o.pointDepart=String(e.pointDepart).trim();
+    if(Array.isArray(e.modes)&&e.modes.length)o.modes=e.modes.slice();
+    const lv=levelValue(e.niveau);if(lv)o.difficulte=lv;
+    if(String(e.etapes||'').trim())o.etapes=String(e.etapes).trim();
+    if(String(e.marche||'').trim())o.marche=String(e.marche).trim();
+    if(String(e.bassin||'').trim())o.bassin=String(e.bassin).trim();
+    return Object.keys(o).length?o:null;
+  }
   function ensureStationAccess(x){
     custom.stationAccess=custom.stationAccess||{};
     const key=accessKey(x); if(!key)return {modes:[],etapes:'',pointDepart:'',difficulte:''};
-    return custom.stationAccess[key]||{modes:(x?.transportModes&&x.transportModes.length?x.transportModes:(x?.transport?[x.transport]:[])),etapes:x?.itineraire||x?.acces||'',pointDepart:x?.pointDepart||'',marche:x?.marche||x?.market||'',bassin:x?.bassin||x?.bassinVersant||x?.bv||'',difficulte:x?.difficulte||''};
+    const base={modes:(x?.transportModes&&x.transportModes.length?x.transportModes:(x?.transport?[x.transport]:[])),etapes:x?.itineraire||x?.acces||'',pointDepart:x?.pointDepart||'',marche:x?.marche||x?.market||'',bassin:x?.bassin||x?.bassinVersant||x?.bv||'',difficulte:x?.difficulte||''};
+    const local=custom.stationAccess[key],shared=sharedAccess(key);
+    if(!shared)return local||base;
+    if(!local)return {...base,...shared};
+    // Saisie de cette tablette plus récente que les données communes : elle l'emporte ; sinon les données
+    // communes complètent / remplacent les champs qu'elles renseignent
+    const sharedAt=String(window.OEG_ACCES_STATIONS.majLe||'');
+    return (local.savedAt&&String(local.savedAt)>sharedAt)?{...base,...shared,...local}:{...base,...local,...shared};
   }
   /* Accessibilite : 1 étoile = très facile … 5 étoiles = très difficile. Valeur stockée inchangée (1 = très difficile, 5 = très facile) pour conserver les saisies existantes. */
   function starRating(n){
@@ -16,7 +45,7 @@
   }
   function stationTransportDetailed(x){const a=ensureStationAccess(x);return (a.modes&&a.modes.length?a.modes:[stationTransport(x)]).filter(Boolean)}
   function stationKey(x){return accessKey(x)}
-  function saveAccess(x,modes,etapes,depart,marche,difficulte){custom.stationAccess=custom.stationAccess||{};const prev=ensureStationAccess(x);custom.stationAccess[stationKey(x)]={...prev,modes,etapes,pointDepart:depart,marche,difficulte};saveLS(LSC,custom)}
+  function saveAccess(x,modes,etapes,depart,marche,difficulte){custom.stationAccess=custom.stationAccess||{};const prev=ensureStationAccess(x);custom.stationAccess[stationKey(x)]={...prev,modes,etapes,pointDepart:depart,marche,difficulte,savedAt:new Date().toISOString()};saveLS(LSC,custom)}
   function openStationEnhanced(x){
     if(!x)return;
     // Fiche enregistrée en cours de modification : confirmation puis nouvelle fiche vierge,
@@ -77,12 +106,71 @@
   function renderAccessEditor(){
     const data=$('data'); if(!data||$('stationAccessEditor'))return;
     const card=document.createElement('div');card.className='card';card.id='stationAccessEditor';
-    card.innerHTML='<h2>Accès et moyens de transport par station</h2><div class="grid2"><div class="field"><label>Station</label><select id="accessStation"><option value="">— sélectionner —</option></select></div><div class="field"><label>Marché de la station</label><input id="accessMarket" placeholder="Marché / lot / contrat"></div><div class="field"><label>Point de départ / base</label><input id="accessDepart" placeholder="Cayenne, Régina, Maripasoula…"></div></div><div class="grid2"><div class="field"><label>Moyens de transport nécessaires</label><div id="accessModes" class="checkGrid"></div></div><div class="field"><label>Niveau d’accessibilité</label><select id="accessDifficulte"><option value="">— non renseigné —</option><option value="5">★☆☆☆☆ Très facile</option><option value="4">★★☆☆☆ Facile</option><option value="3">★★★☆☆ Moyen</option><option value="2">★★★★☆ Difficile</option><option value="1">★★★★★ Très difficile</option></select></div></div><div class="field"><label>Étapes / consignes d’accès</label><textarea id="accessSteps" placeholder="Ex. véhicule → piste → pirogue → marche 20 min"></textarea></div><button class="btn primary small" id="saveAccess">Enregistrer l’accès station</button>';
+    card.innerHTML='<h2>Accès et moyens de transport par station</h2><div class="grid2"><div class="field"><label>Station</label><select id="accessStation"><option value="">— sélectionner —</option></select></div><div class="field"><label>Marché de la station</label><input id="accessMarket" placeholder="Marché / lot / contrat"></div><div class="field"><label>Point de départ / base</label><input id="accessDepart" placeholder="Cayenne, Régina, Maripasoula…"></div></div><div class="grid2"><div class="field"><label>Moyens de transport nécessaires</label><div id="accessModes" class="checkGrid"></div></div><div class="field"><label>Niveau d’accessibilité</label><select id="accessDifficulte"><option value="">— non renseigné —</option><option value="5">★☆☆☆☆ Très facile</option><option value="4">★★☆☆☆ Facile</option><option value="3">★★★☆☆ Moyen</option><option value="2">★★★★☆ Difficile</option><option value="1">★★★★★ Très difficile</option></select></div></div><div class="field"><label>Étapes / consignes d’accès</label><textarea id="accessSteps" placeholder="Ex. véhicule → piste → pirogue → marche 20 min"></textarea></div><button class="btn primary small" id="saveAccess">Enregistrer l’accès station</button>'
+      +'<h3>Fichier des accès — toutes les stations</h3><div class="hint">Téléchargez le fichier, remplissez une ligne par station (point de départ, moyens de transport, niveau d’accessibilité, étapes / consignes), puis importez-le ici : les stations concernées sont mises à jour sur cette tablette. Pour que toutes les tablettes aient ces accès, envoyez aussi le fichier rempli à l’administrateur de l’application : il est intégré à la version suivante.</div>'
+      +'<div class="actions" style="margin-top:6px"><button class="btn ghost small" id="accessExport" type="button">📄 Télécharger le fichier à remplir</button><label class="btn ghost small">📥 Importer le fichier rempli<input type="file" id="accessImport" accept=".xlsx,.xls,.csv,.txt" style="display:none"></label></div><div id="accessImportResult" class="note"></div>';
     data.appendChild(card);
     const all=stations();$('accessStation').innerHTML+=[...new Map(all.map(x=>[stationKey(x),x])).values()].sort((a,b)=>String(a.nom).localeCompare(String(b.nom))).map(x=>'<option value="'+E(stationKey(x))+'">'+E(x.nom)+'</option>').join('');
     $('accessModes').innerHTML=transportModes.map((m,i)=>'<label class="check"><input type="checkbox" value="'+E(m)+'" id="am_'+i+'"><span>'+transportIcon(m)+' '+E(m)+'</span></label>').join('');
     $('accessStation').onchange=()=>{const x=all.find(s=>stationKey(s)===$('accessStation').value);if(!x)return;const a=ensureStationAccess(x);document.querySelectorAll('#accessModes input').forEach(c=>c.checked=a.modes.includes(c.value));$('accessDepart').value=a.pointDepart||'';$('accessSteps').value=a.etapes||'';$('accessMarket').value=a.marche||meta(x).m||'';$('accessDifficulte').value=a.difficulte||''};
     $('saveAccess').onclick=()=>{const x=all.find(s=>stationKey(s)===$('accessStation').value);if(!x)return toast('Sélectionnez une station');const modes=[...document.querySelectorAll('#accessModes input:checked')].map(c=>c.value);saveAccess(x,modes,val('accessSteps'),val('accessDepart'),val('accessMarket').trim(),val('accessDifficulte'));toast('Accès station enregistré ✓');mapStations()};
+    // ---- Fichier des accès : export (à remplir) et import (une ligne par station) ----
+    const NET_OF={EL_STATIONS:'EL',CH_STATIONS:'Chimie',BIO_CE:'BIO',BIO_FISH:'BIO',BIO_PHYTO:'BIO',BIO_ADNE:'BIO',RCO25:'RCO',RCO13:'RCO',RCO_BIO12:'RCO',ESO:'ESO'};
+    function accessRows(){
+      const byKey=new Map();
+      const addSt=(x,net)=>{if(!x||!x.nom)return;const k=stationKey(x);if(!k)return;const e=byKey.get(k)||{x,nets:new Set()};if(net)e.nets.add(net);byKey.set(k,e)};
+      Object.entries(DATA||{}).forEach(([list,arr])=>{if(Array.isArray(arr)&&NET_OF[list])arr.forEach(x=>addSt(x,NET_OF[list]))});
+      (custom.stations||[]).forEach(x=>addSt(x,x.network||''));
+      return [...byKey.values()].sort((a,b)=>String(a.x.nom).localeCompare(String(b.x.nom),'fr')).map(({x,nets})=>{const a=ensureStationAccess(x);
+        return [[...nets].join(', '),x.code&&x.code!=='Non défini'?x.code:(x.code_bss||''),x.nom,a.bassin||x.bassin||x.bv||'',a.marche||'',a.pointDepart||'',(a.modes||[]).join('; '),levelLabel(a.difficulte),a.etapes||'']});
+    }
+    const ACCESS_HEAD=['Réseau(x)','Code station','Nom de la station','Bassin versant','Marché','Point de départ / base','Moyens de transport (séparés par des points-virgules)','Niveau d’accessibilité','Étapes / consignes d’accès'];
+    $('accessExport').onclick=async()=>{
+      const rows=[ACCESS_HEAD,...accessRows()];
+      try{
+        const X=await loadXlsx();const ws=X.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:14},{wch:14},{wch:30},{wch:16},{wch:18},{wch:24},{wch:34},{wch:18},{wch:60}];
+        const wb=X.utils.book_new();X.utils.book_append_sheet(wb,ws,'Accès stations');X.writeFile(wb,'acces-stations.xlsx');
+      }catch(e){
+        // Hors connexion (bibliothèque Excel indisponible) : fichier CSV, qui s'ouvre aussi dans Excel
+        const csv='﻿'+rows.map(r=>r.map(c=>{const v=String(c??'');return /[;"\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}).join(';')).join('\r\n');
+        const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='acces-stations.csv';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+      }
+    };
+    function importAccessRows(rows){
+      const hi=rows.findIndex(r=>r.some(c=>/^nom/.test(fold(c)))&&r.some(c=>/code|station/.test(fold(c))));
+      if(hi<0)return toast('Fichier non reconnu : il faut au moins les colonnes « Code station » et « Nom de la station »');
+      const H=rows[hi].map(fold),col=re=>H.findIndex(h=>re.test(h));
+      const c={code:col(/^code/),nom:col(/^nom/),depart:col(/depart|base/),modes:col(/moyen|transport/),niveau:col(/niveau|accessib|difficult/),etapes:col(/etape|consigne|itineraire/),marche:col(/^marche/),bassin:col(/bassin/)};
+      const list=stations(),byCode=new Map(),byName=new Map();
+      list.forEach(x=>{const cd=String(x.code&&x.code!=='Non défini'?x.code:(x.code_bss||'')).trim();if(cd&&!byCode.has(cd))byCode.set(cd,x);const nm=fold(x.nom);if(nm&&!byName.has(nm))byName.set(nm,x)});
+      const cell=(r,i)=>i>=0?String(r[i]??'').trim():'';
+      let updated=0;const unknown=[],now=new Date().toISOString();
+      rows.slice(hi+1).forEach(r=>{
+        if(!r.some(v=>String(v??'').trim()))return;
+        const cd=cell(r,c.code).replace(/\.0$/,''),nm=cell(r,c.nom);
+        const x=(cd&&byCode.get(cd))||(nm&&byName.get(fold(nm)));
+        if(!x){if(cd||nm)unknown.push(nm||cd);return}
+        const a={...ensureStationAccess(x)};let changed=false;
+        const setIf=(k,v)=>{if(v!==''&&v!==undefined){a[k]=v;changed=true}};
+        setIf('pointDepart',cell(r,c.depart));setIf('etapes',cell(r,c.etapes));setIf('marche',cell(r,c.marche));setIf('bassin',cell(r,c.bassin));
+        const m=cell(r,c.modes);if(m){a.modes=m.split(/[;,\n]+/).map(t=>t.trim()).filter(Boolean).map(t=>transportModes.find(tm=>fold(tm)===fold(t))||t);changed=true}
+        const lv=levelValue(cell(r,c.niveau));if(lv){a.difficulte=lv;changed=true}
+        if(!changed)return;
+        a.savedAt=now;custom.stationAccess=custom.stationAccess||{};custom.stationAccess[stationKey(x)]=a;updated++;
+      });
+      if(updated)saveLS(LSC,custom);
+      const res=$('accessImportResult');
+      if(res)res.textContent=updated+' station(s) mise(s) à jour'+(unknown.length?' · '+unknown.length+' ligne(s) non reconnue(s) : '+unknown.slice(0,10).join(', ')+(unknown.length>10?'…':''):'')+'.';
+      toast('Accès importés : '+updated+' station(s)'+(unknown.length?', '+unknown.length+' non reconnue(s)':''));
+      if($('accessStation').value)$('accessStation').onchange();
+    }
+    $('accessImport').onchange=e=>{
+      const file=e.target.files[0];e.target.value='';if(!file)return;
+      const reader=new FileReader();
+      if(/\.(csv|txt)$/i.test(file.name)||/csv/i.test(file.type)){reader.onload=ev=>{try{importAccessRows(parseCsvRows(ev.target.result))}catch(err){toast('Fichier illisible : '+err.message)}};reader.readAsText(file);return}
+      reader.onload=async ev=>{try{const X=await loadXlsx(),wb=X.read(ev.target.result,{type:'array'}),name=wb.SheetNames.find(n=>/acc/i.test(n))||wb.SheetNames[0];importAccessRows(X.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:''}))}catch(err){toast('Fichier illisible : '+err.message)}};
+      reader.readAsArrayBuffer(file);
+    };
   }
 
   function setupCRT(){
@@ -178,12 +266,16 @@
         return h+'</table>';
       }
       function photoHtml(r){
-        const photos=r.photos||[];
-        if(!photos.length)return '<div class="crtNoData">Aucune photographie enregistrée.</div>';
-        return '<div class="crtPhotoGrid">'+photos.map(p=>{
+        const all=r.photos||[],isAnnexe=p=>p&&typeof p==='object'&&p.group==='Annexe';
+        const grid=list=>'<div class="crtPhotoGrid">'+list.map(p=>{
           const data=typeof p==='string'?p:p.data, g=typeof p==='string'?'Amont':(p.group||'Amont');
           return '<figure><img src="'+esc(data)+'" alt="Photo '+esc(g)+'"><figcaption>'+esc(g)+'</figcaption></figure>';
         }).join('')+'</div>';
+        const site=all.filter(p=>!isAnnexe(p)),annexe=all.filter(isAnnexe),obs=String(r.photoAnnexeObs||'').trim();
+        // Photos annexes (observation inhabituelle : pollution…) à part, avec l'observation de l'agent
+        const annexeHtml=(annexe.length||obs)?'<h3>Photos annexes — observation inhabituelle</h3>'+(obs?'<div class="crtComment">'+esc(obs)+'</div>':'')+(annexe.length?grid(annexe):''):'';
+        if(!site.length&&!annexeHtml)return '<div class="crtNoData">Aucune photographie enregistrée.</div>';
+        return (site.length?grid(site):'<div class="crtNoData">Aucune photographie du site.</div>')+annexeHtml;
       }
       // Matrice(s) réellement prélevée(s), d'après les réponses de la fiche (auparavant lues dans des
       // champs qui n'existent pas : toujours « Eau », même pour un prélèvement de sédiments RCO).
@@ -223,8 +315,29 @@
         const pts=o.map(p=>{const px=sx(p.value),py=sy(p.depth);return '<line x1="'+L+'" y1="'+py.toFixed(1)+'" x2="'+px.toFixed(1)+'" y2="'+py.toFixed(1)+'" stroke="#c9d5dc" stroke-dasharray="3 3"/><circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="5" fill="#003D7A" stroke="#fff" stroke-width="2"/><text x="'+(px+9).toFixed(1)+'" y="'+(py-7).toFixed(1)+'" font-size="13" font-weight="700" fill="#003D7A">'+esc(fmt(p.value))+' '+esc(unit)+'</text><text x="'+(L+5)+'" y="'+(py-7).toFixed(1)+'" font-size="12" fill="#17212b">'+esc(p.name)+'</text>'}).join('');
         return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Profil vertical '+esc(unit)+' selon la profondeur"><rect width="100%" height="100%" fill="#fff"/><rect x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="#f8fafb" stroke="#cbd6dd"/>'+g+'<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.4"/><line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'" stroke="#52626e" stroke-width="1.4"/>'+(o.length>1?'<path d="'+path+'" fill="none" stroke="#003D7A" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>':'')+pts+'<text x="'+(L+iw/2)+'" y="'+(H-8)+'" text-anchor="middle" font-size="13" font-weight="700" fill="#17212b">Valeur ('+esc(unit)+')</text><text x="18" y="'+(T+ih/2)+'" text-anchor="middle" transform="rotate(-90 18 '+(T+ih/2)+')" font-size="13" font-weight="700" fill="#17212b">Profondeur / niveau (m)</text></svg>';
       }
+      // Conductivité : toujours en µS/cm dans le CRT, quel que soit le réseau. Les valeurs saisies en mS/cm
+      // (colonne « Cond. (mS/cm) » de la fiche EL, ou unité mS/cm indiquée) sont converties (× 1000) ; une
+      // valeur déjà saisie en µS/cm à la même profondeur reste prioritaire.
+      function msToUs(v){const n=num(v);return n===null?null:Math.round(n*1000*1000)/1000}
+      function crtInsitu(rec){
+        const ins=JSON.parse(JSON.stringify(rec.insitu||{}));
+        if(rec.network==='EL'){
+          const p=ins.params||{},ms=p.condms;
+          if(ms&&typeof ms==='object'){
+            const us=p.condus=p.condus&&typeof p.condus==='object'?p.condus:{};
+            ['surface','intermediaire','inter','fond'].forEach(k=>{if(blank(us[k])&&!blank(ms[k])){const c=msToUs(ms[k]);if(c!==null)us[k]=c}});
+            if(blank(us.sonde)&&!blank(ms.sonde))us.sonde=ms.sonde;
+            delete p.condms;
+          }
+        }else{
+          const ms=ins.condms;
+          if(ms&&typeof ms==='object'){if(!ins.cond||blank(ins.cond.value)){const c=msToUs(ms.value);ins.cond={...(ins.cond||{}),...ms,value:c===null?'':c}}delete ins.condms}
+          if(ins.cond&&/^ms/i.test(String(ins.cond.unit||''))){const c=msToUs(ins.cond.value);ins.cond={...ins.cond,value:c===null?ins.cond.value:c,unit:'µS/cm'}}
+        }
+        return ins;
+      }
       function elCards(ins){
-        const defs=[['temp','Température de l’eau','°C'],['ph','pH','u.pH'],['sal','Salinité','—'],['condus','Conductivité','µS/cm'],['condms','Conductivité','mS/cm'],['o2mg','Oxygène dissous','mg O₂/L'],['o2pc','Saturation O₂','%'],['turb','Turbidité','NTU']];
+        const defs=[['temp','Température de l’eau','°C'],['ph','pH','u.pH'],['sal','Salinité','—'],['condus','Conductivité','µS/cm'],['o2mg','Oxygène dissous','mg O₂/L'],['o2pc','Saturation O₂','%'],['turb','Turbidité','NTU']];
         const p=ins.profondeurs||{},labels={surf:'Surface',inter:'Mesure intermédiaire',fond:'Fond -1 m'};
         return defs.map(([k,label,unit])=>{
           let series=[];
@@ -234,7 +347,7 @@
           return '<div class="crtGraphCard"><h3>'+esc(label)+' <span class="crtSmall">('+esc(unit)+')</span></h3>'+graphSvg(series,unit)+'<div class="crtGraphMeta"><b>Code sonde / appareil :</b> '+esc(probe)+'</div></div>';
         }).join('');
       }      function elDataTable(ins){
-        const defs=[['temp','Température (°C)'],['ph','pH (u.pH)'],['sal','Salinité'],['condus','Conductivité (µS/cm)'],['condms','Conductivité (mS/cm)'],['o2mg','O₂ dissous (mg/L)'],['o2pc','Saturation O₂ (%)'],['turb','Turbidité (NTU)']];
+        const defs=[['temp','Température (°C)'],['ph','pH (u.pH)'],['sal','Salinité'],['condus','Conductivité (µS/cm)'],['o2mg','O₂ dissous (mg/L)'],['o2pc','Saturation O₂ (%)'],['turb','Turbidité (NTU)']];
         const p=ins.profondeurs||{};
         // Niveau réel de chaque mesure (auparavant absent du tableau : seuls les graphes le donnaient)
         const depthRow=[p.surface,p.intermediaire,p.fond].some(x=>num(x)!==null)?'<tr><td><b>Niveau de mesure (m)</b></td><td>'+esc(r2(p.surface))+'</td><td>'+esc(r2(p.intermediaire))+'</td><td>'+esc(r2(p.fond))+'</td></tr>':'';
@@ -267,11 +380,11 @@
       // ---- Suivi historique à la station (tableau déjà fourni par elDataTable/genericDataTable
       // ci-dessus ; ici on ajoute un histogramme comparant les visites successives) ----
       function paramDefsFor(network){
-        if(network==='EL')return [['temp','Température de l’eau','°C'],['ph','pH','u.pH'],['sal','Salinité','—'],['condus','Conductivité','µS/cm'],['condms','Conductivité','mS/cm'],['o2mg','Oxygène dissous','mg O₂/L'],['o2pc','Saturation O₂','%'],['turb','Turbidité','NTU']];
+        if(network==='EL')return [['temp','Température de l’eau','°C'],['ph','pH','u.pH'],['sal','Salinité','—'],['condus','Conductivité','µS/cm'],['o2mg','Oxygène dissous','mg O₂/L'],['o2pc','Saturation O₂','%'],['turb','Turbidité','NTU']];
         return [['ph','pH','u.pH'],['temp','Température de l’eau','°C'],['cond','Conductivité à 25°C','µS/cm'],['sal','Salinité','—'],['o2mg','Oxygène dissous','mg O₂/L'],['o2pc','Saturation O₂','%'],['turb','Turbidité','NTU'],['air','Température de l’air','°C'],['redox','Potentiel redox','mV']];
       }
       function paramValue(rec,network,key){
-        const i=rec.insitu||{};
+        const i=crtInsitu(rec); // conductivité en µS/cm
         if(network==='EL'){
           if(key==='turb'){const t=i.turbidite||{};return num(t.surf?.moyenne??t.inter?.moyenne??t.fond?.moyenne)}
           const d=i.params?.[key]||{};return num(d.surface??d.intermediaire??d.inter??d.fond);
@@ -303,7 +416,7 @@
       // en barres (et l'intermédiaire à sa place quand la surface manquait). ----
       function elDepthValue(rec,k,d){
         if(rec.prelevementRealise==='Non')return null; // non réalisé : mesures éventuellement saisies avant « Non » ignorées
-        const i=rec.insitu||{};
+        const i=crtInsitu(rec); // conductivité en µS/cm
         if(k==='turb')return num(i.turbidite?.[d.key]?.moyenne);
         const p=i.params?.[k]||{};return num(d.field==='intermediaire'?(p.intermediaire??p.inter):p[d.field]);
       }
@@ -570,7 +683,7 @@
         const add=(code,what,st)=>{code=String(code||'').trim();if(!code)return;const u=uses.get(code)||{what:[],st:{}};if(!u.what.includes(what))u.what.push(what);Object.entries(st||{}).forEach(([k,v])=>{if(!blank(v)&&blank(u.st[k]))u.st[k]=v});uses.set(code,u)};
         add(r.insituBoitier,'Boîtier multiparamètre');
         if(r.network==='EL'){
-          const lab={temp:'Température',ph:'pH',sal:'Salinité',condus:'Conductivité (µS/cm)',condms:'Conductivité (mS/cm)',o2mg:'O₂ dissous',o2pc:'Saturation O₂'};
+          const lab={temp:'Température',ph:'pH',sal:'Salinité',condus:'Conductivité',condms:'Conductivité',o2mg:'O₂ dissous',o2pc:'Saturation O₂'};
           Object.entries(ins.params||{}).forEach(([k,d])=>add(d?.sonde,lab[k]||k));
           const t=ins.turbidite||{};add(t.surf?.sonde||t.inter?.sonde||t.fond?.sonde,'Turbidité');
         }else{
@@ -596,7 +709,7 @@
         // commune à la place du bassin versant (auparavant « Non défini » / « non renseigné »).
         const si=r.stationInfo||{},sc=x=>x?.code||x?.code_bss||'',cands=stations().filter(s=>s.nom===r.station);
         const station=cands.find(s=>sc(s)&&sc(s)===sc(si))||cands[0]||si,eso=r.network==='ESO';
-        const access=ensureStationAccess(station),modes=stationTransportDetailed(station),m=meta(station),ll=stationLatLon(station),proj=r.projection||station.projection||'RGFG 95 / UTM 22N',code=r.codeSandre||r.code||sc(station)||sc(si)||'Non défini',codeLabel=eso?'Code BSS':'Code SANDRE',bassin=m.b||station.commune||si.bassin||si.commune||'',bassinLabel=eso?'Commune':'Bassin versant',desc=station.description||station.descriptionStation||station.pressionDescription||station.pression||'',ins=r.insitu||{},cm=metaFor(r),operators=cm.preleveur||((r.preleveurs||[]).join(' · ')||'—'),season=seasonFor(r);
+        const access=ensureStationAccess(station),modes=stationTransportDetailed(station),m=meta(station),ll=stationLatLon(station),proj=r.projection||station.projection||'RGFG 95 / UTM 22N',code=r.codeSandre||r.code||sc(station)||sc(si)||'Non défini',codeLabel=eso?'Code BSS':'Code SANDRE',bassin=m.b||station.commune||si.bassin||si.commune||'',bassinLabel=eso?'Commune':'Bassin versant',desc=station.description||station.descriptionStation||station.pressionDescription||station.pression||'',ins=crtInsitu(r),cm=metaFor(r),operators=cm.preleveur||((r.preleveurs||[]).join(' · ')||'—'),season=seasonFor(r);
         const llTerrain=(r.xTerrain!==undefined&&r.xTerrain!==''&&r.yTerrain!==undefined&&r.yTerrain!=='')?stationLatLon({x:r.xTerrain,y:r.yTerrain,projection:proj}):null;
         const mapPoints=[{ll,label:'Théorique',color:'#003D7A'},{ll:llTerrain,label:'Terrain',color:'#00AC97'}].filter(p=>p.ll);
         const mapLinkParts=[];
@@ -611,20 +724,50 @@
         const chloroBlock=(r.network==='EL'&&station.type==='MEC')?'<h2>Chlorophylle</h2><table class="crtTable"><tr><th>Prélèvement chlorophylle</th><td>'+esc(sample.elChloro||'—')+'</td><th>Filtre utilisé</th><td>'+esc(sample.elFiltreChloro||'—')+'</td></tr><tr><th>Volume filtré</th><td colspan="3">'+(sample.elVfChloro?esc(sample.elVfChloro)+' mL':'—')+'</td></tr></table>':'';
         return '<section class="crtPage crtCover" data-report="'+esc(code)+' — '+esc(r.station)+'"><img src="img/logo-oeg.png" alt="Office de l\'Eau de Guyane" class="crtCoverLogo"><div class="crtKicker">OFFICE DE L’EAU DE GUYANE</div><h1>COMPTE RENDU TECHNIQUE</h1><h2>'+esc(title)+'</h2><div class="crtSession">'+esc(r.session||'Session non renseignée')+'</div><div class="crtCoverStation"><b>'+esc(code)+' — '+esc(r.station)+'</b><br><span>'+esc(bassin||(bassinLabel+' non renseigné'+(eso?'e':'')))+'</span></div><div class="crtCoverMeta"><div><b>Organisme</b>'+esc(r.organisme||'—')+'</div><div><b>Préleveur(s)</b>'+esc(operators)+'</div><div><b>Date de la visite</b>'+esc(frDate(r.date))+'</div><div><b>Référence CRT</b>'+esc(cm.ref||'—')+'</div><div><b>Date du rapport</b>'+esc(reportDate(r))+'</div><div><b>Rédacteur</b>'+esc(cm.author||'—')+'</div></div><div class="crtSynthesis">'+synthesis(r,ins,sample)+'</div>'+(r.lifecycle?.status==='Validée'?'':'<div class="crtDraftBand">DOCUMENT PROVISOIRE — fiche terrain non validée ('+esc(r.lifecycle?.status||'À contrôler')+')</div>')+'</section>'+
           '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'SOMMAIRE')+'<h2>📖 Sommaire du rapport</h2>'+sommaire(r)+'</section>'+
-          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'STATION · LOCALISATION')+'<h2>🆔 Identification de la station</h2>'+kvTable([[codeLabel,code],['Réseau',netLabel(r.network)||r.network],[bassinLabel,bassin],['Marché',m.m],['Date',frDate(r.date)],['Horaires',(r.heureDebut||'—')+' – '+(r.heureFin||'—')],eso?['Type de point',station.type_point||si.type_point]:null,eso?['Aquifère',station.aquifere||si.aquifere]:null])+'<h2>🚗 Description / accès</h2><p class="crtSmall">'+esc(desc||'Description à compléter dans les données station.')+'</p><div class="accessGrid"><div><b>Accessibilité</b><br>'+starRating(access.difficulte||station.difficulte)+'</div><div><b>Moyens</b><br>'+(modes.length?modes.map(x=>transportIcon(x)+' '+esc(x)).join(' · '):'—')+'</div><div><b>Départ / base</b><br>'+esc(access.pointDepart||'—')+'</div><div><b>Consignes</b><br>'+esc(access.etapes||'—')+'</div></div><h2>🗺️ Localisation</h2><div class="crtMapPlaceholder">'+(navigator.onLine?locationMap(mapPoints):'')+'<div class="crtMapFallback"'+(navigator.onLine?' hidden':'')+'>'+locationSvg(ll||llTerrain)+'</div></div><p class="crtSmall">'+(mapLink||'Coordonnées non disponibles')+(mapPoints.length?' · © contributeurs OpenStreetMap':'')+'</p>'+(mapPoints.length>1?'<p class="crtSmall"><span style="color:#003D7A;font-weight:800">● Théorique</span> = position de référence de la station · <span style="color:#00AC97;font-weight:800">● Terrain</span> = position GPS relevée sur place'+(r.ecartM?' (écart mesuré : '+esc(r.ecartM)+')':'')+'</p>':'')+'<h2>📷 Photographies</h2>'+photoHtml(r)+(r.network==='EL'?'':'<h2>✏️ Schéma de station</h2><div class="crtSchema">'+(r.dessin?'<img src="'+esc(r.dessin)+'" alt="Schéma du lieu d’échantillonnage">':'<span class="crtSmall">Aucun schéma enregistré.</span>')+'</div>')+'</section>'+
-          (nonRealise?'<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'PRÉLÈVEMENT NON RÉALISÉ')+'<h2>⛔ Prélèvement non réalisé</h2><div class="crtDraftBand" style="margin-top:2mm">PRÉLÈVEMENT NON RÉALISÉ</div><h3>Motif</h3><div class="crtComment">'+esc(String(r.obs||'').trim()||'Motif non renseigné')+'</div>'+kvTable([['Date de la visite',frDate(r.date)],['Horaires',(r.heureDebut||'—')+' – '+(r.heureFin||'—')],['Préleveur(s)',(r.preleveurs||[]).join(', ')],['Coordonnées terrain (X / Y)',(r.xTerrain||'—')+' / '+(r.yTerrain||'—')+(r.projection?' ('+r.projection+')':'')],['Écart au point théorique',r.ecartM],['Photographies',String((r.photos||[]).length)]])+'</section>':'<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'MESURES · ÉCHANTILLONNAGE')+'<h2>🌦️ Conditions de terrain</h2><div class="crtTwoCol"><div>'+fmtConditions(r.conditions,r.network)+'</div><div><b>Saison</b><br>'+esc(season)+'<br><br><b>Matrice(s)</b><br>'+esc(matrix(r))+elMaritime+'</div></div><h2>📊 Visualisation des données in situ</h2>'+graphBlock+historyBlock(r,ins)+equipmentSection(r)+(eso?esoSection(sample):'')+sampleSection(r,sample)+chloroBlock+traceSection(r)+'</section>')+
-          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'OBSERVATIONS · VALIDATION')+(nonRealise?(String(r.comment||'').trim()?'<h2>📝 Commentaires</h2><div class="crtComment">'+esc(String(r.comment).trim())+'</div>':''):qualitySection(r)+obsSection(r)+'<h2>➕ Données complémentaires</h2><div>'+fmt(r.specific||{})+'</div>'+fishTable(r.specific)+(r.network==='Chimie'?sedimentSection(sample,'chimie'):r.network==='RCO'?sedimentSection(sample,'rco'):''))+ncSection(r)+'<h2>✅ Conclusion / synthèse</h2><div class="crtComment">'+(cm.conclusion?esc(cm.conclusion):synthesis(r,ins,sample))+'</div><h2>🖊️ Validation</h2><table class="crtTable"><tr><th>Rédacteur</th><td>'+esc(cm.author||'—')+'</td><th>Statut</th><td>'+esc(r.lifecycle?.status||'—')+'</td></tr><tr><th>Signataire de la fiche terrain</th><td>'+esc(r.signName||'—')+'</td><th>Signature</th><td>'+(r.signature?'<img class="crtSignature" src="'+esc(r.signature)+'" alt="Signature">':'<span class="crtSmall">Non signée</span>')+'</td></tr>'+((r.lifecycle?.validatedBy||r.lifecycle?.validatedAt)?'<tr><th>'+(r.lifecycle?.status==='Rejetée'?'Rejetée par':r.lifecycle?.status==='Validée'?'Validée par':'Validation antérieure (fiche modifiée depuis) par')+'</th><td>'+esc(r.lifecycle?.validatedBy||'—')+'</td><th>Le</th><td>'+esc(frDate(r.lifecycle?.validatedAt))+'</td></tr>'+(r.lifecycle?.validationComment?'<tr><th>Commentaire de validation</th><td colspan="3">'+esc(r.lifecycle.validationComment)+'</td></tr>':''):'')+'<tr><th>Organisme</th><td>'+esc(r.organisme||'—')+'</td><th>Référence</th><td>'+esc(cm.ref||'—')+'</td></tr><tr><th>Date du rapport</th><td colspan="3">'+esc(reportDate(r))+'</td></tr><tr><th>Identifiant fiche</th><td colspan="3" class="crtTraceId">'+esc(r.id||'—')+'</td></tr><tr><th>Version applicative</th><td colspan="3">'+esc(r.appBuild||'non enregistrée (fiche antérieure à ce suivi)')+'</td></tr></table><p class="crtSmall">Cet identifiant permet de retrouver la fiche source dans l’application (onglet « Liste des fiches »).</p><div class="crtLegendBlock"><b>Référentiel graphique</b><br><span class="crtSmall">Les valeurs, niveaux, unités et codes appareils affichés dans ce CRT proviennent de la fiche terrain enregistrée. Aucune donnée n’est recalculée hormis la moyenne des trois mesures de turbidité lorsque celle-ci est disponible ; les valeurs numériques sont arrondies à deux décimales. Les codes SANDRE sont accompagnés de leur libellé.</span></div></section>';
+          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'STATION · LOCALISATION')+'<h2>🆔 Identification de la station</h2>'+kvTable([[codeLabel,code],['Réseau',netLabel(r.network)||r.network],[bassinLabel,bassin],['Marché',m.m],['Date',frDate(r.date)],r.prelevementRealise==='Non'?['Heure de passage',r.heurePassage||r.heureDebut||'—']:['Horaires',(r.heureDebut||'—')+' – '+(r.heureFin||'—')],eso?['Type de point',station.type_point||si.type_point]:null,eso?['Aquifère',station.aquifere||si.aquifere]:null])+'<h2>🚗 Description / accès</h2><p class="crtSmall">'+esc(desc||'Description à compléter dans les données station.')+'</p><div class="accessGrid"><div><b>Accessibilité</b><br>'+starRating(access.difficulte||station.difficulte)+'</div><div><b>Moyens</b><br>'+(modes.length?modes.map(x=>transportIcon(x)+' '+esc(x)).join(' · '):'—')+'</div><div><b>Départ / base</b><br>'+esc(access.pointDepart||'—')+'</div><div><b>Consignes</b><br>'+esc(access.etapes||'—')+'</div></div><h2>🗺️ Localisation</h2><div class="crtMapPlaceholder">'+(navigator.onLine?locationMap(mapPoints):'')+'<div class="crtMapFallback"'+(navigator.onLine?' hidden':'')+'>'+locationSvg(ll||llTerrain)+'</div></div><p class="crtSmall">'+(mapLink||'Coordonnées non disponibles')+(mapPoints.length?' · © contributeurs OpenStreetMap':'')+'</p>'+(mapPoints.length>1?'<p class="crtSmall"><span style="color:#003D7A;font-weight:800">● Théorique</span> = position de référence de la station · <span style="color:#00AC97;font-weight:800">● Terrain</span> = position GPS relevée sur place'+(r.ecartM?' (écart mesuré : '+esc(r.ecartM)+')':'')+'</p>':'')+'<h2>📷 Photographies</h2>'+photoHtml(r)+(r.network==='EL'||nonRealise?'':'<h2>✏️ Schéma de station</h2><div class="crtSchema">'+(r.dessin?'<img src="'+esc(r.dessin)+'" alt="Schéma du lieu d’échantillonnage">':'<span class="crtSmall">Aucun schéma enregistré.</span>')+'</div>')+'</section>'+
+          (nonRealise?'<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'PRÉLÈVEMENT NON RÉALISÉ')+'<h2>⛔ Prélèvement non réalisé</h2><div class="crtDraftBand" style="margin-top:2mm">PRÉLÈVEMENT NON RÉALISÉ</div><h3>Motif</h3><div class="crtComment">'+esc(String(r.obs||'').trim()||'Motif non renseigné')+'</div>'+kvTable([['Date de la visite',frDate(r.date)],['Heure de passage',r.heurePassage||r.heureDebut||'—'],['Préleveur(s)',(r.preleveurs||[]).join(', ')],['Coordonnées terrain (X / Y)',(r.xTerrain||'—')+' / '+(r.yTerrain||'—')+(r.projection?' ('+r.projection+')':'')],['Écart au point théorique',r.ecartM],['Photographies',String((r.photos||[]).length)]])+'</section>':'<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'MESURES · ÉCHANTILLONNAGE')+'<h2>🌦️ Conditions de terrain</h2><div class="crtTwoCol"><div>'+fmtConditions(r.conditions,r.network)+'</div><div><b>Saison</b><br>'+esc(season)+'<br><br><b>Matrice(s)</b><br>'+esc(matrix(r))+elMaritime+'</div></div><h2>📊 Visualisation des données in situ</h2>'+graphBlock+historyBlock(r,ins)+equipmentSection(r)+(eso?esoSection(sample):'')+sampleSection(r,sample)+chloroBlock+traceSection(r)+'</section>')+
+          '<section class="crtPage" data-report="'+esc(code)+' — '+esc(r.station)+'">'+header(code,r,'OBSERVATIONS · VALIDATION')+(nonRealise?(String(r.comment||'').trim()?'<h2>📝 Commentaires</h2><div class="crtComment">'+esc(String(r.comment).trim())+'</div>':''):qualitySection(r)+obsSection(r)+'<h2>➕ Données complémentaires</h2><div>'+fmt(r.specific||{})+'</div>'+fishTable(r.specific)+(r.network==='Chimie'?sedimentSection(sample,'chimie'):r.network==='RCO'?sedimentSection(sample,'rco'):''))+ncSection(r)+'<h2>✅ Conclusion / synthèse</h2><div class="crtComment">'+(cm.conclusion?esc(cm.conclusion):synthesis(r,ins,sample))+'</div><h2>🖊️ Validation</h2><table class="crtTable"><tr><th>Rédacteur</th><td>'+esc(cm.author||'—')+'</td><th>Statut</th><td>'+esc(r.lifecycle?.status||'—')+'</td></tr><tr class="crtSignRow"><th>Signataire de la fiche terrain</th><td>'+esc(r.signName||'—')+'</td><th>Signature</th><td>'+(r.signature?'<img class="crtSignature" src="'+esc(r.signature)+'" alt="Signature">':'<span class="crtSmall">Non signée</span>')+'</td></tr>'+((r.lifecycle?.validatedBy||r.lifecycle?.validatedAt)?'<tr><th>'+(r.lifecycle?.status==='Rejetée'?'Rejetée par':r.lifecycle?.status==='Validée'?'Validée par':'Validation antérieure (fiche modifiée depuis) par')+'</th><td>'+esc(r.lifecycle?.validatedBy||'—')+'</td><th>Le</th><td>'+esc(frDate(r.lifecycle?.validatedAt))+'</td></tr>'+(r.lifecycle?.validationComment?'<tr><th>Commentaire de validation</th><td colspan="3">'+esc(r.lifecycle.validationComment)+'</td></tr>':''):'')+'<tr><th>Organisme</th><td>'+esc(r.organisme||'—')+'</td><th>Référence</th><td>'+esc(cm.ref||'—')+'</td></tr><tr><th>Date du rapport</th><td colspan="3">'+esc(reportDate(r))+'</td></tr><tr><th>Identifiant fiche</th><td colspan="3" class="crtTraceId">'+esc(r.id||'—')+'</td></tr><tr><th>Version applicative</th><td colspan="3">'+esc(r.appBuild||'non enregistrée (fiche antérieure à ce suivi)')+'</td></tr></table><p class="crtSmall">Cet identifiant permet de retrouver la fiche source dans l’application (onglet « Liste des fiches »).</p><div class="crtLegendBlock"><b>Référentiel graphique</b><br><span class="crtSmall">Les valeurs, niveaux, unités et codes appareils affichés dans ce CRT proviennent de la fiche terrain enregistrée. Aucune donnée n’est recalculée hormis la moyenne des trois mesures de turbidité lorsque celle-ci est disponible ; les valeurs numériques sont arrondies à deux décimales. Les codes SANDRE sont accompagnés de leur libellé.</span></div></section>';
       }
       // Tuile de fond de carte indisponible (hors connexion, réseau coupé) : on remplace la carte par
       // la carte schématique de la Guyane plutôt que d'imprimer un cadre vide.
       window.crtMapFail=img=>{const box=img.closest('.crtMapPlaceholder');if(!box||box.dataset.failed)return;box.dataset.failed='1';
         [...box.children].forEach(ch=>{if(!ch.classList.contains('crtMapFallback'))ch.remove()});const fb=box.querySelector('.crtMapFallback');if(fb)fb.hidden=false};
+      // Schéma de station : le CRT n'en montre que la partie dessinée (marges vides retirées), pour qu'il
+      // reste lisible dans son cadre maintenant que la zone de dessin de la fiche est plus haute. Un petit
+      // croquis n'est pas grossi à l'excès (au moins 40 % de la zone gardés en largeur et en hauteur).
+      // Signature : recadrée sur le tracé, pour qu'elle apparaisse au niveau des initiales du signataire.
+      const schemaCrops=new Map();
+      function cropSchema(src,minFrac){
+        if(minFrac===undefined)minFrac=0.4;
+        const key=minFrac+'|'+src;
+        if(!schemaCrops.has(key)){
+          if(schemaCrops.size>30)schemaCrops.clear();
+          schemaCrops.set(key,new Promise(res=>{const im=new Image();im.onerror=()=>res(src);im.onload=()=>{
+            try{
+              const w=im.naturalWidth,h=im.naturalHeight;if(!w||!h)return res(src);
+              const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(im,0,0);
+              const d=x.getImageData(0,0,w,h).data;let x0=w,y0=h,x1=-1,y1=-1;
+              for(let y=0;y<h;y++)for(let i=0;i<w;i++){const k=(y*w+i)*4;if(d[k+3]>8&&!(d[k]>245&&d[k+1]>245&&d[k+2]>245)){if(i<x0)x0=i;if(i>x1)x1=i;if(y<y0)y0=y;if(y>y1)y1=y}}
+              if(x1<0)return res(src);
+              const m=Math.round(Math.max(w,h)*(minFrac?0.03:0.01))+4,span=(a,b,len)=>{a=Math.max(0,a-m);b=Math.min(len-1,b+m);const min=Math.round(len*minFrac);if(b-a+1<min){const cmid=(a+b)/2;a=Math.max(0,Math.min(len-min,Math.round(cmid-min/2)));b=a+min-1}return [a,b]};
+              [x0,x1]=span(x0,x1,w);[y0,y1]=span(y0,y1,h);
+              const cw=x1-x0+1,ch=y1-y0+1;if(cw*ch>w*h*0.9)return res(src);
+              const o=document.createElement('canvas');o.width=cw;o.height=ch;o.getContext('2d').drawImage(c,x0,y0,cw,ch,0,0,cw,ch);res(o.toDataURL('image/png'));
+            }catch(e){res(src)}
+          };im.src=src}));
+        }
+        return schemaCrops.get(key);
+      }
+      function cropSchemas(box){
+        return Promise.all([...box.querySelectorAll('.crtSchema img,img.crtSignature')].map(i=>{const src=i.getAttribute('src')||'';if(!src.startsWith('data:image/'))return null;
+          return cropSchema(src,i.classList.contains('crtSignature')?0:0.4).then(out=>{if(out!==src&&i.isConnected&&i.getAttribute('src')===src){i.src=out;return i.decode?i.decode().catch(()=>{}):null}})}));
+      }
       // N'ouvre l'impression qu'une fois les images (photos, schéma, logo, carte) chargées — sinon
       // elles pouvaient sortir blanches dans le PDF — avec un délai maximal de 8 s.
       function printWhenReady(title){
         const box=$('crtPreviewBox');
         const imgs=[...box.querySelectorAll('img')].filter(i=>!i.complete);
-        const ready=Promise.all(imgs.map(i=>new Promise(res=>{i.addEventListener('load',res,{once:true});i.addEventListener('error',res,{once:true})})));
+        const ready=Promise.all(imgs.map(i=>new Promise(res=>{i.addEventListener('load',res,{once:true});i.addEventListener('error',res,{once:true})})).concat(cropSchemas(box)));
         if(imgs.length)toast('Préparation de l’impression…');
         Promise.race([ready,new Promise(res=>setTimeout(res,8000))]).then(()=>{
           // Fond de carte encore incomplet après 8 s (réseau lent) : carte schématique plutôt qu'une carte trouée
@@ -637,6 +780,7 @@
       function render(){
         const r=getR(),box=$('crtPreviewBox');if(!r){box.innerHTML='<div class="hint">Sélectionnez une fiche puis cliquez sur « Aperçu du CRT ».</div>';return}
         box.innerHTML='<div class="crtReport">'+buildFicheHtml(r)+'</div>';
+        cropSchemas(box);
       }
       // ---- CRT consolidé : compile en un seul fichier tous les CRT d'un même réseau/session ----
       function batchMatches(){

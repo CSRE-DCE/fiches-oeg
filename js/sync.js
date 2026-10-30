@@ -123,8 +123,22 @@
     return await sha256(JSON.stringify(stableObj(obj)));
   }
 
-  function filenameForRecord(r){
-    return `fiche_${safeName(r.network)}_${safeName(r.station)}_${safeName(r.date)}_${safeName(r.id)}.json`;
+  // Nom de fichier d'une fiche : FT_Réseau-marché_année_session_station.json (ficheFileBase, app-core.js).
+  // Deux fiches de même nom (même station et même session, copie de conflit…) ne doivent pas s'écraser
+  // dans le dossier : la plus ancienne garde le nom, les suivantes reçoivent _2, _3…
+  function recordFilenames(){
+    const groups = new Map(), names = new Map();
+    const base = r => (typeof ficheFileBase === 'function') ? ficheFileBase(r) : `fiche_${safeName(r.network)}_${safeName(r.station)}_${safeName(r.date)}_${safeName(r.id)}`;
+    for(const r of records){ const b = base(r); if(!groups.has(b)) groups.set(b, []); groups.get(b).push(r) }
+    const created = r => String(r.lifecycle?.createdAt || r.savedAt || '');
+    groups.forEach((list, b) => {
+      list.sort((a, c) => created(a).localeCompare(created(c)) || String(a.id).localeCompare(String(c.id)));
+      list.forEach((r, i) => names.set(r.id, b + (i ? '_' + (i + 1) : '') + '.json'));
+    });
+    return names;
+  }
+  function filenameForRecord(r, names){
+    return (names || recordFilenames()).get(r.id) || `fiche_${safeName(r.network)}_${safeName(r.station)}_${safeName(r.date)}_${safeName(r.id)}.json`;
   }
 
   function referentielPayload(){
@@ -154,8 +168,9 @@
   }
   function indexCsvPayload(){
     const rows = [['id','reseau','station','date','heureDebut','heureFin','statut','version','nomFichier'].join(';')];
+    const names = recordFilenames();
     records.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))).forEach(r=>{
-      rows.push([r.id, r.network, r.station, r.date, r.heureDebut, r.heureFin, r.lifecycle?.status||'À contrôler', r.lifecycle?.version||1, filenameForRecord(r)].map(csvEscape).join(';'));
+      rows.push([r.id, r.network, r.station, r.date, r.heureDebut, r.heureFin, r.lifecycle?.status||'À contrôler', r.lifecycle?.version||1, filenameForRecord(r, names)].map(csvEscape).join(';'));
     });
     return '\uFEFF' + rows.join('\r\n');
   }
@@ -167,13 +182,14 @@
   async function collectItems(){
     await (window.OEGRecordsReady||Promise.resolve()); // jamais sur une liste de fiches incomplète
     const items = [];
+    const names = recordFilenames();
     for(const r of records){
       // Fiche « allégée » (photos retirées de la tablette par une ancienne version de l'appli) :
       // elle n'est JAMAIS réécrite dans le dossier ni sur Drive, où se trouve la seule copie de ses
       // photos (auparavant toute modification écrasait le fichier par une version sans photos).
       // « Récupérer l'historique » lui rend ses photos, puis elle est de nouveau sauvegardée.
       if(r._archived) continue;
-      items.push({id: r.id, filename: filenameForRecord(r), content: r, hash: await hashOf(r)});
+      items.push({id: r.id, filename: filenameForRecord(r, names), content: r, hash: await hashOf(r)});
     }
     const ref = referentielPayload();
     const qual = qualitePayload();
