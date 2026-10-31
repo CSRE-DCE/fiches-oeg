@@ -89,7 +89,7 @@
 <div class="field" id="prelevementRealiseWrap"><label>Prélèvement réalisé ?</label>
 <div class="radioGrid"><label class="radio"><input type="radio" name="prelevementRealise" value="Oui"> Oui</label><label class="radio"><input type="radio" name="prelevementRealise" value="Non"> Non</label></div>
 </div>
-<div id="nonRealiseNote" class="banner warn">⛔ <b>Prélèvement non réalisé</b> : prenez au moins une photo, relevez les coordonnées terrain (bouton « Géolocalise-moi ») et indiquez le motif dans « Motif du prélèvement non réalisé » (rubrique 9). Les rubriques de mesures, de prélèvement et de caractérisation sont masquées.</div>
+<div id="nonRealiseNote" class="banner warn">⛔ <b>Prélèvement non réalisé</b> : prenez au moins une photo, relevez les coordonnées terrain (bouton « Géolocalise-moi ») et indiquez le motif dans « Motif du prélèvement non réalisé » (rubrique 9). Les rubriques de mesures, de prélèvement et de caractérisation, ainsi que le schéma, sont masquées.</div>
 <div class="grid2">
   <div class="field"><label>Date</label>
   <input type="date" id="date">
@@ -163,7 +163,7 @@
 </div>
 <div id="mediaGrid" class="mediaGrid">
 </div>
-<div class="elHide"><h3>Schéma / dessin du lieu d'échantillonnage</h3>
+<div class="elHide schemaBlock"><h3>Schéma / dessin du lieu d'échantillonnage</h3>
 <div class="drawToolbar">
   <div class="colorSwatches" id="drawColors">
     <button type="button" class="swatch sel" data-color="#17212b" style="background:#17212b" aria-label="Noir"></button>
@@ -183,7 +183,7 @@
   <input id="legendeAutre" placeholder="Autre élément à ajouter à la légende">
   </div>
   </div>
-  <div class="actions">
+  <div class="actions elHide schemaBlock">
     <button class="btn ghost small" id="clearDraw">Effacer tout le dessin</button>
   </div></div>
     </div>

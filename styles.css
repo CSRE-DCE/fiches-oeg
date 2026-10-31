@@ -259,6 +259,8 @@ body.nonRealise .lblNonReal{display:inline;color:#a3261f}
 .passageField{display:none}
 body.nonRealise .passageField{display:block}
 body.nonRealise .horaireField{display:none!important}
+/* … et pas de schéma du lieu (ni à l'écran, ni sur la fiche imprimée, ni dans le CRT) ; un dessin déjà fait est conservé */
+body.nonRealise .schemaBlock{display:none!important}
 #prelevementRealiseWrap{border:1.5px solid var(--brand);border-radius:10px;padding:8px 10px;background:var(--soft)}
 /* Champs du cours d'eau (macrophytes, largeur, profondeur moyenne) dans le panneau sédiments */
 .riverFields{padding:6px 10px 2px;border-bottom:1px solid var(--line);background:#fff}
