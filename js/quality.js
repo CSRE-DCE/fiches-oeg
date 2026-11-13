@@ -373,7 +373,50 @@ function recordDatesHtml(f){
   return `<div class="meta recDates">Créée le ${qEscape(stampText(created))}${updated&&updated!==created?` · <b>modifiée le ${qEscape(stampText(updated))}</b>`:''}${l.updatedBy?` par ${qEscape(l.updatedBy)}`:''}</div>`;
 }
 window.recordDatesHtml=recordDatesHtml;
-function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>[x.station,x.stationInfo?.code,x.network,x.activity,x.session,x.date,(x.preleveurs||[]).join(' '),x.organisme,x.signName,x.obs,x.comment,x.lifecycle?.status,x.id].join(' ').toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.prelevementRealise==='Non'?'passage '+(f.heurePassage||f.heureDebut||''):(f.heureDebut||'')+'–'+(f.heureFin||''))}</div></div><span class="badge">${qEscape(st)}</span></div>${f.prelevementRealise==='Non'?'<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⛔ Prélèvement non réalisé</div>':''}<div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${recordDatesHtml(f)}${f.conflict?(()=>{const o=records.find(x=>x.id===f.conflict.originalId),a=recordStamp(f),b=o?recordStamp(o):'';return `<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — cette copie : modifiée le ${qEscape(stampText(a))} ; fiche d’origine : ${o?'modifiée le '+qEscape(stampText(b))+(b>a?' (plus récente)':a>b?' (plus ancienne)':''):'introuvable'}. Comparez, gardez la bonne et supprimez l’autre.</div>`})():''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button><button class="btn ghost small">📊 Excel</button></div>`;const b=d.querySelectorAll('button');b[3].onclick=()=>exportFicheExcel(f);b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);if(window.clearEditDraft)window.clearEditDraft(f.id);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
+// Liste des fiches (onglet Fiches) : recherche, carte par fiche et ses actions
+function listSearchText(x){return [x.station,x.stationInfo?.code,x.network,x.activity,x.session,x.date,(x.preleveurs||[]).join(' '),x.organisme,x.signName,x.obs,x.comment,x.lifecycle?.status,x.id].join(' ').toLowerCase()}
+function listHours(f){return f.prelevementRealise==='Non'?'passage '+(f.heurePassage||f.heureDebut||''):(f.heureDebut||'')+'–'+(f.heureFin||'')}
+function listConflictHtml(f){
+  if(!f.conflict)return '';
+  const o=records.find(x=>x.id===f.conflict.originalId),a=recordStamp(f),b=o?recordStamp(o):'';
+  const origine=o?'modifiée le '+qEscape(stampText(b))+(b>a?' (plus récente)':a>b?' (plus ancienne)':''):'introuvable';
+  return `<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — cette copie : modifiée le ${qEscape(stampText(a))} ; fiche d’origine : ${origine}. Comparez, gardez la bonne et supprimez l’autre.</div>`;
+}
+function listCardHtml(f){
+  const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;
+  return `<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div>`
+    +`<div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(listHours(f))}</div></div>`
+    +`<span class="badge">${qEscape(st)}</span></div>`
+    +(f.prelevementRealise==='Non'?'<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⛔ Prélèvement non réalisé</div>':'')
+    +`<div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>`
+    +recordDatesHtml(f)+listConflictHtml(f)
+    +'<div class="actions" style="margin-top:8px"><button class="btn ghost small" data-a="edit">✏ Modifier</button><button class="btn ghost small" data-a="dup">⧉ Dupliquer</button><button class="btn danger small" data-a="del">🗑 Supprimer</button><button class="btn ghost small" data-a="xls">📊 Excel</button></div>';
+}
+const LIST_ACTIONS={
+  edit:f=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)},
+  // Dupliquer : même contenu, nouvelle fiche (ni signature ni lien avec la fiche d'origine)
+  dup:f=>{LIST_ACTIONS.edit(f);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'},
+  del:async f=>{
+    if(!confirm('Supprimer cette fiche ?'))return;
+    records=records.filter(x=>x.id!==f.id);saveLS(LS,records);
+    if(window.clearEditDraft)window.clearEditDraft(f.id);
+    await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});
+    updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi();
+  },
+  xls:f=>exportFicheExcel(f)
+};
+function renderList(){
+  const q=val('search').toLowerCase(),h=$('records');
+  let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));
+  if(q)arr=arr.filter(x=>listSearchText(x).includes(q));
+  if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}
+  h.innerHTML='';
+  arr.forEach(f=>{
+    const d=document.createElement('div');d.className='listcard';d.innerHTML=listCardHtml(f);
+    d.querySelectorAll('button[data-a]').forEach(b=>b.onclick=()=>LIST_ACTIONS[b.dataset.a](f));
+    h.appendChild(d);
+  });
+}
 
 /* --- Qualité : configuration persistante --- */
 ['qualityMethodRef','qualityMethodVersion','qualityInterlab','qualityMaterialRef'].forEach(id=>{
