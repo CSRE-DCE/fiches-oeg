@@ -89,7 +89,7 @@
 <div class="field" id="prelevementRealiseWrap"><label>Prélèvement réalisé ?</label>
 <div class="radioGrid"><label class="radio"><input type="radio" name="prelevementRealise" value="Oui"> Oui</label><label class="radio"><input type="radio" name="prelevementRealise" value="Non"> Non</label></div>
 </div>
-<div id="nonRealiseNote" class="banner warn">⛔ <b>Prélèvement non réalisé</b> : prenez au moins une photo, relevez les coordonnées terrain (bouton « Géolocalise-moi ») et indiquez le motif dans « Motif du prélèvement non réalisé » (rubrique 9). Les rubriques de mesures, de prélèvement et de caractérisation sont masquées.</div>
+<div id="nonRealiseNote" class="banner warn">⛔ <b>Prélèvement non réalisé</b> : prenez au moins une photo, relevez les coordonnées terrain (bouton « Géolocalise-moi ») et indiquez le motif dans « Motif du prélèvement non réalisé » (rubrique 9). Les rubriques de mesures, de prélèvement et de caractérisation, ainsi que le schéma, sont masquées.</div>
 <div class="grid2">
   <div class="field"><label>Date</label>
   <input type="date" id="date">
@@ -163,7 +163,7 @@
 </div>
 <div id="mediaGrid" class="mediaGrid">
 </div>
-<div class="elHide"><h3>Schéma / dessin du lieu d'échantillonnage</h3>
+<div class="elHide schemaBlock"><h3>Schéma / dessin du lieu d'échantillonnage</h3>
 <div class="drawToolbar">
   <div class="colorSwatches" id="drawColors">
     <button type="button" class="swatch sel" data-color="#17212b" style="background:#17212b" aria-label="Noir"></button>
@@ -183,7 +183,7 @@
   <input id="legendeAutre" placeholder="Autre élément à ajouter à la légende">
   </div>
   </div>
-  <div class="actions">
+  <div class="actions elHide schemaBlock">
     <button class="btn ghost small" id="clearDraw">Effacer tout le dessin</button>
   </div></div>
     </div>
@@ -492,6 +492,16 @@
     <div class="banner info">Vue synthétique des missions, stations, contrôles qualité, anomalies et mesures in situ enregistrées sur cet appareil.</div>
     <div class="qualityStatGrid" id="dashNetworkStats"></div>
   </div>
+  <div class="card" id="campaignCard">
+    <h2>Avancement d’une campagne</h2>
+    <div class="grid2">
+      <div class="field"><label>Réseau</label><select id="campNetwork"></select></div>
+      <div class="field"><label>Session / campagne</label><select id="campSession"></select></div>
+    </div>
+    <div class="qualityStatGrid" id="campKpis"></div>
+    <div class="tableWrap"><table class="suiviTable" id="campTable"><thead><tr><th>Station</th><th>Code</th><th>État</th><th>Date</th><th>Fiche</th></tr></thead><tbody></tbody></table></div>
+    <p class="note">Stations programmées pour la session (programme de l’application et stations ajoutées) : réalisées, prélèvement non réalisé, restant à faire ; fiches encore à contrôler ou à valider. Calculé à partir des fiches présentes sur cet appareil — pensez à « Récupérer l’historique » pour inclure celles des autres tablettes.</p>
+  </div>
   <div class="card">
     <h2>Suivi d’une station</h2>
     <div class="grid2">
@@ -713,6 +723,7 @@
   <div class="actions">
     <button class="btn primary" id="exportJSON">Exporter JSON</button>
     <button class="btn ghost" id="exportCSV">Exporter CSV</button>
+    <button class="btn ghost" id="exportXLSX">📊 Exporter Excel (toutes les fiches)</button>
     <label class="btn ghost">Importer JSON<input id="importJSON" type="file" accept="application/json" multiple style="display:none"></label>
     <button class="btn danger" id="reset">Effacer toutes les données locales</button>
     </div>

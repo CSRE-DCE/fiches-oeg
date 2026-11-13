@@ -213,6 +213,7 @@
         elMoyenEchSample:'Moyen d’échantillonnage',elConservationSample:'Conservation échantillon',elFiltreChloro:'Filtre chlorophylle',elVfChloro:'Volume filtré chlorophylle (mL)',
         specRef:'Référence / informations spécifiques'
       };
+      window.FIELD_LABELS_FR=FIELD_LABELS; // libellés repris par l’export Excel des fiches (quality.js)
       function getR(){return records.find(r=>String(r.id)===String(val('crtRecord')))}
       // Saisies du CRT (référence, date, rédacteur, préleveur, objet, conclusion, saison) mémorisées
       // PAR FICHE dans custom.crtMeta (et non dans la fiche, pour ne pas modifier son empreinte

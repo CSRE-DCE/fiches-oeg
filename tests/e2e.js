@@ -1347,6 +1347,8 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(await shown('start')&&await shown('end')&&!await shown('passage'),'prélèvement réalisé : heures de début et de fin (pas d’heure de passage)');
     await p.evaluate(()=>{radioSet('prelevementRealise','Non');document.querySelector('input[name="prelevementRealise"][value="Non"]').dispatchEvent(new Event('change',{bubbles:true}))});
     ok(!await shown('start')&&!await shown('end')&&await shown('passage')&&await p.evaluate(()=>$('passage').value)==='09:15','prélèvement non réalisé : « Heure de passage » seule (proposée d’après l’heure de début)');
+    const noSchema=await p.evaluate(()=>{const form=$('draw').getClientRects().length===0&&$('clearDraw').getClientRects().length===0;startFichePrint();const f=$('fichePrint');const pr=!f.querySelector('.fpDraw')&&!f.querySelector('.fpLegend')&&!/Schéma \/ dessin/.test(f.textContent);endFichePrint();return {form,pr}});
+    ok(noSchema.form&&noSchema.pr,'prélèvement non réalisé : pas de schéma dans la fiche ni sur la fiche imprimée '+JSON.stringify(noSchema));
     const nr=await p.evaluate(()=>{$('passage').value='10:40';const r=collectRecord();r.id='NRP';r.prelevementRealise='Non';r.date='2026-10-20';r.obs='Accès impossible (crue)';r.photos=[{data:'data:image/png;base64,iVBORw0KGgo=',group:'Amont'}];r.dessin='';records.push(r);saveLS(LS,records);renderList();
       const q=qualityChecksFor(r);return {stored:r.heurePassage,list:$('records').textContent.includes('passage 10:40'),dh:(q.find(c=>/Heure de passage|Date et horaires/.test(c.label))||{}).ok,se:q.some(c=>/début\/fin/.test(c.label))}});
     ok(nr.stored==='10:40'&&nr.list&&nr.dh&&!nr.se,'heure de passage enregistrée, affichée dans la liste et contrôlée (pas de contrôle début / fin) '+JSON.stringify(nr));
@@ -1472,6 +1474,62 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     const title=await p.evaluate(()=>{const before=document.title;startFichePrint();const t=document.title;endFichePrint();return {t,back:document.title===before,want:ficheFileBase({network:state.network,session:state.session,station:state.station,stationInfo:getStation(),date:'2026-09-20'})}});
     ok(title.t===title.want&&/^FT_RCO_2026_/.test(title.t)&&title.back,'fiche imprimée : PDF proposé sous le nom '+title.t+' (titre rétabli ensuite)');
     ok(ex.length===0,'aucune erreur JavaScript (nomenclature) '+JSON.stringify(ex));
+    await cx.close();
+  }
+  // --- AI : export Excel d'une fiche (onglet lisible + tableau) et de toutes les fiches ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block'});await cx.route('https://unpkg.com/**',r=>r.abort());await cx.route('https://cdn.sheetjs.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records.push({id:'XL1',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:'S1 - Sept.26',station:st.nom,stationInfo:st,date:'2026-09-14',heureDebut:'08:30',heureFin:'09:40',preleveurs:['PF','AA'],savedAt:'2026-09-14T08:00:00Z',lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],insitu:{ph:{value:'7.25',gmao:'SD-1'},cond:{value:'52'}},conditions:{meteo:'Ensoleillé'}});saveLS(LS,records);renderList()});
+    // Bibliothèque Excel simulée : contenu des onglets et nom du fichier
+    const xl=await p.evaluate(async()=>{const got={sheets:{}};window.XLSX={utils:{book_new:()=>({}),aoa_to_sheet:rows=>({rows}),book_append_sheet:(wb,ws,n)=>{got.sheets[n]=ws.rows}},writeFile:(wb,fn)=>{got.file=fn}};
+      const card=[...document.querySelectorAll('#records .listcard')].find(c=>c.querySelector('.listname').textContent===records.find(r=>r.id==='XL1').station);
+      [...card.querySelectorAll('button')].find(b=>/Excel/.test(b.textContent)).click();await new Promise(r=>setTimeout(r,400));return got});
+    const fiche=xl.sheets.Fiche||[],m=Object.fromEntries(fiche.slice(1));
+    ok(/^FT_RCO_2026_S1_.+\.xlsx$/.test(xl.file||'')&&fiche[0]?.join('|')==='Champ|Valeur'&&m['Station']&&m['Mesure — pH']===7.25&&m['Mesure — pH — code GMAO']==='SD-1'&&m['Préleveur(s)']==='PF, AA'&&m['Heure de début']==='08:30'&&/Conditions — Météo/.test(Object.keys(m).join('|')),'export Excel d’une fiche : onglet « Fiche » lisible (libellés français, mesures en nombres), nom FT_… '+xl.file);
+    ok((xl.sheets.Tableau||[]).length===2&&xl.sheets.Tableau[0].includes('Code station'),'export Excel d’une fiche : onglet « Tableau » (une ligne, en-têtes en français)');
+    const all=await p.evaluate(async()=>{records.push({...records.find(r=>r.id==='XL1'),id:'XL2',date:'2026-12-01'});saveLS(LS,records);const got={sheets:{}};window.XLSX.book_append_sheet=null;window.XLSX.utils.book_append_sheet=(wb,ws,n)=>{got.sheets[n]=ws.rows};window.XLSX.writeFile=(wb,fn)=>{got.file=fn};$('exportXLSX').click();await new Promise(r=>setTimeout(r,400));return {file:got.file,rows:(got.sheets.Fiches||[]).length,n:records.length}});
+    ok(/^fiches_OEG_\d{4}-\d{2}-\d{2}\.xlsx$/.test(all.file||'')&&all.rows===all.n+1,'export Excel de toutes les fiches : une ligne par fiche '+JSON.stringify(all));
+    // Hors connexion (bibliothèque Excel indisponible) : CSV équivalent, qui s'ouvre dans Excel
+    const off=await p.evaluate(async()=>{delete window.XLSX;let blob=null,name='';const o=URL.createObjectURL;URL.createObjectURL=b=>{blob=b;return o.call(URL,b)};const oc=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){name=this.download};
+      await exportFicheExcel(records.find(r=>r.id==='XL1'));URL.createObjectURL=o;HTMLAnchorElement.prototype.click=oc;const t=blob?await blob.text():'';return {name,head:t.split('\r\n')[0].slice(0,80)}});
+    ok(/^FT_RCO_2026_S1_.+\.csv$/.test(off.name)&&/Identifiant de la fiche;Réseau/.test(off.head),'export Excel hors connexion : fichier CSV équivalent '+JSON.stringify(off));
+    ok(ex.length===0,'aucune erreur JavaScript (export Excel) '+JSON.stringify(ex));
+    await cx.close();
+  }
+  // --- AJ : avancement d'une campagne ; historique de la station (plages habituelle et d'alerte) ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block'});await cx.route('https://unpkg.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const camp=await p.evaluate(()=>{
+      const ses='S2 - Déc.26';state.session=ses;const prog=stationsFor('Chimie');state.session=null;
+      const m=(id,st,extra)=>({id,network:'Chimie',session:ses,station:st.nom,stationInfo:st,date:'2026-12-0'+id.slice(-1),savedAt:'2026-12-01T08:00:00Z',lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],...extra});
+      records.push(m('C1',prog[0]),m('C2',prog[1],{lifecycle:{status:'Validée',version:1}}),m('C3',prog[2],{prelevementRealise:'Non'}));saveLS(LS,records);
+      return {n:prog.length,p:campaignProgress('Chimie',ses)};
+    });
+    ok(camp.p.total===camp.n&&camp.p.faites===2&&camp.p.nonRealisees===1&&camp.p.aFaire===camp.n-3&&camp.p.aValider===2,'avancement de campagne : stations programmées, faites, non réalisées, à faire, fiches à valider '+JSON.stringify({...camp.p,rows:undefined}));
+    await p.click('.tab[data-tab="dashboard"]');await p.waitForTimeout(400);
+    const ui=await p.evaluate(()=>{const n=$('campNetwork');n.value='Chimie';n.dispatchEvent(new Event('change'));$('campSession').value='S2 - Déc.26';$('campSession').dispatchEvent(new Event('change'));
+      const t=$('campTable').querySelector('tbody').rows;return {rows:t.length,first:t[0].textContent,kpi:$('campKpis').textContent}});
+    ok(ui.rows===camp.n&&/À faire/.test(ui.first)&&/Restant à faire/.test(ui.kpi)&&/Fichesàvalider2/.test(ui.kpi.replace(/\s/g,'')),'tableau d’avancement : une ligne par station, stations à faire en tête');
+    // Historique : moins de 5 mesures → plage générale ; dès 5 → plage de la station
+    const hist=await p.evaluate(async()=>{
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];
+      const mk=(i,ph)=>({id:'H'+i,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:'S1 - Octobre 2026',station:st.nom,stationInfo:st,date:'2026-0'+(i+1)+'-10',savedAt:'2026-0'+(i+1)+'-10T08:00:00Z',lifecycle:{status:'Validée',version:1},auditRefs:[],photos:[],insitu:{ph:{value:String(ph)}}});
+      [6.9,7.0,7.1,7.0].forEach((v,i)=>records.push(mk(i,v)));saveLS(LS,records);
+      selectNetwork('RCO');for(const id of ['session','activity']){const s=$(id);const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}
+      const sel=$('station');sel.value=st.nom;sel.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(r=>setTimeout(r,400));
+      const chk=v=>{const i=$('iv_ph');i.value=v;i.dispatchEvent(new Event('input',{bubbles:true}));return $('ivs_ph').textContent};
+      const four=chk('8.2');records.push(mk(4,7.05));saveLS(LS,records);
+      return {four,ok:chk('7.05'),warn:chk('7.4'),far:chk('8.2'),imp:chk('15')};
+    });
+    ok(!/station/.test(hist.four),'historique de la station : moins de 5 mesures, plage générale seulement');
+    ok(/habituel pour la station/.test(hist.ok)&&/^⚠ inhabituel pour cette station/.test(hist.warn)&&/très inhabituel pour cette station/.test(hist.far)&&/impossible/.test(hist.imp),'historique de la station (5 mesures) : habituel, inhabituel, très inhabituel, impossible '+JSON.stringify(hist));
+    await p.evaluate(()=>{clearFormNoConfirm();showTab('dashboard');const n=$('dashNetwork');n.value='RCO';n.dispatchEvent(new Event('change'));const s=$('dashStation');s.value=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0].nom;s.dispatchEvent(new Event('change'))});
+    ok(await p.evaluate(()=>/Plage habituelle de la station/.test($('dashParams').textContent)),'tableau de bord : plage habituelle de la station affichée');
+    ok(ex.length===0,'aucune erreur JavaScript (avancement, historique) '+JSON.stringify(ex));
     await cx.close();
   }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
