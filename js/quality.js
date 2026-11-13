@@ -247,6 +247,62 @@ function flatRecordForCsv(r){
   return o;
 }
 window.flatRecordForCsv=flatRecordForCsv;
+
+/* --- Export Excel : une fiche (onglet lisible Champ / Valeur + tableau d'une ligne) ou toutes les fiches --- */
+const XL_LABELS={id:'Identifiant de la fiche',network:'Réseau',activity:'Activité',bioOperation:'Opération BIO',session:'Session / campagne',station:'Station',codeStation:'Code station',
+  prelevementRealise:'Prélèvement réalisé',date:'Date',heureDebut:'Heure de début',heureFin:'Heure de fin',heurePassage:'Heure de passage',organisme:'Organisme préleveur',preleveurs:'Préleveur(s)',
+  xTheorique:'X théorique',yTheorique:'Y théorique',xTerrain:'X terrain',yTerrain:'Y terrain',projection:'Projection',ecartM:'Écart GPS théorique ↔ terrain (m)',
+  methodRef:'Méthode de référence',methodVersion:'Version de la méthode',obs:'Observations / motif du prélèvement non réalisé',comment:'Commentaire',photoAnnexeObs:'Observation inhabituelle (photos annexes)',
+  status:'Statut',version:'Version de la fiche',validePar:'Validée par',valideLe:'Validée le',commentaireValidation:'Commentaire de validation',signataire:'Signataire',boitier:'Boîtier multiparamètre',
+  nonConformitesOuvertes:'Non-conformités ouvertes',qc:'Contrôle qualité terrain',qcType:'Type de contrôle qualité',el_profondeurTotale:'EL — profondeur totale (m)'};
+const XL_PARAMS={ph:'pH',temp:'Température de l’eau (°C)',cond:'Conductivité à 25 °C (µS/cm)',condus:'Conductivité (µS/cm)',condms:'Conductivité (mS/cm)',sal:'Salinité',o2mg:'Oxygène dissous (mg/L)',o2pc:'Saturation O₂ (%)',turb:'Turbidité (NTU)',air:'Température de l’air (°C)',redox:'Potentiel redox (mV)'};
+const XL_DEPTH={surface:'surface',intermediaire:'intermédiaire',fond:'fond'};
+function xlHuman(k){return String(k).replace(/([a-z])([A-Z0-9])/g,'$1 $2').replace(/_/g,' ').replace(/^./,c=>c.toUpperCase())}
+function xlLabel(k){
+  if(XL_LABELS[k])return XL_LABELS[k];
+  const F=window.FIELD_LABELS_FR||{};let m;
+  if((m=/^mes_([a-z0-9]+?)(?:_(gmao|mode))?$/.exec(k)))return 'Mesure — '+(XL_PARAMS[m[1]]||m[1])+(m[2]==='gmao'?' — code GMAO':m[2]==='mode'?' — mode':'');
+  if((m=/^el_niveau_(\w+)$/.exec(k)))return 'EL — niveau de mesure '+(XL_DEPTH[m[1]]||m[1])+' (m)';
+  if((m=/^el_turb_(\w+)$/.exec(k)))return 'EL — turbidité '+(XL_DEPTH[m[1]]||m[1])+' (NTU)';
+  if((m=/^el_([a-z0-9]+)_(surface|intermediaire|fond|sonde)$/.exec(k)))return 'EL — '+(XL_PARAMS[m[1]]||m[1])+' — '+(m[2]==='sonde'?'sonde':XL_DEPTH[m[2]]);
+  if((m=/^(cond|ech|spec|qualite|trace)_(.+)$/.exec(k))){
+    const sect={cond:'Conditions',ech:'Échantillonnage',spec:'Données spécifiques',qualite:'Qualité',trace:'Traçabilité'}[m[1]];
+    const lab=F[m[2]]||document.getElementById(m[2])?.closest('.field')?.querySelector(':scope > label')?.textContent?.trim()||xlHuman(m[2]);
+    return sect+' — '+lab;
+  }
+  return xlHuman(k);
+}
+// Valeurs des mesures en nombres (et non en texte) pour Excel ; codes (station, GMAO, sonde) laissés en texte
+function xlValue(k,v){
+  if(Array.isArray(v))v=v.join(', ');
+  if(typeof v==='string'&&/^(mes_|el_)/.test(k)&&!/_(gmao|sonde|mode)$/.test(k)){const n=numOrNull(v);if(n!==null)return n}
+  return v??'';
+}
+async function exportExcel(list,fileBase){
+  const flat=list.map(flatRecordForCsv),cols=[],seen=new Set();flat.forEach(o=>Object.keys(o).forEach(k=>{if(!seen.has(k)){seen.add(k);cols.push(k)}}));
+  try{
+    const X=await loadXlsx(),wb=X.utils.book_new();
+    if(list.length===1){
+      // Onglet lisible : une ligne par champ renseigné
+      const rows=[['Champ','Valeur']].concat(cols.filter(c=>flat[0][c]!==''&&flat[0][c]!==undefined).map(c=>[xlLabel(c),xlValue(c,flat[0][c])]));
+      const ws=X.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:48},{wch:60}];X.utils.book_append_sheet(wb,ws,'Fiche');
+    }
+    const table=[cols.map(xlLabel)].concat(flat.map(o=>cols.map(c=>xlValue(c,o[c]))));
+    const wt=X.utils.aoa_to_sheet(table);wt['!cols']=cols.map(c=>({wch:Math.min(40,Math.max(10,xlLabel(c).length*0.9))}));
+    X.utils.book_append_sheet(wb,wt,list.length===1?'Tableau':'Fiches');
+    X.writeFile(wb,fileBase+'.xlsx');
+    await audit('EXPORT_EXCEL',list.length===1?list[0].id:'',{records:list.length});
+  }catch(e){
+    // Sans connexion (bibliothèque Excel jamais chargée) : même tableau en CSV, qui s'ouvre dans Excel
+    const rows=[cols.map(c=>csv(xlLabel(c))).join(';')];flat.forEach(o=>rows.push(cols.map(c=>csv(xlValue(c,o[c]))).join(';')));
+    download(fileBase+'.csv','\ufeff'+rows.join('\r\n'),'text/csv;charset=utf-8');
+    toast('Excel indisponible hors connexion : fichier CSV (s’ouvre dans Excel) téléchargé à la place');
+  }
+}
+window.exportExcel=exportExcel;
+function exportFicheExcel(f){return exportExcel([f],typeof ficheFileBase==='function'?ficheFileBase(f):'fiche_'+f.id)}
+window.exportFicheExcel=exportFicheExcel;
+if($('exportXLSX'))$('exportXLSX').onclick=()=>{if(!records.length)return toast('Aucune fiche à exporter');const d=new Date();exportExcel(records.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))),'fiches_OEG_'+d.toISOString().slice(0,10))};
 $('exportCSV').onclick=async()=>{await audit('EXPORT_CSV','',{records:records.length});const flat=records.map(flatRecordForCsv),cols=[],seen=new Set();flat.forEach(o=>Object.keys(o).forEach(k=>{if(!seen.has(k)){seen.add(k);cols.push(k)}}));const rows=[cols.join(';')];flat.forEach(o=>rows.push(cols.map(c=>csv(o[c])).join(';')));download('fiches_OEG_'+Date.now()+'.csv','﻿'+rows.join('\n'),'text/csv;charset=utf-8')};
 
 /* Import : conserver un historique et initialiser les nouvelles structures. */
@@ -317,7 +373,7 @@ function recordDatesHtml(f){
   return `<div class="meta recDates">Créée le ${qEscape(stampText(created))}${updated&&updated!==created?` · <b>modifiée le ${qEscape(stampText(updated))}</b>`:''}${l.updatedBy?` par ${qEscape(l.updatedBy)}`:''}</div>`;
 }
 window.recordDatesHtml=recordDatesHtml;
-function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>[x.station,x.stationInfo?.code,x.network,x.activity,x.session,x.date,(x.preleveurs||[]).join(' '),x.organisme,x.signName,x.obs,x.comment,x.lifecycle?.status,x.id].join(' ').toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.prelevementRealise==='Non'?'passage '+(f.heurePassage||f.heureDebut||''):(f.heureDebut||'')+'–'+(f.heureFin||''))}</div></div><span class="badge">${qEscape(st)}</span></div>${f.prelevementRealise==='Non'?'<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⛔ Prélèvement non réalisé</div>':''}<div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${recordDatesHtml(f)}${f.conflict?(()=>{const o=records.find(x=>x.id===f.conflict.originalId),a=recordStamp(f),b=o?recordStamp(o):'';return `<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — cette copie : modifiée le ${qEscape(stampText(a))} ; fiche d’origine : ${o?'modifiée le '+qEscape(stampText(b))+(b>a?' (plus récente)':a>b?' (plus ancienne)':''):'introuvable'}. Comparez, gardez la bonne et supprimez l’autre.</div>`})():''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button></div>`;const b=d.querySelectorAll('button');b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);if(window.clearEditDraft)window.clearEditDraft(f.id);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
+function renderList(){const q=val('search').toLowerCase(),h=$('records');let arr=records.slice().sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));if(q)arr=arr.filter(x=>[x.station,x.stationInfo?.code,x.network,x.activity,x.session,x.date,(x.preleveurs||[]).join(' '),x.organisme,x.signName,x.obs,x.comment,x.lifecycle?.status,x.id].join(' ').toLowerCase().includes(q));if(!arr.length){h.innerHTML='<div class="empty">Aucune fiche enregistrée.</div>';return}h.innerHTML='';arr.forEach(f=>{const d=document.createElement('div');d.className='listcard';const st=f.lifecycle?.status||'À contrôler',nc=openNCsFor(f.id).length;d.innerHTML=`<div class="listtop"><div><div class="listname">${qEscape(f.station)}</div><div class="meta">${qEscape(f.network)} · ${qEscape(f.activity||'')}${f.network==='BIO'&&f.bioOperation?' · '+qEscape(f.bioOperation):''} · ${qEscape(f.date||'')} · ${qEscape(f.prelevementRealise==='Non'?'passage '+(f.heurePassage||f.heureDebut||''):(f.heureDebut||'')+'–'+(f.heureFin||''))}</div></div><span class="badge">${qEscape(st)}</span></div>${f.prelevementRealise==='Non'?'<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⛔ Prélèvement non réalisé</div>':''}<div class="meta" style="margin-top:5px">${nc?`⚠ ${nc} NC ouverte(s)`:'✓ Aucune NC ouverte'} · Version ${qEscape(f.lifecycle?.version||1)}</div>${recordDatesHtml(f)}${f.conflict?(()=>{const o=records.find(x=>x.id===f.conflict.originalId),a=recordStamp(f),b=o?recordStamp(o):'';return `<div class="meta" style="margin-top:5px;color:var(--red);font-weight:800">⚠ Copie de conflit (version ${qEscape(f.conflict.origine||'')}, détectée le ${qEscape(new Date(f.conflict.detectedAt).toLocaleString('fr-FR'))}) — cette copie : modifiée le ${qEscape(stampText(a))} ; fiche d’origine : ${o?'modifiée le '+qEscape(stampText(b))+(b>a?' (plus récente)':a>b?' (plus ancienne)':''):'introuvable'}. Comparez, gardez la bonne et supprimez l’autre.</div>`})():''}<div class="actions" style="margin-top:8px"><button class="btn ghost small">✏ Modifier</button><button class="btn ghost small">⧉ Dupliquer</button><button class="btn danger small">🗑 Supprimer</button><button class="btn ghost small">📊 Excel</button></div>`;const b=d.querySelectorAll('button');b[3].onclick=()=>exportFicheExcel(f);b[0].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0)};b[1].onclick=()=>{loadRecord(f.id);showTab('new');window.scrollTo(0,0);state.editing=null;state.signature=null;if(window.syncCanvases)syncCanvases();$('save').textContent='💾 Enregistrer la fiche'};b[2].onclick=async()=>{if(confirm('Supprimer cette fiche ?')){records=records.filter(x=>x.id!==f.id);saveLS(LS,records);if(window.clearEditDraft)window.clearEditDraft(f.id);await audit('SUPPRESSION_FICHE',f.id,{station:f.station,network:f.network});updateCount();renderList();renderQuality();if($('suivi')?.classList.contains('active'))renderSuivi()}};h.appendChild(d)})}
 
 /* --- Qualité : configuration persistante --- */
 ['qualityMethodRef','qualityMethodVersion','qualityInterlab','qualityMaterialRef'].forEach(id=>{

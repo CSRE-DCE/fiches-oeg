@@ -6,4 +6,4 @@
  * (GitHub Actions) refuse une modification des fichiers de l'appli sans changement ici.
  */
 self.OEG_BUILD = 52;
-self.OEG_BUILD_DATE = '2026-10-31';
+self.OEG_BUILD_DATE = '2026-11-13';

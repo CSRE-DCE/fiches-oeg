@@ -1476,6 +1476,28 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(ex.length===0,'aucune erreur JavaScript (nomenclature) '+JSON.stringify(ex));
     await cx.close();
   }
+  // --- AI : export Excel d'une fiche (onglet lisible + tableau) et de toutes les fiches ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block'});await cx.route('https://unpkg.com/**',r=>r.abort());await cx.route('https://cdn.sheetjs.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    await p.evaluate(()=>{const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];records.push({id:'XL1',network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:'S1 - Sept.26',station:st.nom,stationInfo:st,date:'2026-09-14',heureDebut:'08:30',heureFin:'09:40',preleveurs:['PF','AA'],savedAt:'2026-09-14T08:00:00Z',lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],insitu:{ph:{value:'7.25',gmao:'SD-1'},cond:{value:'52'}},conditions:{meteo:'Ensoleillé'}});saveLS(LS,records);renderList()});
+    // Bibliothèque Excel simulée : contenu des onglets et nom du fichier
+    const xl=await p.evaluate(async()=>{const got={sheets:{}};window.XLSX={utils:{book_new:()=>({}),aoa_to_sheet:rows=>({rows}),book_append_sheet:(wb,ws,n)=>{got.sheets[n]=ws.rows}},writeFile:(wb,fn)=>{got.file=fn}};
+      const card=[...document.querySelectorAll('#records .listcard')].find(c=>c.querySelector('.listname').textContent===records.find(r=>r.id==='XL1').station);
+      [...card.querySelectorAll('button')].find(b=>/Excel/.test(b.textContent)).click();await new Promise(r=>setTimeout(r,400));return got});
+    const fiche=xl.sheets.Fiche||[],m=Object.fromEntries(fiche.slice(1));
+    ok(/^FT_RCO_2026_S1_.+\.xlsx$/.test(xl.file||'')&&fiche[0]?.join('|')==='Champ|Valeur'&&m['Station']&&m['Mesure — pH']===7.25&&m['Mesure — pH — code GMAO']==='SD-1'&&m['Préleveur(s)']==='PF, AA'&&m['Heure de début']==='08:30'&&/Conditions — Météo/.test(Object.keys(m).join('|')),'export Excel d’une fiche : onglet « Fiche » lisible (libellés français, mesures en nombres), nom FT_… '+xl.file);
+    ok((xl.sheets.Tableau||[]).length===2&&xl.sheets.Tableau[0].includes('Code station'),'export Excel d’une fiche : onglet « Tableau » (une ligne, en-têtes en français)');
+    const all=await p.evaluate(async()=>{records.push({...records.find(r=>r.id==='XL1'),id:'XL2',date:'2026-12-01'});saveLS(LS,records);const got={sheets:{}};window.XLSX.book_append_sheet=null;window.XLSX.utils.book_append_sheet=(wb,ws,n)=>{got.sheets[n]=ws.rows};window.XLSX.writeFile=(wb,fn)=>{got.file=fn};$('exportXLSX').click();await new Promise(r=>setTimeout(r,400));return {file:got.file,rows:(got.sheets.Fiches||[]).length,n:records.length}});
+    ok(/^fiches_OEG_\d{4}-\d{2}-\d{2}\.xlsx$/.test(all.file||'')&&all.rows===all.n+1,'export Excel de toutes les fiches : une ligne par fiche '+JSON.stringify(all));
+    // Hors connexion (bibliothèque Excel indisponible) : CSV équivalent, qui s'ouvre dans Excel
+    const off=await p.evaluate(async()=>{delete window.XLSX;let blob=null,name='';const o=URL.createObjectURL;URL.createObjectURL=b=>{blob=b;return o.call(URL,b)};const oc=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){name=this.download};
+      await exportFicheExcel(records.find(r=>r.id==='XL1'));URL.createObjectURL=o;HTMLAnchorElement.prototype.click=oc;const t=blob?await blob.text():'';return {name,head:t.split('\r\n')[0].slice(0,80)}});
+    ok(/^FT_RCO_2026_S1_.+\.csv$/.test(off.name)&&/Identifiant de la fiche;Réseau/.test(off.head),'export Excel hors connexion : fichier CSV équivalent '+JSON.stringify(off));
+    ok(ex.length===0,'aucune erreur JavaScript (export Excel) '+JSON.stringify(ex));
+    await cx.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
