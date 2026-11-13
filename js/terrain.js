@@ -52,8 +52,25 @@
     const z=PLAGES[p.k];
     if(Number.isNaN(n))return {level:'bad',text:'❌ nombre invalide'};
     if(n<z.possible[0]||n>z.possible[1])return {level:'bad',text:`❌ impossible (${fmt(z.possible)}${z.unit?' '+z.unit:''}) — vérifiez la saisie`};
+    // Historique de la station (dès 5 mesures) : plus précis que la plage générale du paramètre
+    const b=stationBoundsFor(id,p);
+    if(b){
+      const r=v=>{const a=Math.abs(v);return String(Math.round(v*(a>=100?1:a>=10?10:100))/(a>=100?1:a>=10?10:100)).replace('.',',')};
+      const hab=`${r(b.lo2)}–${r(b.hi2)}${z.unit?' '+z.unit:''}, ${b.n} mesures`;
+      if(n<b.lo3||n>b.hi3)return {level:'warn',text:`⚠ très inhabituel pour cette station (habituel ${hab}) — vérifiez`};
+      if(n<b.lo2||n>b.hi2)return {level:'warn',text:`⚠ inhabituel pour cette station (habituel ${hab})`};
+      return {level:'ok',text:`✓ habituel pour la station (${hab})`};
+    }
     if(z.habituel&&(n<z.habituel[0]||n>z.habituel[1]))return {level:'warn',text:`⚠ inhabituel (habituel ${fmt(z.habituel)} ${z.unit})`};
     return {level:'ok',text:'✓'};
+  }
+  // Clé du paramètre dans l'historique (onglet Suivi) : ph, cond… ; EL : ph_surf, turb_fond…
+  function stationBoundsFor(id,p){
+    if(typeof stationBounds!=='function'||!state.network||!state.station)return null;
+    let key=p.k;
+    if(state.network==='EL'){const m=id.match(/^el_[a-z0-9]+_(surf|inter|fond)/);if(!m)return null;key=p.k+'_'+m[1]}
+    else if(p.k==='coef')return null;
+    try{return stationBounds(state.network,state.station,key,state.editing)}catch(e){return null}
   }
   function describe(id){const p=paramOf(id),z=PLAGES[p.k];return z.label+(p.where?' ('+p.where+')':'')}
 

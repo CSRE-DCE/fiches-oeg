@@ -351,3 +351,6 @@ body.nonRealise .schemaBlock{display:none!important}
 /* Photos annexes (observation inhabituelle) : sur toute la largeur, cadre orangé */
 .photoGroup.photoAnnexe{grid-column:1/-1;border-color:#e3a33b;background:#fff8ec}
 .photoGroup.photoAnnexe h4{color:#9a5a00}
+/* Avancement d'une campagne */
+.campOk{color:#21643a;font-weight:800}.campNr{color:#a3261f;font-weight:800}.campTodo{color:#9a5a00;font-weight:800}
+#campTable tr.camp_aFaire td{background:#fff8ec}

@@ -492,6 +492,16 @@
     <div class="banner info">Vue synthétique des missions, stations, contrôles qualité, anomalies et mesures in situ enregistrées sur cet appareil.</div>
     <div class="qualityStatGrid" id="dashNetworkStats"></div>
   </div>
+  <div class="card" id="campaignCard">
+    <h2>Avancement d’une campagne</h2>
+    <div class="grid2">
+      <div class="field"><label>Réseau</label><select id="campNetwork"></select></div>
+      <div class="field"><label>Session / campagne</label><select id="campSession"></select></div>
+    </div>
+    <div class="qualityStatGrid" id="campKpis"></div>
+    <div class="tableWrap"><table class="suiviTable" id="campTable"><thead><tr><th>Station</th><th>Code</th><th>État</th><th>Date</th><th>Fiche</th></tr></thead><tbody></tbody></table></div>
+    <p class="note">Stations programmées pour la session (programme de l’application et stations ajoutées) : réalisées, prélèvement non réalisé, restant à faire ; fiches encore à contrôler ou à valider. Calculé à partir des fiches présentes sur cet appareil — pensez à « Récupérer l’historique » pour inclure celles des autres tablettes.</p>
+  </div>
   <div class="card">
     <h2>Suivi d’une station</h2>
     <div class="grid2">

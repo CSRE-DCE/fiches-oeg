@@ -1734,6 +1734,27 @@ function suiviParamsFor(network,station){
   });
   return [...set];
 }
+// Historique d'une station : à partir des mesures déjà saisies (prélèvements réalisés), plage habituelle
+// (moyenne ± 2 écarts-types, ~95 % des mesures) et plage d'alerte (± 3 écarts-types) de chaque paramètre.
+// Calculées dès 5 mesures ; en deçà, ce sont les plages générales du paramètre qui s'appliquent.
+const STATION_BOUNDS_MIN=5;
+let _boundsCache={sig:'',map:new Map()};
+function stationBounds(network,station,key,excludeId){
+  if(!network||!station||!key)return null;
+  const sig=records.length+'|'+(records.length?recordStamp(records[records.length-1]):'');
+  if(_boundsCache.sig!==sig)_boundsCache={sig,map:new Map()};
+  const ck=network+'|'+station+'|'+key+'|'+(excludeId||'');
+  if(_boundsCache.map.has(ck))return _boundsCache.map.get(ck);
+  const vals=records.filter(r=>r.network===network&&r.station===station&&r.id!==excludeId&&!r.conflict).map(r=>numOrNull(suiviValueFor(r,key))).filter(v=>v!==null);
+  let out=null;
+  if(vals.length>=STATION_BOUNDS_MIN){
+    const n=vals.length,mean=vals.reduce((a,b)=>a+b,0)/n,sd0=Math.sqrt(vals.reduce((a,b)=>a+(b-mean)**2,0)/(n-1));
+    const sd=Math.max(sd0,Math.abs(mean)*0.02,0.05); // jamais nul (mesures identiques)
+    out={n,mean,sd,min:Math.min(...vals),max:Math.max(...vals),lo2:mean-2*sd,hi2:mean+2*sd,lo3:mean-3*sd,hi3:mean+3*sd};
+  }
+  _boundsCache.map.set(ck,out);return out;
+}
+window.stationBounds=stationBounds;
 function suiviStationsFor(network){
   return [...new Set(records.filter(r=>r.network===network&&r.station).map(r=>r.station))].sort((a,b)=>a.localeCompare(b,'fr'));
 }

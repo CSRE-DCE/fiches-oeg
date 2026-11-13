@@ -1498,6 +1498,40 @@ const rec=(id,upd,extra={})=>({id,network:'RCO',station:'ST'+id,date:'2026-10-01
     ok(ex.length===0,'aucune erreur JavaScript (export Excel) '+JSON.stringify(ex));
     await cx.close();
   }
+  // --- AJ : avancement d'une campagne ; historique de la station (plages habituelle et d'alerte) ---
+  {
+    const cx=await browser.newContext({serviceWorkers:'block'});await cx.route('https://unpkg.com/**',r=>r.abort());
+    const p=await cx.newPage();const ex=[];p.on('pageerror',e=>ex.push(e.message));p.on('dialog',d=>d.accept());
+    await p.goto('http://localhost:8765/');await p.evaluate(()=>window.OEGRecordsReady);
+    const camp=await p.evaluate(()=>{
+      const ses='S2 - Déc.26';state.session=ses;const prog=stationsFor('Chimie');state.session=null;
+      const m=(id,st,extra)=>({id,network:'Chimie',session:ses,station:st.nom,stationInfo:st,date:'2026-12-0'+id.slice(-1),savedAt:'2026-12-01T08:00:00Z',lifecycle:{status:'À contrôler',version:1},auditRefs:[],photos:[],...extra});
+      records.push(m('C1',prog[0]),m('C2',prog[1],{lifecycle:{status:'Validée',version:1}}),m('C3',prog[2],{prelevementRealise:'Non'}));saveLS(LS,records);
+      return {n:prog.length,p:campaignProgress('Chimie',ses)};
+    });
+    ok(camp.p.total===camp.n&&camp.p.faites===2&&camp.p.nonRealisees===1&&camp.p.aFaire===camp.n-3&&camp.p.aValider===2,'avancement de campagne : stations programmées, faites, non réalisées, à faire, fiches à valider '+JSON.stringify({...camp.p,rows:undefined}));
+    await p.click('.tab[data-tab="dashboard"]');await p.waitForTimeout(400);
+    const ui=await p.evaluate(()=>{const n=$('campNetwork');n.value='Chimie';n.dispatchEvent(new Event('change'));$('campSession').value='S2 - Déc.26';$('campSession').dispatchEvent(new Event('change'));
+      const t=$('campTable').querySelector('tbody').rows;return {rows:t.length,first:t[0].textContent,kpi:$('campKpis').textContent}});
+    ok(ui.rows===camp.n&&/À faire/.test(ui.first)&&/Restant à faire/.test(ui.kpi)&&/Fichesàvalider2/.test(ui.kpi.replace(/\s/g,'')),'tableau d’avancement : une ligne par station, stations à faire en tête');
+    // Historique : moins de 5 mesures → plage générale ; dès 5 → plage de la station
+    const hist=await p.evaluate(async()=>{
+      const st=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0];
+      const mk=(i,ph)=>({id:'H'+i,network:'RCO',activity:RCO_COMBINED_ACTIVITY,session:'S1 - Octobre 2026',station:st.nom,stationInfo:st,date:'2026-0'+(i+1)+'-10',savedAt:'2026-0'+(i+1)+'-10T08:00:00Z',lifecycle:{status:'Validée',version:1},auditRefs:[],photos:[],insitu:{ph:{value:String(ph)}}});
+      [6.9,7.0,7.1,7.0].forEach((v,i)=>records.push(mk(i,v)));saveLS(LS,records);
+      selectNetwork('RCO');for(const id of ['session','activity']){const s=$(id);const o=[...s.options].find(o=>o.value);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}
+      const sel=$('station');sel.value=st.nom;sel.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(r=>setTimeout(r,400));
+      const chk=v=>{const i=$('iv_ph');i.value=v;i.dispatchEvent(new Event('input',{bubbles:true}));return $('ivs_ph').textContent};
+      const four=chk('8.2');records.push(mk(4,7.05));saveLS(LS,records);
+      return {four,ok:chk('7.05'),warn:chk('7.4'),far:chk('8.2'),imp:chk('15')};
+    });
+    ok(!/station/.test(hist.four),'historique de la station : moins de 5 mesures, plage générale seulement');
+    ok(/habituel pour la station/.test(hist.ok)&&/^⚠ inhabituel pour cette station/.test(hist.warn)&&/très inhabituel pour cette station/.test(hist.far)&&/impossible/.test(hist.imp),'historique de la station (5 mesures) : habituel, inhabituel, très inhabituel, impossible '+JSON.stringify(hist));
+    await p.evaluate(()=>{clearFormNoConfirm();showTab('dashboard');const n=$('dashNetwork');n.value='RCO';n.dispatchEvent(new Event('change'));const s=$('dashStation');s.value=stationsFor('RCO',RCO_COMBINED_ACTIVITY)[0].nom;s.dispatchEvent(new Event('change'))});
+    ok(await p.evaluate(()=>/Plage habituelle de la station/.test($('dashParams').textContent)),'tableau de bord : plage habituelle de la station affichée');
+    ok(ex.length===0,'aucune erreur JavaScript (avancement, historique) '+JSON.stringify(ex));
+    await cx.close();
+  }
   // --- E : service worker réel (version.js, cache hors-ligne) ---
   const ctx2=await browser.newContext();
   await ctx2.route('https://unpkg.com/**',r=>r.abort());
